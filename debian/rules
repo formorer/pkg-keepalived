@@ -18,4 +18,3 @@ binary-install/keepalived::
 clean::
 	-rm config.status
 	-rm config.log
-	-rm configure

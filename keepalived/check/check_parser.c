@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include "check_parser.h"
@@ -130,7 +130,10 @@ static void
 pgr_handler(vector strvec)
 {
 	virtual_server *vs = LIST_TAIL_DATA(check_data->vs);
-	inet_ston(VECTOR_SLOT(strvec, 1), &vs->granularity_persistence);
+	if (vs->addr.ss_family == AF_INET6)
+		vs->granularity_persistence = atoi(VECTOR_SLOT(strvec, 1));
+	else
+		inet_ston(VECTOR_SLOT(strvec, 1), &vs->granularity_persistence);
 }
 static void
 proto_handler(vector strvec)
@@ -171,6 +174,7 @@ weight_handler(vector strvec)
 	virtual_server *vs = LIST_TAIL_DATA(check_data->vs);
 	real_server *rs = LIST_TAIL_DATA(vs->rs);
 	rs->weight = atoi(VECTOR_SLOT(strvec, 1));
+	rs->iweight = rs->weight;
 }
 #ifdef _KRNL_2_6_
 static void

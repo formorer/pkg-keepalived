@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include "vrrp_sync.h"
@@ -154,7 +154,7 @@ vrrp_sync_master_election(vrrp_rt * vrrp)
 	/* Perform sync index */
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		isync = ELEMENT_DATA(e);
-		if (isync != vrrp) {
+		if (isync != vrrp && isync->wantstate != VRRP_STATE_GOTO_MASTER) {
 			/* Force a new protocol master election */
 			isync->wantstate = VRRP_STATE_GOTO_MASTER;
 			log_message(LOG_INFO,

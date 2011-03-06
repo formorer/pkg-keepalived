@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 /* local include */
@@ -119,14 +119,14 @@ netlink_rtlist_ipv4(list rt_list, int cmd)
 
 /* Route dump/allocation */
 void
-free_iproute(void *rt_data_obj)
+free_iproute(void *rt_data)
 {
-	FREE(rt_data_obj);
+	FREE(rt_data);
 }
 void
-dump_iproute(void *rt_data_obj)
+dump_iproute(void *rt_data)
 {
-	ip_route *route = rt_data_obj;
+	ip_route *route = rt_data;
 	char *log_msg = MALLOC(150);
 	char *tmp = MALLOC(30);
 

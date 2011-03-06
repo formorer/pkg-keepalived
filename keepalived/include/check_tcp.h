@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _CHECK_TCP_H
@@ -33,10 +33,10 @@
 
 /* Checker argument structure  */
 typedef struct _tcp_checker {
-	uint16_t connection_port;
-	uint32_t bindto;
+	struct sockaddr_storage dst;
+	struct sockaddr_storage bindto;
 	int connection_to;
-} tcp_checker;
+} tcp_checker_t;
 
 /* Prototypes defs */
 extern void install_tcp_check_keyword(void);

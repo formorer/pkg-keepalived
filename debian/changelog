@@ -1,3 +1,12 @@
+keepalived (1:1.2.2-1) unstable; urgency=low
+
+  * New upstream version
+  * Don't remove configure in clean target
+  * Refresh 95_use_linux_ip_vs_h.patch for 1.2
+  * Build depend on libnl-dev
+
+ -- Alexander Wirt <formorer@debian.org>  Sun, 06 Mar 2011 17:43:35 +0100
+
 keepalived (1:1.1.20-1) unstable; urgency=low
 
   * Go back to 1.1.20 since 1.2.0 is not ready for release

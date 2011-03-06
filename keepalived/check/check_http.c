@@ -18,7 +18,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include <openssl/err.h>
@@ -31,35 +31,35 @@
 #include "utils.h"
 #include "html.h"
 
-int http_connect_thread(thread *);
+int http_connect_thread(thread_t *);
 
 /* Configuration stream handling */
 void
 free_url(void *data)
 {
-	url *url_obj = data;
-	FREE(url_obj->path);
-	FREE(url_obj->digest);
-	FREE(url_obj);
+	url_t *url = data;
+	FREE(url->path);
+	FREE(url->digest);
+	FREE(url);
 }
 
 void
 dump_url(void *data)
 {
-	url *url_obj = data;
-	log_message(LOG_INFO, "   Checked url = %s", url_obj->path);
-	if (url_obj->digest)
+	url_t *url = data;
+	log_message(LOG_INFO, "   Checked url = %s", url->path);
+	if (url->digest)
 		log_message(LOG_INFO, "           digest = %s",
-		       url_obj->digest);
-	if (url_obj->status_code)
+		       url->digest);
+	if (url->status_code)
 		log_message(LOG_INFO, "           HTTP Status Code = %d",
-		       url_obj->status_code);
+		       url->status_code);
 }
 
 void
 free_http_get_check(void *data)
 {
-	http_get_checker *http_get_chk = CHECKER_DATA(data);
+	http_checker_t *http_get_chk = CHECKER_DATA(data);
 
 	free_list(http_get_chk->url);
 	FREE(http_get_chk->arg);
@@ -70,18 +70,15 @@ free_http_get_check(void *data)
 void
 dump_http_get_check(void *data)
 {
-	http_get_checker *http_get_chk = CHECKER_DATA(data);
+	http_checker_t *http_get_chk = CHECKER_DATA(data);
 
 	if (http_get_chk->proto == PROTO_HTTP)
 		log_message(LOG_INFO, "   Keepalive method = HTTP_GET");
 	else
 		log_message(LOG_INFO, "   Keepalive method = SSL_GET");
-	if (http_get_chk->connection_port)
-		log_message(LOG_INFO, "   Connection port = %d",
-		       ntohs(http_get_chk->connection_port));
-	if (http_get_chk->bindto)
-		log_message(LOG_INFO, "   Bind to = %s",
-		       inet_ntop2(http_get_chk->bindto));
+	log_message(LOG_INFO, "   Connection port = %d", ntohs(inet_sockaddrport(&http_get_chk->dst)));
+	if (http_get_chk->bindto.ss_family)
+		log_message(LOG_INFO, "   Bind to = %s", inet_sockaddrtos(&http_get_chk->bindto));
 	log_message(LOG_INFO, "   Connection timeout = %lu",
 	       http_get_chk->connection_to/TIMER_HZ);
 	log_message(LOG_INFO, "   Nb get retry = %d", http_get_chk->nb_get_retry);
@@ -89,13 +86,13 @@ dump_http_get_check(void *data)
 	       http_get_chk->delay_before_retry/TIMER_HZ);
 	dump_list(http_get_chk->url);
 }
-static http_get_checker *
+static http_checker_t *
 alloc_http_get(char *proto)
 {
-	http_get_checker *http_get_chk;
+	http_checker_t *http_get_chk;
 
-	http_get_chk = (http_get_checker *) MALLOC(sizeof (http_get_checker));
-	http_get_chk->arg = (http_arg *) MALLOC(sizeof (http_arg));
+	http_get_chk = (http_checker_t *) MALLOC(sizeof (http_checker_t));
+	http_get_chk->arg = (http_arg_t *) MALLOC(sizeof (http_arg_t));
 	http_get_chk->proto =
 	    (!strcmp(proto, "HTTP_GET")) ? PROTO_HTTP : PROTO_SSL;
 	http_get_chk->url = alloc_list(free_url, dump_url);
@@ -107,11 +104,12 @@ alloc_http_get(char *proto)
 void
 http_get_handler(vector strvec)
 {
-	http_get_checker *http_get_chk;
+	http_checker_t *http_get_chk;
 	char *str = VECTOR_SLOT(strvec, 0);
 
 	/* queue new checker */
 	http_get_chk = alloc_http_get(str);
+	checker_set_dst(&http_get_chk->dst);
 	queue_checker(free_http_get_check, dump_http_get_check,
 		      http_connect_thread, http_get_chk);
 }
@@ -119,46 +117,46 @@ http_get_handler(vector strvec)
 void
 connect_p_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
-	http_get_chk->connection_port = htons(CHECKER_VALUE_INT(strvec));
+	http_checker_t *http_get_chk = CHECKER_GET();
+	checker_set_dst_port(&http_get_chk->dst, htons(CHECKER_VALUE_INT(strvec)));
 }
 
 void
 bindto_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
-	inet_ston(VECTOR_SLOT(strvec, 1), &http_get_chk->bindto);
+	http_checker_t *http_get_chk = CHECKER_GET();
+	inet_stosockaddr(VECTOR_SLOT(strvec, 1), 0, &http_get_chk->bindto);
 }
 
 void
 connect_to_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
+	http_checker_t *http_get_chk = CHECKER_GET();
 	http_get_chk->connection_to = CHECKER_VALUE_INT(strvec) * TIMER_HZ;
 }
 
 void
 nb_get_retry_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
+	http_checker_t *http_get_chk = CHECKER_GET();
 	http_get_chk->nb_get_retry = CHECKER_VALUE_INT(strvec);
 }
 
 void
 delay_before_retry_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
+	http_checker_t *http_get_chk = CHECKER_GET();
 	http_get_chk->delay_before_retry = CHECKER_VALUE_INT(strvec) * TIMER_HZ;
 }
 
 void
 url_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
-	url *new;
+	http_checker_t *http_get_chk = CHECKER_GET();
+	url_t *new;
 
 	/* allocate the new URL */
-	new = (url *) MALLOC(sizeof (url));
+	new = (url_t *) MALLOC(sizeof (url_t));
 
 	list_add(http_get_chk->url, new);
 }
@@ -166,28 +164,28 @@ url_handler(vector strvec)
 void
 path_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
-	url *url_obj = LIST_TAIL_DATA(http_get_chk->url);
+	http_checker_t *http_get_chk = CHECKER_GET();
+	url_t *url = LIST_TAIL_DATA(http_get_chk->url);
 
-	url_obj->path = CHECKER_VALUE_STRING(strvec);
+	url->path = CHECKER_VALUE_STRING(strvec);
 }
 
 void
 digest_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
-	url *url_obj = LIST_TAIL_DATA(http_get_chk->url);
+	http_checker_t *http_get_chk = CHECKER_GET();
+	url_t *url = LIST_TAIL_DATA(http_get_chk->url);
 
-	url_obj->digest = CHECKER_VALUE_STRING(strvec);
+	url->digest = CHECKER_VALUE_STRING(strvec);
 }
 
 void
 status_code_handler(vector strvec)
 {
-	http_get_checker *http_get_chk = CHECKER_GET();
-	url *url_obj = LIST_TAIL_DATA(http_get_chk->url);
+	http_checker_t *http_get_chk = CHECKER_GET();
+	url_t *url = LIST_TAIL_DATA(http_get_chk->url);
 
-	url_obj->status_code = CHECKER_VALUE_INT(strvec);
+	url->status_code = CHECKER_VALUE_INT(strvec);
 }
 
 void
@@ -254,28 +252,6 @@ install_ssl_check_keyword(void)
  *     http_handle_response (next checker thread registration)
  */
 
-uint16_t
-get_service_port(checker * checker_obj)
-{
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	uint16_t addr_port;
-
-	/*
-	 *  Set the remote connection port.
-	 *  If a specific checker port is specified, we used this.
-	 *  If we are balancing all services (host rather than service),
-	 *  then assume we want to use default ports for HTTP or HTTPS.
-	 *  Known as 'Layer3 stickyness'.
-	 */
-	addr_port = CHECKER_RPORT(checker_obj);
-	if (!addr_port)
-		addr_port =
-		    htons((http_get_check->proto == PROTO_SSL) ? 443 : 80);
-	if (http_get_check->connection_port)
-		addr_port = http_get_check->connection_port;
-	return addr_port;
-}
-
 /*
  * Simple epilog functions. Handling event timeout.
  * Finish the checker with memory managment or url rety check.
@@ -286,18 +262,17 @@ get_service_port(checker * checker_obj)
  * method == 2 => register a retry on url checker thread
  */
 int
-epilog(thread * thread_obj, int method, int t, int c)
+epilog(thread_t * thread, int method, int t, int c)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
-	REQ *req = HTTP_REQ(http_arg_obj);
-	uint16_t addr_port = get_service_port(checker_obj);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http_arg);
 	long delay = 0;
 
 	if (method) {
-		http_arg_obj->url_it += t ? t : -http_arg_obj->url_it;
-		http_arg_obj->retry_it += c ? c : -http_arg_obj->retry_it;
+		http_arg->url_it += t ? t : -http_arg->url_it;
+		http_arg->retry_it += c ? c : -http_arg->retry_it;
 	}
 
 	/*
@@ -306,37 +281,37 @@ epilog(thread * thread_obj, int method, int t, int c)
 	 * html buffer. This is sometime needed with some applications
 	 * servers.
 	 */
-	if (http_arg_obj->retry_it > http_get_check->nb_get_retry-1) {
-		if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
-			log_message(LOG_INFO, "Check on service [%s:%d] failed after %d retry."
-			       , inet_ntop2(CHECKER_RIP(checker_obj))
-			       , ntohs(addr_port), http_arg_obj->retry_it);
-			smtp_alert(checker_obj->rs, NULL, NULL,
+	if (http_arg->retry_it > http_get_check->nb_get_retry-1) {
+		if (svr_checker_up(checker->id, checker->rs)) {
+			log_message(LOG_INFO, "Check on service [%s]:%d failed after %d retry."
+			       , inet_sockaddrtos(&http_get_check->dst)
+			       , ntohs(inet_sockaddrport(&http_get_check->dst)), http_arg->retry_it);
+			smtp_alert(checker->rs, NULL, NULL,
 				   "DOWN",
 				   "=> CHECK failed on service"
 				   " : MD5 digest mismatch <=");
-			update_svr_checker_state(DOWN, checker_obj->id
-						     , checker_obj->vs
-						     , checker_obj->rs);
+			update_svr_checker_state(DOWN, checker->id
+						     , checker->vs
+						     , checker->rs);
 		}
 
 		/* Reset it counters */
-		http_arg_obj->url_it = 0;
-		http_arg_obj->retry_it = 0;
+		http_arg->url_it = 0;
+		http_arg->retry_it = 0;
 	}
 
 	/* register next timer thread */
 	switch (method) {
 	case 1:
 		if (req)
-			delay = checker_obj->vs->delay_loop;
+			delay = checker->vs->delay_loop;
 		else
 			delay =
 			    http_get_check->delay_before_retry;
 		break;
 	case 2:
-		if (http_arg_obj->url_it == 0 && http_arg_obj->retry_it == 0)
-			delay = checker_obj->vs->delay_loop;
+		if (http_arg->url_it == 0 && http_arg->retry_it == 0)
+			delay = checker->vs->delay_loop;
 		else
 			delay = http_get_check->delay_before_retry;
 		break;
@@ -349,64 +324,63 @@ epilog(thread * thread_obj, int method, int t, int c)
 		if (req->buffer)
 			FREE(req->buffer);
 		FREE(req);
-		http_arg_obj->req = NULL;
-		close(thread_obj->u.fd);
+		http_arg->req = NULL;
+		close(thread->u.fd);
 	}
 
 	/* Register next checker thread */
-	thread_add_timer(thread_obj->master, http_connect_thread, checker_obj, delay);
+	thread_add_timer(thread->master, http_connect_thread, checker, delay);
 	return 0;
 }
 
 int
-timeout_epilog(thread * thread_obj, char *smtp_msg, char *debug_msg)
+timeout_epilog(thread_t * thread, char *smtp_msg, char *debug_msg)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	uint16_t addr_port = get_service_port(checker_obj);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
 
-	log_message(LOG_INFO, "Timeout %s server [%s:%d].",
-	       debug_msg
-	       , inet_ntop2(CHECKER_RIP(checker_obj))
-	       , ntohs(addr_port));
+	log_message(LOG_INFO, "Timeout %s server [%s]:%d."
+			    , debug_msg
+			    , inet_sockaddrtos(&http_get_check->dst)
+			    , ntohs(inet_sockaddrport(&http_get_check->dst)));
 
 	/* check if server is currently alive */
-	if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
-		smtp_alert(checker_obj->rs, NULL, NULL,
+	if (svr_checker_up(checker->id, checker->rs)) {
+		smtp_alert(checker->rs, NULL, NULL,
 			   "DOWN", smtp_msg);
-		update_svr_checker_state(DOWN, checker_obj->id
-					     , checker_obj->vs
-					     , checker_obj->rs);
+		update_svr_checker_state(DOWN, checker->id
+					     , checker->vs
+					     , checker->rs);
 	}
 
-	return epilog(thread_obj, 1, 0, 0);
+	return epilog(thread, 1, 0, 0);
 }
 
 /* return the url pointer of the current url iterator  */
-url *
-fetch_next_url(http_get_checker * http_get_check)
+url_t *
+fetch_next_url(http_checker_t * http_get_check)
 {
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
 
-	return list_element(http_get_check->url, http_arg_obj->url_it);
+	return list_element(http_get_check->url, http_arg->url_it);
 }
 
 /* Handle response */
 int
-http_handle_response(thread * thread_obj, unsigned char digest[16]
+http_handle_response(thread_t * thread, unsigned char digest[16]
 		     , int empty_buffer)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
-	REQ *req = HTTP_REQ(http_arg_obj);
-	uint16_t addr_port = get_service_port(checker_obj);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http_arg);
 	int r, di = 0;
 	char *digest_tmp;
-	url *fetched_url = fetch_next_url(http_get_check);
+	url_t *fetched_url = fetch_next_url(http_get_check);
 
 	/* First check if remote webserver returned data */
 	if (empty_buffer)
-		return timeout_epilog(thread_obj, "=> CHECK failed on service"
+		return timeout_epilog(thread, "=> CHECK failed on service"
 				      " : empty buffer received <=\n\n",
 				      "Read, no data received from ");
 
@@ -414,41 +388,42 @@ http_handle_response(thread * thread_obj, unsigned char digest[16]
 	if (fetched_url->status_code) {
 		if (req->status_code != fetched_url->status_code) {
 			/* check if server is currently alive */
-			if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
+			if (svr_checker_up(checker->id, checker->rs)) {
 				log_message(LOG_INFO,
-				       "HTTP status code error to [%s:%d] url(%s)"
+				       "HTTP status code error to [%s]:%d url(%s)"
 				       ", status_code [%d].",
-				       inet_ntop2(CHECKER_RIP(checker_obj)),
-				       ntohs(addr_port), fetched_url->path,
+				       inet_sockaddrtos(&http_get_check->dst),
+				       ntohs(inet_sockaddrport(&http_get_check->dst)),
+				       fetched_url->path,
 				       req->status_code);
-				smtp_alert(checker_obj->rs, NULL, NULL,
+				smtp_alert(checker->rs, NULL, NULL,
 					   "DOWN",
 					   "=> CHECK failed on service"
 					   " : HTTP status code mismatch <=");
-				update_svr_checker_state(DOWN, checker_obj->id
-							     , checker_obj->vs
-							     , checker_obj->rs);
+				update_svr_checker_state(DOWN, checker->id
+							     , checker->vs
+							     , checker->rs);
 			} else {
-				DBG("HTTP Status_code to [%s:%d] url(%d) = [%d].",
-				    inet_ntop2(CHECKER_RIP(checker_obj))
-				    , ntohs(addr_port)
-				    , http_arg_obj->url_it + 1
+				DBG("HTTP Status_code to [%s]:%d url(%d) = [%d]."
+				    , inet_sockaddrtos(&http_get_check->dst)
+				    , ntohs(inet_sockaddrport(&http_get_check->dst))
+				    , http_arg->url_it + 1
 				    , req->status_code);
 				/*
 				 * We set retry iterator to max value to not retry
 				 * when service is already know as die.
 				 */
-				http_arg_obj->retry_it = http_get_check->nb_get_retry;
+				http_arg->retry_it = http_get_check->nb_get_retry;
 			}
-			return epilog(thread_obj, 2, 0, 1);
+			return epilog(thread, 2, 0, 1);
 		} else {
-			if (!svr_checker_up(checker_obj->id, checker_obj->rs))
+			if (!svr_checker_up(checker->id, checker->rs))
 				log_message(LOG_INFO,
-				       "HTTP status code success to [%s:%d] url(%d).",
-				       inet_ntop2(CHECKER_RIP(checker_obj))
-				       , ntohs(addr_port)
-				       , http_arg_obj->url_it + 1);
-			return epilog(thread_obj, 1, 1, 0) + 1;
+				       "HTTP status code success to [%s]:%d url(%d)."
+				       , inet_sockaddrtos(&http_get_check->dst)
+				       , ntohs(inet_sockaddrport(&http_get_check->dst))
+				       , http_arg->url_it + 1);
+			return epilog(thread, 1, 1, 0) + 1;
 		}
 	}
 
@@ -463,51 +438,52 @@ http_handle_response(thread * thread_obj, unsigned char digest[16]
 
 		if (r) {
 			/* check if server is currently alive */
-			if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
+			if (svr_checker_up(checker->id, checker->rs)) {
 				log_message(LOG_INFO,
-				       "MD5 digest error to [%s:%d] url[%s]"
+				       "MD5 digest error to [%s]:%d url[%s]"
 				       ", MD5SUM [%s].",
-				       inet_ntop2(CHECKER_RIP(checker_obj)),
-				       ntohs(addr_port), fetched_url->path,
+				       inet_sockaddrtos(&http_get_check->dst),
+				       ntohs(inet_sockaddrport(&http_get_check->dst)),
+				       fetched_url->path,
 				       digest_tmp);
-				smtp_alert(checker_obj->rs, NULL, NULL,
+				smtp_alert(checker->rs, NULL, NULL,
 					   "DOWN",
 					   "=> CHECK failed on service"
 					   " : HTTP MD5SUM mismatch <=");
-				update_svr_checker_state(DOWN, checker_obj->id
-							     , checker_obj->vs
-							     , checker_obj->rs);
+				update_svr_checker_state(DOWN, checker->id
+							     , checker->vs
+							     , checker->rs);
 			} else {
-				DBG("MD5SUM to [%s:%d] url(%d) = [%s].",
-				    inet_ntop2(CHECKER_RIP(checker_obj))
-				    , ntohs(addr_port)
-				    , http_arg_obj->url_it + 1
+				DBG("MD5SUM to [%s]:%d url(%d) = [%s]."
+				    , inet_sockaddrtos(&http_get_check->dst)
+				    , ntohs(inet_sockaddrport(&http_get_check->dst))
+				    , http_arg->url_it + 1
 				    , digest_tmp);
 				/*
 				 * We set retry iterator to max value to not retry
 				 * when service is already know as die.
 				 */
-				http_arg_obj->retry_it = http_get_check->nb_get_retry;
+				http_arg->retry_it = http_get_check->nb_get_retry;
 			}
 			FREE(digest_tmp);
-			return epilog(thread_obj, 2, 0, 1);
+			return epilog(thread, 2, 0, 1);
 		} else {
-			if (!svr_checker_up(checker_obj->id, checker_obj->rs))
-				log_message(LOG_INFO, "MD5 digest success to [%s:%d] url(%d).",
-				       inet_ntop2(CHECKER_RIP(checker_obj))
-				       , ntohs(addr_port)
-				       , http_arg_obj->url_it + 1);
+			if (!svr_checker_up(checker->id, checker->rs))
+				log_message(LOG_INFO, "MD5 digest success to [%s]:%d url(%d)."
+				       , inet_sockaddrtos(&http_get_check->dst)
+				       , ntohs(inet_sockaddrport(&http_get_check->dst))
+				       , http_arg->url_it + 1);
 			FREE(digest_tmp);
-			return epilog(thread_obj, 1, 1, 0) + 1;
+			return epilog(thread, 1, 1, 0) + 1;
 		}
 	}
 
-	return epilog(thread_obj, 1, 0, 0) + 1;
+	return epilog(thread, 1, 0, 0) + 1;
 }
 
 /* Handle response stream performing MD5 updates */
 int
-http_process_response(REQ *req, int r)
+http_process_response(request_t *req, int r)
 {
 	req->len += r;
 	if (!req->extracted) {
@@ -533,41 +509,40 @@ http_process_response(REQ *req, int r)
 
 /* Asynchronous HTTP stream reader */
 int
-http_read_thread(thread * thread_obj)
+http_read_thread(thread_t * thread)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
-	REQ *req = HTTP_REQ(http_arg_obj);
-	uint16_t addr_port = get_service_port(checker_obj);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http_arg);
 	unsigned char digest[16];
 	int r = 0;
 	int val;
 
 	/* Handle read timeout */
-	if (thread_obj->type == THREAD_READ_TIMEOUT)
-		return timeout_epilog(thread_obj, "=> HTTP CHECK failed on service"
+	if (thread->type == THREAD_READ_TIMEOUT)
+		return timeout_epilog(thread, "=> HTTP CHECK failed on service"
 				      " : recevice data <=\n\n", "HTTP read");
 
 	/* Set descriptor non blocking */
-	val = fcntl(thread_obj->u.fd, F_GETFL, 0);
-	fcntl(thread_obj->u.fd, F_SETFL, val | O_NONBLOCK);
+	val = fcntl(thread->u.fd, F_GETFL, 0);
+	fcntl(thread->u.fd, F_SETFL, val | O_NONBLOCK);
 
 	/* read the HTTP stream */
-	r = read(thread_obj->u.fd, req->buffer + req->len,
+	r = read(thread->u.fd, req->buffer + req->len,
 		 MAX_BUFFER_LENGTH - req->len);
 
 	/* restore descriptor flags */
-	fcntl(thread_obj->u.fd, F_SETFL, val);
+	fcntl(thread->u.fd, F_SETFL, val);
 
 	/* Test if data are ready */
 	if (r == -1 && (errno == EAGAIN || errno == EINTR)) {
-		log_message(LOG_INFO, "Read error with server [%s:%d]: %s",
-		       inet_ntop2(CHECKER_RIP(checker_obj))
-		       , ntohs(addr_port)
-		       , strerror(errno));
-		thread_add_read(thread_obj->master, http_read_thread, checker_obj,
-				thread_obj->u.fd, http_get_check->connection_to);
+		log_message(LOG_INFO, "Read error with server [%s]:%d: %s"
+				    , inet_sockaddrtos(&http_get_check->dst)
+				    , ntohs(inet_sockaddrport(&http_get_check->dst))
+				    , strerror(errno));
+		thread_add_read(thread->master, http_read_thread, checker,
+				thread->u.fd, http_get_check->connection_to);
 		return 0;
 	}
 
@@ -578,24 +553,24 @@ http_read_thread(thread * thread_obj)
 
 		if (r == -1) {
 			/* We have encourred a real read error */
-			if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
-				log_message(LOG_INFO, "Read error with server [%s:%d]: %s",
-				       inet_ntop2(CHECKER_RIP(checker_obj))
-				       , ntohs(addr_port)
+			if (svr_checker_up(checker->id, checker->rs)) {
+				log_message(LOG_INFO, "Read error with server [%s]:%d: %s"
+				       , inet_sockaddrtos(&http_get_check->dst)
+				       , ntohs(inet_sockaddrport(&http_get_check->dst))
 				       , strerror(errno));
-				smtp_alert(checker_obj->rs, NULL, NULL,
+				smtp_alert(checker->rs, NULL, NULL,
 					   "DOWN",
 					   "=> HTTP CHECK failed on service"
 					   " : cannot receive data <=");
-				update_svr_checker_state(DOWN, checker_obj->id
-							     , checker_obj->vs
-							     , checker_obj->rs);
+				update_svr_checker_state(DOWN, checker->id
+							     , checker->vs
+							     , checker->rs);
 			}
-			return epilog(thread_obj, 1, 0, 0);
+			return epilog(thread, 1, 0, 0);
 		}
 
 		/* Handle response stream */
-		http_handle_response(thread_obj, digest, (!req->extracted) ? 1 : 0);
+		http_handle_response(thread, digest, (!req->extracted) ? 1 : 0);
 
 	} else {
 
@@ -606,8 +581,8 @@ http_read_thread(thread * thread_obj)
 		 * Register next http stream reader.
 		 * Register itself to not perturbe global I/O multiplexer.
 		 */
-		thread_add_read(thread_obj->master, http_read_thread, checker_obj,
-				thread_obj->u.fd, http_get_check->connection_to);
+		thread_add_read(thread->master, http_read_thread, checker,
+				thread->u.fd, http_get_check->connection_to);
 	}
 
 	return 0;
@@ -618,16 +593,16 @@ http_read_thread(thread * thread_obj)
  * Apply trigger check to this result.
  */
 int
-http_response_thread(thread * thread_obj)
+http_response_thread(thread_t * thread)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
-	REQ *req = HTTP_REQ(http_arg_obj);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http_arg);
 
 	/* Handle read timeout */
-	if (thread_obj->type == THREAD_READ_TIMEOUT)
-		return timeout_epilog(thread_obj, "=> CHECK failed on service"
+	if (thread->type == THREAD_READ_TIMEOUT)
+		return timeout_epilog(thread, "=> CHECK failed on service"
 				      " : recevice data <=\n\n", "WEB read");
 
 	/* Allocate & clean the get buffer */
@@ -639,32 +614,31 @@ http_response_thread(thread * thread_obj)
 
 	/* Register asynchronous http/ssl read thread */
 	if (http_get_check->proto == PROTO_SSL)
-		thread_add_read(thread_obj->master, ssl_read_thread, checker_obj,
-				thread_obj->u.fd, http_get_check->connection_to);
+		thread_add_read(thread->master, ssl_read_thread, checker,
+				thread->u.fd, http_get_check->connection_to);
 	else
-		thread_add_read(thread_obj->master, http_read_thread, checker_obj,
-				thread_obj->u.fd, http_get_check->connection_to);
+		thread_add_read(thread->master, http_read_thread, checker,
+				thread->u.fd, http_get_check->connection_to);
 	return 0;
 }
 
 /* remote Web server is connected, send it the get url query.  */
 int
-http_request_thread(thread * thread_obj)
+http_request_thread(thread_t * thread)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
-	REQ *req = HTTP_REQ(http_arg_obj);
-	uint16_t addr_port = get_service_port(checker_obj);
-	char *vhost = CHECKER_VHOST(checker_obj);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http_arg);
+	char *vhost = CHECKER_VHOST(checker);
 	char *str_request;
-	url *fetched_url;
+	url_t *fetched_url;
 	int ret = 0;
 	int val;
 
 	/* Handle read timeout */
-	if (thread_obj->type == THREAD_WRITE_TIMEOUT)
-		return timeout_epilog(thread_obj, "=> CHECK failed on service"
+	if (thread->type == THREAD_WRITE_TIMEOUT)
+		return timeout_epilog(thread, "=> CHECK failed on service"
 				      " : read timeout <=\n\n",
 				      "Web read, timeout");
 
@@ -674,65 +648,64 @@ http_request_thread(thread * thread_obj)
 	fetched_url = fetch_next_url(http_get_check);
 	snprintf(str_request, GET_BUFFER_LENGTH, REQUEST_TEMPLATE,
 		 fetched_url->path,
-		 (vhost) ? vhost : inet_ntop2(CHECKER_RIP(checker_obj))
-		 , ntohs(addr_port));
-	DBG("Processing url(%d) of [%s:%d].",
-	    http_arg_obj->url_it + 1
-	    , inet_ntop2(CHECKER_RIP(checker_obj))
-	    , ntohs(addr_port));
+		 (vhost) ? vhost : inet_sockaddrtos(&http_get_check->dst)
+		 , ntohs(inet_sockaddrport(&http_get_check->dst)));
+	DBG("Processing url(%d) of [%s]:%d.",
+	    http_arg->url_it + 1
+	    , inet_sockaddrtos(&http_get_check->dst)
+	    , ntohs(inet_sockaddrport(&http_get_check->dst)));
 
 	/* Set descriptor non blocking */
-	val = fcntl(thread_obj->u.fd, F_GETFL, 0);
-	fcntl(thread_obj->u.fd, F_SETFL, val | O_NONBLOCK);
+	val = fcntl(thread->u.fd, F_GETFL, 0);
+	fcntl(thread->u.fd, F_SETFL, val | O_NONBLOCK);
 
 	/* Send the GET request to remote Web server */
 	if (http_get_check->proto == PROTO_SSL) {
 		ret = ssl_send_request(req->ssl, str_request,
 				       strlen(str_request));
 	} else {
-		ret = (send(thread_obj->u.fd, str_request, strlen(str_request), 0) !=
+		ret = (send(thread->u.fd, str_request, strlen(str_request), 0) !=
 		       -1) ? 1 : 0;
 	}
 
 	/* restore descriptor flags */
-	fcntl(thread_obj->u.fd, F_SETFL, val);
+	fcntl(thread->u.fd, F_SETFL, val);
 
 	FREE(str_request);
 
 	if (!ret) {
-		log_message(LOG_INFO, "Cannot send get request to [%s:%d].",
-		       inet_ntop2(CHECKER_RIP(checker_obj))
-		       , ntohs(addr_port));
+		log_message(LOG_INFO, "Cannot send get request to [%s]:%d."
+				    , inet_sockaddrtos(&http_get_check->dst)
+				    , ntohs(inet_sockaddrport(&http_get_check->dst)));
 
 		/* check if server is currently alive */
-		if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
-			smtp_alert(checker_obj->rs, NULL, NULL,
+		if (svr_checker_up(checker->id, checker->rs)) {
+			smtp_alert(checker->rs, NULL, NULL,
 				   "DOWN",
 				   "=> CHECK failed on service"
 				   " : cannot send data <=");
-			update_svr_checker_state(DOWN, checker_obj->id
-						     , checker_obj->vs
-						     , checker_obj->rs);
+			update_svr_checker_state(DOWN, checker->id
+						     , checker->vs
+						     , checker->rs);
 		}
-		return epilog(thread_obj, 1, 0, 0);
+		return epilog(thread, 1, 0, 0);
 	}
 
 	/* Register read timeouted thread */
-	thread_add_read(thread_obj->master, http_response_thread, checker_obj,
-			thread_obj->u.fd, http_get_check->connection_to);
+	thread_add_read(thread->master, http_response_thread, checker,
+			thread->u.fd, http_get_check->connection_to);
 	return 1;
 }
 
 /* WEB checkers threads */
 int
-http_check_thread(thread * thread_obj)
+http_check_thread(thread_t * thread)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	uint16_t addr_port = get_service_port(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
 #ifdef _DEBUG_
-	REQ *req = HTTP_REQ(http_arg_obj);
+	request_t *req = HTTP_REQ(http_arg);
 #endif
 	int ret = 1;
 	int status;
@@ -740,64 +713,63 @@ http_check_thread(thread * thread_obj)
 	int ssl_err = 0;
 	int new_req = 0;
 
-	status = tcp_socket_state(thread_obj->u.fd, thread_obj, CHECKER_RIP(checker_obj)
-				  , addr_port, http_check_thread);
+	status = tcp_socket_state(thread->u.fd, thread, http_check_thread);
 	switch (status) {
 	case connect_error:
 		/* check if server is currently alive */
-		if (svr_checker_up(checker_obj->id, checker_obj->rs)) {
-			log_message(LOG_INFO, "Error connecting server [%s:%d].",
-			       inet_ntop2(CHECKER_RIP(checker_obj))
-			       , ntohs(addr_port));
-			smtp_alert(checker_obj->rs, NULL, NULL,
+		if (svr_checker_up(checker->id, checker->rs)) {
+			log_message(LOG_INFO, "Error connecting server [%s]:%d."
+					    , inet_sockaddrtos(&http_get_check->dst)
+					    , ntohs(inet_sockaddrport(&http_get_check->dst)));
+			smtp_alert(checker->rs, NULL, NULL,
 				   "DOWN",
 				   "=> CHECK failed on service"
 				   " : connection error <=");
-			update_svr_checker_state(DOWN, checker_obj->id
-						 , checker_obj->vs
-						 , checker_obj->rs);
+			update_svr_checker_state(DOWN, checker->id
+						 , checker->vs
+						 , checker->rs);
 		}
-		return epilog(thread_obj, 1, 0, 0);
+		return epilog(thread, 1, 0, 0);
 		break;
 
 	case connect_timeout:
-		return timeout_epilog(thread_obj, "==> CHECK failed on service"
+		return timeout_epilog(thread, "==> CHECK failed on service"
 				      " : connection timeout <=\n\n",
 				      "connect, timeout");
 		break;
 
 	case connect_success:{
-			if (!http_arg_obj->req) {
-				http_arg_obj->req = (REQ *) MALLOC(sizeof (REQ));
+			if (!http_arg->req) {
+				http_arg->req = (request_t *) MALLOC(sizeof (request_t));
 				new_req = 1;
 			} else
 				new_req = 0;
 
 			if (http_get_check->proto == PROTO_SSL) {
-				timeout = TIMER_LONG(thread_obj->sands)-TIMER_LONG(time_now);
-				if (thread_obj->type != THREAD_WRITE_TIMEOUT &&
-				    thread_obj->type != THREAD_READ_TIMEOUT)
-					ret = ssl_connect(thread_obj, new_req);
+				timeout = TIMER_LONG(thread->sands)-TIMER_LONG(time_now);
+				if (thread->type != THREAD_WRITE_TIMEOUT &&
+				    thread->type != THREAD_READ_TIMEOUT)
+					ret = ssl_connect(thread, new_req);
 				else {
-					return timeout_epilog(thread_obj, "==> CHECK failed on service"
+					return timeout_epilog(thread, "==> CHECK failed on service"
 							      " : connection timeout <=\n\n",
 							      "connect, timeout");
 				}
 
 				if (ret == -1) {
-					switch ((ssl_err = SSL_get_error(http_arg_obj->req->ssl,
+					switch ((ssl_err = SSL_get_error(http_arg->req->ssl,
 									 ret))) {
 					case SSL_ERROR_WANT_READ:
-						thread_add_read(thread_obj->master,
+						thread_add_read(thread->master,
 								http_check_thread,
-								THREAD_ARG(thread_obj),
-								thread_obj->u.fd, timeout);
+								THREAD_ARG(thread),
+								thread->u.fd, timeout);
 						break;
 					case SSL_ERROR_WANT_WRITE:
-						thread_add_write(thread_obj->master,
+						thread_add_write(thread->master,
 								 http_check_thread,
-								 THREAD_ARG(thread_obj),
-								 thread_obj->u.fd, timeout);
+								 THREAD_ARG(thread),
+								 thread->u.fd, timeout);
 						break;
 					default:
 						ret = 0;
@@ -813,40 +785,40 @@ http_check_thread(thread * thread_obj)
 				/* Remote WEB server is connected.
 				 * Register the next step thread ssl_request_thread.
 				 */
-				DBG("Remote Web server [%s:%d] connected.",
-				    inet_ntop2(CHECKER_RIP(checker_obj)),
-				    ntohs(addr_port));
-				thread_add_write(thread_obj->master,
-						 http_request_thread, checker_obj,
-						 thread_obj->u.fd,
+				DBG("Remote Web server [%s]:%d connected."
+				    , inet_sockaddrtos(&http_get_check->dst)
+				    , ntohs(inet_sockaddrport(&http_get_check->dst)));
+				thread_add_write(thread->master,
+						 http_request_thread, checker,
+						 thread->u.fd,
 						 http_get_check->connection_to);
 			} else {
-				DBG(LOG_INFO, "Connection trouble to: [%s:%d]."
-				    , inet_ntop2(CHECKER_RIP(checker_obj))
-				    , ntohs(addr_port));
+				DBG(LOG_INFO, "Connection trouble to: [%s]:%d."
+					    , inet_sockaddrtos(&http_get_check->dst)
+					    , ntohs(inet_sockaddrport(&http_get_check->dst)));
 #ifdef _DEBUG_
 				if (http_get_check->proto == PROTO_SSL)
 					ssl_printerr(SSL_get_error
 						     (req->ssl, ret));
 #endif
 				if ((http_get_check->proto == PROTO_SSL) &&
-				    (svr_checker_up(checker_obj->id, checker_obj->rs))) {
+				    (svr_checker_up(checker->id, checker->rs))) {
 					log_message(LOG_INFO, "SSL handshake/communication error"
 							 " connecting to server"
-							 " (openssl errno: %d) [%s:%d]."
-						       , SSL_get_error (http_arg_obj->req->ssl, ret)
-						       , inet_ntop2(CHECKER_RIP(checker_obj))
-						       , ntohs(addr_port));
-					smtp_alert(checker_obj->rs, NULL, NULL,
+							 " (openssl errno: %d) [%s]:%d."
+						       , SSL_get_error (http_arg->req->ssl, ret)
+						       , inet_sockaddrtos(&http_get_check->dst)
+						       , ntohs(inet_sockaddrport(&http_get_check->dst)));
+					smtp_alert(checker->rs, NULL, NULL,
 						   "DOWN",
 						   "=> CHECK failed on service"
 						   " : SSL connection error <=");
-					update_svr_checker_state(DOWN, checker_obj->id
-								 , checker_obj->vs
-								 , checker_obj->rs);
+					update_svr_checker_state(DOWN, checker->id
+								 , checker->vs
+								 , checker->rs);
 				}
 
-				return epilog(thread_obj, 1, 0, 0);
+				return epilog(thread, 1, 0, 0);
 			}
 		}
 		break;
@@ -856,13 +828,12 @@ http_check_thread(thread * thread_obj)
 }
 
 int
-http_connect_thread(thread * thread_obj)
+http_connect_thread(thread_t * thread)
 {
-	checker *checker_obj = THREAD_ARG(thread_obj);
-	http_get_checker *http_get_check = CHECKER_ARG(checker_obj);
-	http_arg *http_arg_obj = HTTP_ARG(http_get_check);
-	uint16_t addr_port = get_service_port(checker_obj);
-	url *fetched_url;
+	checker_t *checker = THREAD_ARG(thread);
+	http_checker_t *http_get_check = CHECKER_ARG(checker);
+	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	url_t *fetched_url;
 	enum connect_result status;
 	int fd;
 
@@ -870,9 +841,9 @@ http_connect_thread(thread * thread_obj)
 	 * Register a new checker thread & return
 	 * if checker is disabled
 	 */
-	if (!CHECKER_ENABLED(checker_obj)) {
-		thread_add_timer(thread_obj->master, http_connect_thread, checker_obj,
-				 checker_obj->vs->delay_loop);
+	if (!CHECKER_ENABLED(checker)) {
+		thread_add_timer(thread->master, http_connect_thread, checker,
+				 checker->vs->delay_loop);
 		return 0;
 	}
 
@@ -884,31 +855,35 @@ http_connect_thread(thread * thread_obj)
 		 * Check completed.
 		 * check if server is currently alive.
 		 */
-		if (!svr_checker_up(checker_obj->id, checker_obj->rs)) {
-			log_message(LOG_INFO, "Remote Web server [%s:%d] succeed on service.",
-			       inet_ntop2(CHECKER_RIP(checker_obj))
-			       , ntohs(addr_port));
-			smtp_alert(checker_obj->rs, NULL, NULL, "UP",
+		if (!svr_checker_up(checker->id, checker->rs)) {
+			log_message(LOG_INFO, "Remote Web server [%s]:%d succeed on service."
+					    , inet_sockaddrtos(&http_get_check->dst)
+					    , ntohs(inet_sockaddrport(&http_get_check->dst)));
+			smtp_alert(checker->rs, NULL, NULL, "UP",
 				   "=> CHECK succeed on service <=");
-			update_svr_checker_state(UP, checker_obj->id
-						   , checker_obj->vs
-						   , checker_obj->rs);
+			update_svr_checker_state(UP, checker->id
+						   , checker->vs
+						   , checker->rs);
 		}
-		http_arg_obj->req = NULL;
-		return epilog(thread_obj, 1, 0, 0) + 1;
+		http_arg->req = NULL;
+		return epilog(thread, 1, 0, 0) + 1;
 	}
 
 	/* Create the socket */
-	if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1) {
+	if ((fd = socket(http_get_check->dst.ss_family, SOCK_STREAM, IPPROTO_TCP)) == -1) {
 		DBG("WEB connection fail to create socket.");
 		return 0;
 	}
 
-	status = tcp_bind_connect(fd, CHECKER_RIP(checker_obj), addr_port
-				  , http_get_check->bindto);
+	status = tcp_bind_connect(fd, &http_get_check->dst, &http_get_check->bindto);
+	if (status == connect_error) {
+		thread_add_timer(thread->master, http_connect_thread, checker,
+				 checker->vs->delay_loop);
+		return 0;
+	}
 
 	/* handle tcp connection status & register check worker thread */
-	tcp_connection_state(fd, status, thread_obj, http_check_thread,
+	tcp_connection_state(fd, status, thread, http_check_thread,
 			     http_get_check->connection_to);
 	return 0;
 }

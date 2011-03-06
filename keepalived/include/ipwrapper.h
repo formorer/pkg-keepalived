@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _IPWRAPPER_H
@@ -49,11 +49,10 @@
 #define LVS_CMD_EDIT_DEST	IP_VS_SO_SET_EDITDEST
 
 /* prototypes */
-extern void perform_svr_state(int alive, virtual_server * vs, real_server * rs);
-extern void update_svr_wgt(int weight, virtual_server * vs, real_server * rs);
-extern int svr_checker_up(checker_id_t cid, real_server * rs);
-extern void update_svr_checker_state(int alive, checker_id_t cid,
-				     virtual_server * vs, real_server * rs);
+extern void perform_svr_state(int, virtual_server *, real_server *);
+extern void update_svr_wgt(int, virtual_server *, real_server *);
+extern int svr_checker_up(checker_id_t, real_server *);
+extern void update_svr_checker_state(int, checker_id_t, virtual_server *, real_server *);
 extern int init_services(void);
 extern int clear_services(void);
 extern int clear_diff_services(void);

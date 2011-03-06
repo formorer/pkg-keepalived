@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2009 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _SOCK_H
@@ -47,7 +47,7 @@ typedef struct {
 extern SOCK *sock;
 
 /* Prototypes */
-extern void free_sock(SOCK * sock_obj);
+extern void free_sock(SOCK *);
 extern void init_sock(void);
 
 #endif

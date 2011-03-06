@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _PIDFILE_H
@@ -38,8 +38,8 @@
 #define CHECKERS_PID_FILE "/var/run/checkers.pid"
 
 /* Prototypes */
-extern int pidfile_write(char *pid_file, int pid);
-extern void pidfile_rm(char *pid_file);
-extern int keepalived_running(int mode);
+extern int pidfile_write(char *, int);
+extern void pidfile_rm(char *);
+extern int keepalived_running(int);
 
 #endif

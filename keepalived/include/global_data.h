@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _GLOBAL_DATA_H
@@ -48,18 +48,18 @@ typedef struct _conf_data {
 	char *router_id;
 	char *plugin_dir;
 	char *email_from;
-	uint32_t smtp_server;
+	struct sockaddr_storage smtp_server;
 	long smtp_connection_to;
 	list email;
-} conf_data;
+} conf_data_t;
 
 /* Global vars exported */
-extern conf_data *data;		/* Global configuration data */
+extern conf_data_t *data;	/* Global configuration data */
 
 /* Prototypes */
-extern void alloc_email(char *addr);
-extern conf_data *alloc_global_data(void);
-extern void free_global_data(conf_data *global_data);
-extern void dump_global_data(conf_data *global_data);
+extern void alloc_email(char *);
+extern conf_data_t *alloc_global_data(void);
+extern void free_global_data(conf_data_t *);
+extern void dump_global_data(conf_data_t *);
 
 #endif

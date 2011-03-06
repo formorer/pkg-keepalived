@@ -17,12 +17,13 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include <syslog.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <netdb.h>
 #include "global_data.h"
 #include "memory.h"
 #include "list.h"
@@ -30,11 +31,11 @@
 #include "utils.h"
 
 /* global vars */
-conf_data *data = NULL;
+conf_data_t *data = NULL;
 
 /* Default settings */
 static void
-set_default_router_id(conf_data * conf_data_obj)
+set_default_router_id(conf_data_t * conf_data)
 {
 	char *new_id = NULL;
 	int len = 0;
@@ -44,15 +45,15 @@ set_default_router_id(conf_data * conf_data_obj)
 		return;
 
 	len = strlen(new_id);
-	conf_data_obj->router_id = MALLOC(len + 1);
-	if (!conf_data_obj->router_id)
+	conf_data->router_id = MALLOC(len + 1);
+	if (!conf_data->router_id)
 		return;
 
-	memcpy(conf_data_obj->router_id, new_id, len);
+	memcpy(conf_data->router_id, new_id, len);
 }
 
 static void
-set_default_email_from(conf_data * conf_data_obj)
+set_default_email_from(conf_data_t * conf_data)
 {
 	struct passwd *pwd = NULL;
 	char *hostname = NULL;
@@ -67,35 +68,28 @@ set_default_email_from(conf_data * conf_data_obj)
 		return;
 
 	len = strlen(hostname) + strlen(pwd->pw_name) + 2;
-	conf_data_obj->email_from = MALLOC(len);
-	if (!conf_data_obj->email_from)
+	conf_data->email_from = MALLOC(len);
+	if (!conf_data->email_from)
 		return;
 
-	snprintf(conf_data_obj->email_from, len, "%s@%s", pwd->pw_name, hostname);
+	snprintf(conf_data->email_from, len, "%s@%s", pwd->pw_name, hostname);
 }
 
 static void
-set_default_smtp_server(conf_data * conf_data_obj)
+set_default_smtp_connection_timeout(conf_data_t * conf_data)
 {
-	conf_data_obj->smtp_server = htonl(DEFAULT_SMTP_SERVER);
+	conf_data->smtp_connection_to = DEFAULT_SMTP_CONNECTION_TIMEOUT;
 }
 
 static void
-set_default_smtp_connection_timeout(conf_data * conf_data_obj)
-{
-	conf_data_obj->smtp_connection_to = DEFAULT_SMTP_CONNECTION_TIMEOUT;
-}
-
-static void
-set_default_values(conf_data * conf_data_obj)
+set_default_values(conf_data_t * conf_data)
 {
 	/* No global data so don't default */
-	if (!conf_data_obj)
+	if (!conf_data)
 		return;
-	set_default_router_id(conf_data_obj);
-	set_default_smtp_server(conf_data_obj);
-	set_default_smtp_connection_timeout(conf_data_obj);
-	set_default_email_from(conf_data_obj);
+	set_default_router_id(conf_data);
+	set_default_smtp_connection_timeout(conf_data);
+	set_default_email_from(conf_data);
 }
 
 /* email facility functions */
@@ -124,12 +118,12 @@ alloc_email(char *addr)
 }
 
 /* data facility functions */
-conf_data *
+conf_data_t *
 alloc_global_data(void)
 {
-	conf_data *new;
+	conf_data_t *new;
 
-	new = (conf_data *) MALLOC(sizeof (conf_data));
+	new = (conf_data_t *) MALLOC(sizeof (conf_data_t));
 	new->email = alloc_list(free_email, dump_email);
 
 	set_default_values(new);
@@ -137,7 +131,7 @@ alloc_global_data(void)
 }
 
 void
-free_global_data(conf_data * global_data)
+free_global_data(conf_data_t * global_data)
 {
 	free_list(data->email);
 	FREE_PTR(data->router_id);
@@ -147,22 +141,21 @@ free_global_data(conf_data * global_data)
 }
 
 void
-dump_global_data(conf_data * global_data)
+dump_global_data(conf_data_t * global_data)
 {
 	if (!data)
 		return;
 
 	if (data->router_id ||
-	    data->smtp_server || data->smtp_connection_to || data->email_from) {
+	    data->smtp_server.ss_family || data->smtp_connection_to || data->email_from) {
 		log_message(LOG_INFO, "------< Global definitions >------");
 	}
 	if (data->router_id)
 		log_message(LOG_INFO, " Router ID = %s", data->router_id);
 	if (data->plugin_dir)
 		log_message(LOG_INFO, " Plugin dir = %s", data->plugin_dir);
-	if (data->smtp_server)
-		log_message(LOG_INFO, " Smtp server = %s",
-		       inet_ntop2(data->smtp_server));
+	if (data->smtp_server.ss_family)
+		log_message(LOG_INFO, " Smtp server = %s", inet_sockaddrtos(&data->smtp_server));
 	if (data->smtp_connection_to)
 		log_message(LOG_INFO, " Smtp server connection timeout = %lu",
 		       data->smtp_connection_to / TIMER_HZ);

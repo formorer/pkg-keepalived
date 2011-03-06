@@ -18,7 +18,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _VRRP_NOTIFY_H
@@ -27,7 +27,7 @@
 /* local include */
 #include "vrrp.h"
 
-extern int notify_instance_exec(vrrp_rt * vrrp, int state);
-extern int notify_group_exec(vrrp_sgroup * vgroup, int state);
+extern int notify_instance_exec(vrrp_rt *, int);
+extern int notify_group_exec(vrrp_sgroup *, int);
 
 #endif

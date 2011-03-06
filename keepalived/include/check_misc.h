@@ -18,7 +18,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _CHECK_MISC_H
@@ -35,7 +35,7 @@ typedef struct _misc_checker {
 	char *path;
 	long timeout;
 	int dynamic;  /* 0: old-style, 1: exit code from checker affects weight */
-} misc_checker;
+} misc_checker_t;
 
 /* Prototypes defs */
 extern void install_misc_check_keyword(void);
