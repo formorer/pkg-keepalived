@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include "vrrp_data.h"
@@ -133,28 +133,28 @@ dump_vscript(void *data)
 
 /* Socket pool functions */
 static void
-free_sock(void *sock_data_obj)
+free_sock(void *sock_data)
 {
-	sock *sock_obj = sock_data_obj;
+	sock_t *sock = sock_data;
 	interface *ifp;
-	if (sock_obj->fd_in > 0) {
-		ifp = if_get_by_ifindex(sock_obj->ifindex);
-		if_leave_vrrp_group(sock_obj->fd_in, ifp);
+	if (sock->fd_in > 0) {
+		ifp = if_get_by_ifindex(sock->ifindex);
+		if_leave_vrrp_group(sock->family, sock->fd_in, ifp);
 	}
-	if (sock_obj->fd_out > 0)
-		close(sock_obj->fd_out);
-	FREE(sock_data_obj);
+	if (sock->fd_out > 0)
+		close(sock->fd_out);
+	FREE(sock_data);
 }
 
 static void
-dump_sock(void *sock_data_obj)
+dump_sock(void *sock_data)
 {
-	sock *sock_obj = sock_data_obj;
-	log_message(LOG_INFO, "VRRP sockpool: [ifindex(%d), proto(%d), fd(%d,%d)]",
-	       sock_obj->ifindex
-	       , sock_obj->proto
-	       , sock_obj->fd_in
-	       , sock_obj->fd_out);
+	sock_t *sock = sock_data;
+	log_message(LOG_INFO, "VRRP sockpool: [ifindex(%d), proto(%d), fd(%d,%d)]"
+			    , sock->ifindex
+			    , sock->proto
+			    , sock->fd_in
+			    , sock->fd_out);
 }
 
 static void
@@ -192,8 +192,11 @@ static void
 dump_vrrp(void *data)
 {
 	vrrp_rt *vrrp = data;
+	char auth_data[sizeof(vrrp->auth_data) + 1];
 
 	log_message(LOG_INFO, " VRRP Instance = %s", vrrp->iname);
+	if (vrrp->family == AF_INET6)
+		log_message(LOG_INFO, "   Using Native IPv6");
 	if (vrrp->init_state == VRRP_STATE_BACK)
 		log_message(LOG_INFO, "   Want State = BACKUP");
 	else
@@ -223,7 +226,10 @@ dump_vrrp(void *data)
 		log_message(LOG_INFO, "   Authentication type = %s",
 		       (vrrp->auth_type ==
 			VRRP_AUTH_AH) ? "IPSEC_AH" : "SIMPLE_PASSWORD");
-		log_message(LOG_INFO, "   Password = %s", vrrp->auth_data);
+		/* vrrp->auth_data is not \0 terminated */
+		memcpy(auth_data, vrrp->auth_data, sizeof(vrrp->auth_data));
+		auth_data[sizeof(vrrp->auth_data)] = '\0';
+		log_message(LOG_INFO, "   Password = %s", auth_data);
 	}
 	if (!LIST_ISEMPTY(vrrp->track_ifp)) {
 		log_message(LOG_INFO, "   Tracked interfaces = %d", LIST_SIZE(vrrp->track_ifp));
@@ -295,6 +301,7 @@ alloc_vrrp(char *iname)
 	new->ipsecah_counter = counter;
 
 	/* Set default values */
+	new->family = AF_INET;
 	new->wantstate = VRRP_STATE_BACK;
 	new->init_state = VRRP_STATE_BACK;
 	new->adver_int = TIMER_HZ;
@@ -405,46 +412,46 @@ alloc_vrrp_data(void)
 }
 
 void
-free_vrrp_data(vrrp_conf_data * vrrp_data_obj)
+free_vrrp_data(vrrp_conf_data * vrrp_data)
 {
-	free_list(vrrp_data_obj->static_addresses);
-	free_list(vrrp_data_obj->static_routes);
-	free_mlist(vrrp_data_obj->vrrp_index, 255+1);
-	free_mlist(vrrp_data_obj->vrrp_index_fd, 1024+1);
-	free_list(vrrp_data_obj->vrrp);
-	free_list(vrrp_data_obj->vrrp_sync_group);
-	free_list(vrrp_data_obj->vrrp_script);
-//	free_list(vrrp_data_obj->vrrp_socket_pool);
-	FREE(vrrp_data_obj);
+	free_list(vrrp_data->static_addresses);
+	free_list(vrrp_data->static_routes);
+	free_mlist(vrrp_data->vrrp_index, 255+1);
+	free_mlist(vrrp_data->vrrp_index_fd, 1024+1);
+	free_list(vrrp_data->vrrp);
+	free_list(vrrp_data->vrrp_sync_group);
+	free_list(vrrp_data->vrrp_script);
+//	free_list(vrrp_data->vrrp_socket_pool);
+	FREE(vrrp_data);
 }
 
 void
-free_vrrp_sockpool(vrrp_conf_data * vrrp_data_obj)
+free_vrrp_sockpool(vrrp_conf_data * vrrp_data)
 {
-	free_list(vrrp_data_obj->vrrp_socket_pool);
+	free_list(vrrp_data->vrrp_socket_pool);
 }
 
 void
-dump_vrrp_data(vrrp_conf_data * vrrp_data_obj)
+dump_vrrp_data(vrrp_conf_data * vrrp_data)
 {
-	if (!LIST_ISEMPTY(vrrp_data_obj->static_addresses)) {
+	if (!LIST_ISEMPTY(vrrp_data->static_addresses)) {
 		log_message(LOG_INFO, "------< Static Addresses >------");
-		dump_list(vrrp_data_obj->static_addresses);
+		dump_list(vrrp_data->static_addresses);
 	}
-	if (!LIST_ISEMPTY(vrrp_data_obj->static_routes)) {
+	if (!LIST_ISEMPTY(vrrp_data->static_routes)) {
 		log_message(LOG_INFO, "------< Static Routes >------");
-		dump_list(vrrp_data_obj->static_routes);
+		dump_list(vrrp_data->static_routes);
 	}
-	if (!LIST_ISEMPTY(vrrp_data_obj->vrrp)) {
+	if (!LIST_ISEMPTY(vrrp_data->vrrp)) {
 		log_message(LOG_INFO, "------< VRRP Topology >------");
-		dump_list(vrrp_data_obj->vrrp);
+		dump_list(vrrp_data->vrrp);
 	}
-	if (!LIST_ISEMPTY(vrrp_data_obj->vrrp_sync_group)) {
+	if (!LIST_ISEMPTY(vrrp_data->vrrp_sync_group)) {
 		log_message(LOG_INFO, "------< VRRP Sync groups >------");
-		dump_list(vrrp_data_obj->vrrp_sync_group);
+		dump_list(vrrp_data->vrrp_sync_group);
 	}
-	if (!LIST_ISEMPTY(vrrp_data_obj->vrrp_script)) {
+	if (!LIST_ISEMPTY(vrrp_data->vrrp_script)) {
 		log_message(LOG_INFO, "------< VRRP Scripts >------");
-		dump_list(vrrp_data_obj->vrrp_script);
+		dump_list(vrrp_data->vrrp_script);
 	}
 }

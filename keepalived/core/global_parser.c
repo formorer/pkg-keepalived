@@ -19,14 +19,16 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+#include <netdb.h>
 #include "global_parser.h"
 #include "global_data.h"
 #include "check_data.h"
 #include "parser.h"
 #include "memory.h"
+#include "smtp.h"
 #include "utils.h"
 
 /* data handlers */
@@ -61,7 +63,7 @@ smtpto_handler(vector strvec)
 static void
 smtpip_handler(vector strvec)
 {
-	inet_ston(VECTOR_SLOT(strvec, 1), &data->smtp_server);
+	inet_stosockaddr(VECTOR_SLOT(strvec, 1), SMTP_PORT_STR, &data->smtp_server);
 }
 static void
 email_handler(vector strvec)

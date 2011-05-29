@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _CHECK_API_H
@@ -38,21 +38,17 @@ typedef struct _checker {
 	void *data;
 	checker_id_t id;	/* Checker identifier */
 	int enabled;		/* Activation flag */
-} checker;
+} checker_t;
 
 /* Checkers queue */
 extern list checkers_queue;
 
 /* utility macro */
 #define CHECKER_ARG(X) ((X)->data)
-#define CHECKER_DATA(X) (((checker *)X)->data)
+#define CHECKER_DATA(X) (((checker_t *)X)->data)
 #define CHECKER_GET() (CHECKER_DATA(LIST_TAIL_DATA(checkers_queue)))
 #define CHECKER_VALUE_INT(X) (atoi(VECTOR_SLOT(X,1)))
 #define CHECKER_VALUE_STRING(X) (set_value(X))
-#define CHECKER_VIP(C)   (SVR_IP((C)->vs))
-#define CHECKER_VPORT(C) (SVR_PORT((C)->vs))
-#define CHECKER_RIP(C)   (SVR_IP((C)->rs))
-#define CHECKER_RPORT(C) (SVR_PORT((C)->rs))
 #define CHECKER_VHOST(C) (VHOST((C)->vs))
 #define CHECKER_ENABLED(C) ((C)->enabled)
 #define CHECKER_ENABLE(C)  ((C)->enabled = 1)
@@ -62,12 +58,14 @@ extern list checkers_queue;
 /* Prototypes definition */
 extern void init_checkers_queue(void);
 extern void queue_checker(void (*free_func) (void *), void (*dump_func) (void *)
-			  , int (*launch) (struct _thread *)
-			  , void *data);
+			  , int (*launch) (thread_t *)
+			  , void *);
 extern void dump_checkers_queue(void);
 extern void free_checkers_queue(void);
 extern void register_checkers_thread(void);
 extern void install_checkers_keyword(void);
-extern void update_checker_activity(uint32_t address, int enable);
+extern void update_checker_activity(sa_family_t, void *, int);
+extern void checker_set_dst(struct sockaddr_storage *);
+extern void checker_set_dst_port(struct sockaddr_storage *, uint16_t);
 
 #endif

@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _VRRP_IPSEC_AH_H
@@ -59,7 +59,6 @@ typedef struct {
 	uint32_t seq_number;
 } seq_counter;
 
-extern void hmac_md5(unsigned char *buffer, int buffer_len,
-		     unsigned char *key, int key_len, unsigned char *digest);
+extern void hmac_md5(unsigned char *, int, unsigned char *, int, unsigned char *);
 
 #endif

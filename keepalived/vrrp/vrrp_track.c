@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 /* local include */
@@ -29,9 +29,9 @@
 
 /* Track interface dump */
 void
-dump_track(void *track_data_obj)
+dump_track(void *track_data)
 {
-	tracked_if *tip = track_data_obj;
+	tracked_if *tip = track_data;
 	log_message(LOG_INFO, "     %s weight %d", IF_NAME(tip->ifp), tip->weight);
 }
 void
@@ -86,9 +86,9 @@ find_script_by_name(char *name)
 
 /* Track script dump */
 void
-dump_track_script(void *track_data_obj)
+dump_track_script(void *track_data)
 {
-	tracked_sc *tsc = track_data_obj;
+	tracked_sc *tsc = track_data;
 	log_message(LOG_INFO, "     %s weight %d", tsc->scr->sname, tsc->weight);
 }
 void
@@ -196,6 +196,9 @@ vrrp_script_up(list l)
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		tsc = ELEMENT_DATA(e);
+		if ((tsc->scr->result == VRRP_SCRIPT_STATUS_DISABLED) ||
+		    (tsc->scr->result == VRRP_SCRIPT_STATUS_INIT_GOOD))
+			continue;
 		if (!tsc->weight && tsc->scr->result < tsc->scr->rise)
 			return 0;
 	}
@@ -217,6 +220,8 @@ vrrp_script_weight(list l)
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		tsc = ELEMENT_DATA(e);
+		if (tsc->scr->result == VRRP_SCRIPT_STATUS_DISABLED)
+			continue;
 		if (tsc->scr->result >= tsc->scr->rise) {
 			if (tsc->weight > 0)
 				weight += tsc->weight;

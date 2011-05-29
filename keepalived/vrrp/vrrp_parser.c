@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include "vrrp_parser.h"
@@ -100,6 +100,15 @@ vrrp_handler(vector strvec)
 	alloc_vrrp(VECTOR_SLOT(strvec, 1));
 }
 static void
+vrrp_native_ipv6_handler(vector strvec)
+{
+	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp->family = AF_INET6;
+
+	if (vrrp->auth_type != VRRP_AUTH_NONE)
+		vrrp->auth_type = VRRP_AUTH_NONE;
+}
+static void
 vrrp_state_handler(vector strvec)
 {
 	char *str = VECTOR_SLOT(strvec, 1);
@@ -167,8 +176,9 @@ vrrp_prio_handler(vector strvec)
 		log_message(LOG_INFO, "VRRP Error : Priority not valid !\n");
 		log_message(LOG_INFO,
 		       "             must be between 1 & 255. reconfigure !\n");
-		log_message(LOG_INFO, "             Using default value : 100\n");
-		vrrp->effective_priority = vrrp->base_priority = 100;
+		log_message(LOG_INFO,
+			    "             Using default value : %d\n", VRRP_PRIO_DFL);
+		vrrp->effective_priority = vrrp->base_priority = VRRP_PRIO_DFL;
 	}
 }
 static void
@@ -284,9 +294,9 @@ vrrp_auth_type_handler(vector strvec)
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	char *str = VECTOR_SLOT(strvec, 1);
 
-	if (!strcmp(str, "AH"))
+	if (!strcmp(str, "AH") && vrrp->family == AF_INET)
 		vrrp->auth_type = VRRP_AUTH_AH;
-	else
+	else if (!strcmp(str, "PASS") && vrrp->family == AF_INET)
 		vrrp->auth_type = VRRP_AUTH_PASS;
 }
 static void
@@ -297,11 +307,11 @@ vrrp_auth_pass_handler(vector strvec)
 	int max_size = sizeof (vrrp->auth_data);
 	int str_len = strlen(str);
 
-	if (str_len > max_size - 1)
-		str_len = max_size - 1;
+	if (str_len > max_size)
+		str_len = max_size;
 
+	memset(vrrp->auth_data, 0, max_size);
 	memcpy(vrrp->auth_data, str, str_len);
-	vrrp->auth_data[str_len] = '\0';
 }
 static void
 vrrp_vip_handler(vector strvec)
@@ -411,6 +421,7 @@ vrrp_init_keywords(void)
 	install_keyword("notify", &vrrp_gnotify_handler);
 	install_keyword("smtp_alert", &vrrp_gsmtp_handler);
 	install_keyword_root("vrrp_instance", &vrrp_handler);
+	install_keyword("native_ipv6", &vrrp_native_ipv6_handler);
 	install_keyword("state", &vrrp_state_handler);
 	install_keyword("interface", &vrrp_int_handler);
 	install_keyword("dont_track_primary", &vrrp_dont_track_handler);

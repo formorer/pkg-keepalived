@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _VRRP_TRACK_H
@@ -72,15 +72,15 @@ typedef struct _tracked_sc {
 } tracked_sc;
 
 /* prototypes */
-extern void dump_track(void *track_data_obj);
-extern void alloc_track(list track_list, vector strvec);
-extern void dump_track_script(void *track_data_obj);
-extern void alloc_track_script(list track_list, vector strvec);
-extern int vrrp_tracked_up(list l);
-extern void vrrp_log_tracked_down(list l);
-extern int vrrp_tracked_weight(list l);
-extern int vrrp_script_up(list l);
-extern int vrrp_script_weight(list l);
-extern vrrp_script* find_script_by_name(char *name);
+extern void dump_track(void *);
+extern void alloc_track(list, vector);
+extern void dump_track_script(void *);
+extern void alloc_track_script(list, vector);
+extern int vrrp_tracked_up(list);
+extern void vrrp_log_tracked_down(list);
+extern int vrrp_tracked_weight(list);
+extern int vrrp_script_up(list);
+extern int vrrp_script_weight(list);
+extern vrrp_script* find_script_by_name(char *);
 
 #endif

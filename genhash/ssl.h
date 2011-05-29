@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2009 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _SSL_H
@@ -29,9 +29,9 @@
 
 /* Prototypes */
 extern void init_ssl(void);
-extern int ssl_connect(thread * thread_obj);
-extern int ssl_printerr(int err);
-extern int ssl_send_request(SSL * ssl, char *str_request, int request_len);
-extern int ssl_read_thread(thread * thread_obj);
+extern int ssl_connect(thread_t *);
+extern int ssl_printerr(int);
+extern int ssl_send_request(SSL *, char *, int);
+extern int ssl_read_thread(thread_t *);
 
 #endif

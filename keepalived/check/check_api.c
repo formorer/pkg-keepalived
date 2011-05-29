@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include <dirent.h>
@@ -41,53 +41,76 @@ list checkers_queue;
 
 /* free checker data */
 static void
-free_checker(void *chk_data_obj)
+free_checker(void *data)
 {
-	checker *checker_obj = chk_data_obj;
-	(*checker_obj->free_func) (checker_obj);
+	checker_t *checker= data;
+	(*checker->free_func) (checker);
 }
 
 /* dump checker data */
 static void
-dump_checker(void *data_obj)
+dump_checker(void *data)
 {
-	checker *checker_obj = data_obj;
-	log_message(LOG_INFO, " %s:%d", inet_ntop2(CHECKER_RIP(checker_obj))
-	       , ntohs(CHECKER_RPORT(checker_obj)));
-	(*checker_obj->dump_func) (checker_obj);
+	checker_t *checker = data;
+	log_message(LOG_INFO, " %s:%d"
+			    , inet_sockaddrtos(&checker->rs->addr)
+			    , ntohs(inet_sockaddrport(&checker->rs->addr)));
+	(*checker->dump_func) (checker);
 }
 
 /* Queue a checker into the checkers_queue */
 void
 queue_checker(void (*free_func) (void *), void (*dump_func) (void *)
-	      , int (*launch) (struct _thread *)
-	      , void *data_obj)
+	      , int (*launch) (thread_t *)
+	      , void *data)
 {
 	virtual_server *vs = LIST_TAIL_DATA(check_data->vs);
 	real_server *rs = LIST_TAIL_DATA(vs->rs);
-	checker *check_obj = (checker *) MALLOC(sizeof (checker));
+	checker_t *checker = (checker_t *) MALLOC(sizeof (checker_t));
 
-	check_obj->free_func = free_func;
-	check_obj->dump_func = dump_func;
-	check_obj->launch = launch;
-	check_obj->vs = vs;
-	check_obj->rs = rs;
-	check_obj->data = data_obj;
-	check_obj->id = ncheckers++;
-	check_obj->enabled = (vs->vfwmark) ? 1 : 0;
+	checker->free_func = free_func;
+	checker->dump_func = dump_func;
+	checker->launch = launch;
+	checker->vs = vs;
+	checker->rs = rs;
+	checker->data = data;
+	checker->id = ncheckers++;
+	checker->enabled = (vs->vfwmark) ? 1 : 0;
 #ifdef _WITHOUT_VRRP_
-	check_obj->enabled = 1;
+	checker->enabled = 1;
 #endif
 
 	/* queue the checker */
-	list_add(checkers_queue, check_obj);
+	list_add(checkers_queue, checker);
 
 	/* In Alpha mode also mark the check as failed. */
 	if (vs->alpha) {
 		list fc = rs->failed_checkers;
 		checker_id_t *id = (checker_id_t *) MALLOC(sizeof(checker_id_t));
-		*id = check_obj->id;
+		*id = checker->id;
 		list_add (fc, id);
+	}
+}
+
+/* Set dst */
+void
+checker_set_dst(struct sockaddr_storage *dst)
+{
+	virtual_server *vs = LIST_TAIL_DATA(check_data->vs);
+	real_server *rs = LIST_TAIL_DATA(vs->rs);
+
+	*dst = rs->addr;
+}
+
+void
+checker_set_dst_port(struct sockaddr_storage *dst, uint16_t port)
+{
+	if (dst->ss_family == AF_INET6) {
+		struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) dst;
+		addr6->sin6_port = port;
+	} else {
+		struct sockaddr_in *addr4 = (struct sockaddr_in *) dst;
+		addr4->sin_port = port;
 	}
 }
 
@@ -121,52 +144,67 @@ free_checkers_queue(void)
 void
 register_checkers_thread(void)
 {
-	checker *checker_obj;
+	checker_t *checker;
 	element e;
 
 	for (e = LIST_HEAD(checkers_queue); e; ELEMENT_NEXT(e)) {
-		checker_obj = ELEMENT_DATA(e);
-		log_message(LOG_INFO,
-		       "Activating healtchecker for service [%s:%d]",
-		       inet_ntop2(CHECKER_RIP(checker_obj)),
-		       ntohs(CHECKER_RPORT(checker_obj)));
-		CHECKER_ENABLE(checker_obj);
-		if (checker_obj->launch)
-			thread_add_timer(master, checker_obj->launch, checker_obj,
+		checker = ELEMENT_DATA(e);
+		log_message(LOG_INFO, "Activating healtchecker for service [%s]:%d"
+				    , inet_sockaddrtos(&checker->rs->addr)
+				    , ntohs(inet_sockaddrport(&checker->rs->addr)));
+		CHECKER_ENABLE(checker);
+		if (checker->launch)
+			thread_add_timer(master, checker->launch, checker,
 					 BOOTSTRAP_DELAY);
 	}
 }
 
 /* Sync checkers activity with netlink kernel reflection */
 void
-update_checker_activity(uint32_t address, int enable)
+update_checker_activity(sa_family_t family, void *address, int enable)
 {
-	checker *checker_obj;
+	checker_t *checker;
+	sa_family_t vip_family;
 	element e;
+	char addr_str[INET6_ADDRSTRLEN];
+	void *addr;
 
 	/* Display netlink operation */
-	if (debug & 32)
-		log_message(LOG_INFO, "Netlink reflector reports IP %s %s",
-		       inet_ntop2(address), (enable) ? "added" : "removed");
+	if (debug & 32) {
+		inet_ntop(family, address, addr_str, sizeof(addr_str));
+		log_message(LOG_INFO, "Netlink reflector reports IP %s %s"
+				    , addr_str, (enable) ? "added" : "removed");
+	}
 
 	/* Processing Healthcheckers queue */
-	if (!LIST_ISEMPTY(checkers_queue))
+	if (!LIST_ISEMPTY(checkers_queue)) {
 		for (e = LIST_HEAD(checkers_queue); e; ELEMENT_NEXT(e)) {
-			checker_obj = ELEMENT_DATA(e);
-			if (CHECKER_VIP(checker_obj) == address && CHECKER_HA_SUSPEND(checker_obj)) {
-				if (!CHECKER_ENABLED(checker_obj) && enable)
-					log_message(LOG_INFO,
-					       "Activating healtchecker for service [%s:%d]",
-					       inet_ntop2(CHECKER_RIP(checker_obj)),
-					       ntohs(CHECKER_RPORT(checker_obj)));
-				if (CHECKER_ENABLED(checker_obj) && !enable)
-					log_message(LOG_INFO,
-					       "Suspending healtchecker for service [%s:%d]",
-					       inet_ntop2(CHECKER_RIP(checker_obj)),
-					       ntohs(CHECKER_RPORT(checker_obj)));
-				checker_obj->enabled = enable;
+			checker = ELEMENT_DATA(e);
+			vip_family = checker->vs->addr.ss_family;
+
+			if (vip_family != family)
+				continue;
+
+			if (family == AF_INET6) {
+				addr = (void *) &((struct sockaddr_in6 *)&checker->vs->addr)->sin6_addr;
+			} else {
+				addr = (void *) &((struct sockaddr_in *)&checker->vs->addr)->sin_addr;
+			}
+
+			if (inaddr_equal(family, addr, address) &&
+			    CHECKER_HA_SUSPEND(checker)) {
+				if (!CHECKER_ENABLED(checker) && enable)
+					log_message(LOG_INFO, "Activating healtchecker for service [%s]:%d"
+							    , inet_sockaddrtos(&checker->rs->addr)
+							    , ntohs(inet_sockaddrport(&checker->rs->addr)));
+				if (CHECKER_ENABLED(checker) && !enable)
+					log_message(LOG_INFO, "Suspending healtchecker for service [%s]:%d"
+							    , inet_sockaddrtos(&checker->rs->addr)
+							    , ntohs(inet_sockaddrport(&checker->rs->addr)));
+				checker->enabled = enable;
 			}
 		}
+	}
 }
 
 /* Install checkers keywords */

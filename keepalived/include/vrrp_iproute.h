@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #ifndef _VRRP_IPROUTE_H
@@ -60,12 +60,12 @@ typedef struct _ip_route {
 			 (X)->index  == (Y)->index)
 
 /* prototypes */
-extern int netlink_route_ipv4(ip_route *iproute, int cmd);
-extern void netlink_rtlist_ipv4(list rt_list, int cmd);
-extern void free_iproute(void *rt_data_obj);
-extern void dump_iproute(void *rt_data_obj);
-extern void alloc_route(list rt_list, vector strvec);
-extern void clear_diff_routes(list l, list n);
+extern int netlink_route_ipv4(ip_route *, int);
+extern void netlink_rtlist_ipv4(list, int);
+extern void free_iproute(void *);
+extern void dump_iproute(void *);
+extern void alloc_route(list, vector);
+extern void clear_diff_routes(list, list);
 extern void clear_diff_sroutes(void);
 
 #endif

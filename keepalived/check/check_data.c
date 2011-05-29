@@ -17,9 +17,10 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+#include <netdb.h>
 #include "check_data.h"
 #include "check_api.h"
 #include "logger.h"
@@ -103,13 +104,13 @@ dump_vsg_entry(void *data)
 		log_message(LOG_INFO, "   FWMARK = %d", vsg_entry->vfwmark);
 	else if (vsg_entry->range)
 		log_message(LOG_INFO, "   VIP Range = %s-%d, VPORT = %d"
-		       , inet_ntop2(SVR_IP(vsg_entry))
-		       , vsg_entry->range
-		       , ntohs(SVR_PORT(vsg_entry)));
+				    , inet_sockaddrtos(&vsg_entry->addr)
+				    , vsg_entry->range
+				    , ntohs(inet_sockaddrport(&vsg_entry->addr)));
 	else
 		log_message(LOG_INFO, "   VIP = %s, VPORT = %d"
-		       , inet_ntop2(SVR_IP(vsg_entry))
-		       , ntohs(SVR_PORT(vsg_entry)));
+				    , inet_sockaddrtos(&vsg_entry->addr)
+				    , ntohs(inet_sockaddrport(&vsg_entry->addr)));
 }
 void
 alloc_vsg(char *gname)
@@ -138,9 +139,8 @@ alloc_vsg_entry(vector strvec)
 		new->vfwmark = atoi(VECTOR_SLOT(strvec, 1));
 		list_add(vsg->vfwmark, new);
 	} else {
-		inet_ston(VECTOR_SLOT(strvec, 0), &new->addr_ip);
 		new->range = inet_stor(VECTOR_SLOT(strvec, 0));
-		new->addr_port = htons(atoi(VECTOR_SLOT(strvec, 1)));
+		inet_stosockaddr(VECTOR_SLOT(strvec, 0), VECTOR_SLOT(strvec, 1), &new->addr);
 		if (!new->range)
 			list_add(vsg->addr_ip, new);
 		else
@@ -171,8 +171,8 @@ dump_vs(void *data)
 	else if (vs->vfwmark)
 		log_message(LOG_INFO, " VS FWMARK = %d", vs->vfwmark);
 	else
-		log_message(LOG_INFO, " VIP = %s, VPORT = %d", inet_ntop2(SVR_IP(vs))
-		       , ntohs(SVR_PORT(vs)));
+		log_message(LOG_INFO, " VIP = %s, VPORT = %d"
+				    , inet_sockaddrtos(&vs->addr), ntohs(inet_sockaddrport(&vs->addr)));
 	if (vs->virtualhost)
 		log_message(LOG_INFO, "   VirtualHost = %s", vs->virtualhost);
 	log_message(LOG_INFO, "   delay_loop = %lu, lb_algo = %s",
@@ -214,9 +214,9 @@ dump_vs(void *data)
 	}
 
 	if (vs->s_svr) {
-		log_message(LOG_INFO, "   sorry server = %s:%d",
-		       inet_ntop2(SVR_IP(vs->s_svr))
-		       , ntohs(SVR_PORT(vs->s_svr)));
+		log_message(LOG_INFO, "   sorry server = %s:%d"
+				    , inet_sockaddrtos(&vs->s_svr->addr)
+				    , ntohs(inet_sockaddrport(&vs->s_svr->addr)));
 	}
 	if (!LIST_ISEMPTY(vs->rs))
 		dump_list(vs->rs);
@@ -236,9 +236,9 @@ alloc_vs(char *ip, char *port)
 	} else if (!strcmp(ip, "fwmark")) {
 		new->vfwmark = atoi(port);
 	} else {
-		inet_ston(ip, &new->addr_ip);
-		new->addr_port = htons(atoi(port));
+		inet_stosockaddr(ip, port, &new->addr);
 	}
+
 	new->delay_loop = KEEPALIVED_DEFAULT_DELAY;
 	strncpy(new->timeout_persistence, "0", 1);
 	new->virtualhost = NULL;
@@ -261,8 +261,8 @@ alloc_ssvr(char *ip, char *port)
 
 	vs->s_svr = (real_server *) MALLOC(sizeof (real_server));
 	vs->s_svr->weight = 1;
-	inet_ston(ip, &vs->s_svr->addr_ip);
-	vs->s_svr->addr_port = htons(atoi(port));
+	vs->s_svr->iweight = 1;
+	inet_stosockaddr(ip, port, &vs->s_svr->addr);
 }
 
 /* Real server facility functions */
@@ -279,10 +279,11 @@ static void
 dump_rs(void *data)
 {
 	real_server *rs = data;
-	log_message(LOG_INFO, "   RIP = %s, RPORT = %d, WEIGHT = %d",
-	       inet_ntop2(SVR_IP(rs))
-	       , ntohs(SVR_PORT(rs))
-	       , rs->weight);
+
+	log_message(LOG_INFO, "   RIP = %s, RPORT = %d, WEIGHT = %d"
+			    , inet_sockaddrtos(&rs->addr)
+			    , ntohs(inet_sockaddrport(&rs->addr))
+			    , rs->weight);
 	if (rs->inhibit)
 		log_message(LOG_INFO, "     -> Inhibit service on failure");
 	if (rs->notify_up)
@@ -306,10 +307,10 @@ alloc_rs(char *ip, char *port)
 	real_server *new;
 
 	new = (real_server *) MALLOC(sizeof (real_server));
+	inet_stosockaddr(ip, port, &new->addr);
 
-	inet_ston(ip, &new->addr_ip);
-	new->addr_port = htons(atoi(port));
 	new->weight = 1;
+	new->iweight = 1;
 	new->failed_checkers = alloc_list(free_failed_checkers, NULL);
 
 	if (LIST_ISEMPTY(vs->rs))
@@ -331,27 +332,27 @@ alloc_check_data(void)
 }
 
 void
-free_check_data(check_conf_data *check_data_obj)
+free_check_data(check_conf_data *check_data)
 {
-	free_list(check_data_obj->vs);
-	free_list(check_data_obj->vs_group);
-	FREE(check_data_obj);
+	free_list(check_data->vs);
+	free_list(check_data->vs_group);
+	FREE(check_data);
 }
 
 void
-dump_check_data(check_conf_data *check_data_obj)
+dump_check_data(check_conf_data *check_data)
 {
-	if (check_data_obj->ssl) {
+	if (check_data->ssl) {
 		log_message(LOG_INFO, "------< SSL definitions >------");
 		dump_ssl();
 	}
-	if (!LIST_ISEMPTY(check_data_obj->vs)) {
+	if (!LIST_ISEMPTY(check_data->vs)) {
 		log_message(LOG_INFO, "------< LVS Topology >------");
 		log_message(LOG_INFO, " System is compiled with LVS v%d.%d.%d",
 		       NVERSION(IP_VS_VERSION_CODE));
-		if (!LIST_ISEMPTY(check_data_obj->vs_group))
-			dump_list(check_data_obj->vs_group);
-		dump_list(check_data_obj->vs);
+		if (!LIST_ISEMPTY(check_data->vs_group))
+			dump_list(check_data->vs_group);
+		dump_list(check_data->vs);
 	}
 	dump_checkers_queue();
 }

@@ -17,11 +17,13 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2010 Alexandre Cassen, <acassen@freebox.fr>
+ * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include "check_daemon.h"
 #include "check_parser.h"
+#include "ipwrapper.h"
+#include "ipvswrapper.h"
 #include "check_data.h"
 #include "check_ssl.h"
 #include "check_api.h"
@@ -132,7 +134,7 @@ start_check(void)
 }
 
 /* Reload handler */
-int reload_check_thread(thread * thread_obj);
+int reload_check_thread(thread_t *);
 void
 sighup_check(void *v, int sig)
 {
@@ -163,7 +165,7 @@ check_signal_init(void)
 
 /* Reload thread */
 int
-reload_check_thread(thread * thread_obj)
+reload_check_thread(thread_t * thread)
 {
 	/* set the reloading flag */
 	SET_RELOAD;
@@ -202,15 +204,15 @@ reload_check_thread(thread * thread_obj)
 
 /* CHECK Child respawning thread */
 int
-check_respawn_thread(thread * thread_obj)
+check_respawn_thread(thread_t * thread)
 {
 	pid_t pid;
 
 	/* Fetch thread args */
-	pid = THREAD_CHILD_PID(thread_obj);
+	pid = THREAD_CHILD_PID(thread);
 
 	/* Restart respawning thread */
-	if (thread_obj->type == THREAD_CHILD_TIMEOUT) {
+	if (thread->type == THREAD_CHILD_TIMEOUT) {
 		thread_add_child(master, check_respawn_thread, NULL,
 				 pid, RESPAWN_TIMER);
 		return 0;
