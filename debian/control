@@ -1,6 +1,6 @@
 Source: keepalived
 Section: admin
-Priority: optional
+Priority: extra
 Maintainer: Alexander Wirt <formorer@debian.org>
 Build-Depends: debhelper (>= 5), libssl-dev, libpopt-dev, cdbs, autoconf, linux-libc-dev, libnl-dev
 Standards-Version: 3.9.1
