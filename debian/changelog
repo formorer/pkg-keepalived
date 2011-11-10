@@ -2,7 +2,8 @@ keepalived (1:1.2.2-2) unstable; urgency=low
 
   * [9db4134] Fix override disparity
   * [8f0c721] Remove obsolete patch
-  * [897c0a0] Set correct permissions on pid file. This is a fix for CVE-2011-1784.
+  * [897c0a0] Set correct permissions on pid file.
+    This is a fix for CVE-2011-1784.
     (Closes: #626281)
   * [5ab4b8d] Don't use modprobe -k.
     Thanks to Sven Ulland for the patch
