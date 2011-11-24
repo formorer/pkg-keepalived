@@ -6,6 +6,7 @@ include /usr/share/cdbs/1/class/autotools.mk
 
 DEB_AUTO_UPDATE_AUTOCONF = 2.50 
 DEB_CONFIGURE_SCRIPT_ENV := STRIP=/bin/true $(DEB_CONFIGURE_SCRIPT_ENV)
+DEB_CONFIGURE_EXTRA_FLAGS := --with-kernel-dir=debian/
 
 binary-install/keepalived::
 	rm -rf $(DEB_DESTDIR)/etc/keepalived/samples
