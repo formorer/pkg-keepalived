@@ -1,3 +1,11 @@
+keepalived (1:1.2.2-3) unstable; urgency=low
+
+  * [c28d5f0] Readd ip_vs.h - this reenables ipvs (Closes: #649778)
+  * [9990fc7] Add a patch to fix rety behaviou of check_http.
+    Thanks to Volker Klasen for the patch (Closes: #626466)
+
+ -- Alexander Wirt <formorer@debian.org>  Sun, 18 Dec 2011 16:18:06 +0100
+
 keepalived (1:1.2.2-2) unstable; urgency=low
 
   * [9db4134] Fix override disparity
