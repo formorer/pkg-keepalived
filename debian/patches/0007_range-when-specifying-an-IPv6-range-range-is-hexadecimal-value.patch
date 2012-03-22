@@ -1,0 +1,33 @@
+commit e629c803dfdf012917b242e8e703feaec006496f
+Author: Vincent Bernat <bernat@luffy.cx>
+Date:   Thu May 26 13:50:25 2011 +0200
+
+    range: when specifying an IPv6 range, range is hexadecimal value
+    
+    A range 2001:db8::16-30 was interpreted as 0x16 -> 0x1e while it
+    should be interpreted as 0x16 -> 0x30.
+
+diff --git a/lib/utils.c b/lib/utils.c
+index 03f1e5f..a262dc0 100644
+--- a/lib/utils.c
++++ b/lib/utils.c
+@@ -147,16 +147,15 @@ inet_stom(char *addr)
+ uint8_t
+ inet_stor(char *addr)
+ {
+-	uint8_t range = 0;
+ 	char *cp = addr;
+ 
+ 	if (!strstr(addr, "-"))
+-		return range;
++		return 0;
+ 	while (*cp != '-' && *cp != '\0')
+ 		cp++;
+ 	if (*cp == '-')
+-		return atoi(++cp);
+-	return range;
++		return strtoul(++cp, NULL, (strchr(addr, ':')) ? 16 : 10);
++	return 0;
+ }
+ 
+ /* IP string to sockaddr_storage */
