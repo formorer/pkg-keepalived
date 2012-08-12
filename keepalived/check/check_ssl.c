@@ -76,7 +76,7 @@ build_ssl_ctx(void)
 		ssl = check_data->ssl;
 
 	/* Initialize SSL context for SSL v2/3 */
-	ssl->meth = SSLv23_method();
+	ssl->meth = (SSL_METHOD *) SSLv23_method();
 	ssl->ctx = SSL_CTX_new(ssl->meth);
 
 	/* return for autogen context */
@@ -141,7 +141,7 @@ init_ssl_ctx(void)
 		log_message(LOG_INFO, "  SSL  keyfile:%s", ssl->keyfile);
 		log_message(LOG_INFO, "  SSL password:%s", ssl->password);
 		log_message(LOG_INFO, "  SSL   cafile:%s", ssl->cafile);
-		log_message(LOG_INFO, "Terminate...\n");
+		log_message(LOG_INFO, "Terminate...");
 		clear_ssl(ssl);
 		return 0;
 	}

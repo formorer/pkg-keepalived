@@ -122,11 +122,9 @@ clear_services(void)
 	element e;
 	list l = check_data->vs;
 	virtual_server *vs;
-	real_server *rs;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vs = ELEMENT_DATA(e);
-		rs = ELEMENT_DATA(LIST_HEAD(vs->rs));
 		if (!clear_service_vs(check_data->vs_group, vs))
 			return 0;
 	}
@@ -497,7 +495,7 @@ clear_diff_vsge(list old, list new, virtual_server * old_vs)
 	for (e = LIST_HEAD(old); e; ELEMENT_NEXT(e)) {
 		vsge = ELEMENT_DATA(e);
 		if (!vsge_exist(vsge, new)) {
-			log_message(LOG_INFO, "VS [%s:%d:%d:%d] in group %s no longer exist\n" 
+			log_message(LOG_INFO, "VS [[%s]:%d:%d:%d] in group %s no longer exist" 
 					    , inet_sockaddrtos(&vsge->addr)
 					    , ntohs(inet_sockaddrport(&vsge->addr))
 					    , vsge->range

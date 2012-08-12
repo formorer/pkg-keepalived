@@ -51,7 +51,7 @@ dnl ----[ Checks for libraries ]----
 AC_CHECK_LIB(crypto, MD5_Init,,AC_MSG_ERROR([OpenSSL libraries are required]))
 AC_CHECK_LIB(ssl, SSL_CTX_new,,AC_MSG_ERROR([OpenSSL libraries are required]))
 AC_CHECK_LIB(popt, poptGetContext,,AC_MSG_ERROR([Popt libraries is required]))
-AC_CHECK_LIB(nl, nl_handle_alloc,
+AC_CHECK_LIB(nl, nl_socket_modify_cb,
   [
     USE_NL="LIBIPVS_USE_NL"
     LIBS="$LIBS -lnl"
@@ -107,9 +107,9 @@ AC_TRY_RUN([
     AC_MSG_RESULT([2.6])
   else
     AC_MSG_RESULT([$LINUX_MAJOR.$LINUX_MINOR.$LINUX_PATCH])
-    if test "$LINUX_MINOR" = "6"; then
+    if test "$LINUX_MAJOR" = "2" && test "$LINUX_MINOR" = "6"; then
       KERN="_KRNL_2_6_"
-    elif test "$LINUX_MINOR" = "4"; then
+    elif test "$LINUX_MAJOR" = "2" && test "$LINUX_MINOR" = "4"; then
       KERN="_KRNL_2_4_"
     else
       KERN="_KRNL_2_6_"
@@ -124,12 +124,16 @@ AC_SUBST(KERN)
 dnl ----[ Checks for LVS and VRRP support ]----
 IPVS_SUPPORT="_WITHOUT_LVS_"
 if test "$enable_lvs" != "no"; then
-  AC_CHECK_HEADER([net/ip_vs.h],
-    [IPVS_SUPPORT="_WITH_LVS_"],
-    [
-      IPVS_SUPPORT="_WITHOUT_LVS_"
-      AC_MSG_WARN([keepalived will be built without LVS support.])
-    ])
+  if test "$KERN" = "_KRNL_2_6_"; then
+    IPVS_SUPPORT="_WITH_LVS_"
+  else
+    AC_CHECK_HEADER([net/ip_vs.h],
+      [IPVS_SUPPORT="_WITH_LVS_"],
+      [
+        IPVS_SUPPORT="_WITHOUT_LVS_"
+        AC_MSG_WARN([keepalived will be built without LVS support.])
+      ])
+  fi
 fi  
 
 if test "$IPVS_SUPPORT" = "_WITHOUT_LVS_" -a "$enable_vrrp" = "no"; then
@@ -167,11 +171,38 @@ if test "$enable_vrrp" != "no"; then
   VRRP_SUPPORT="_WITH_VRRP_"
 fi
 
+dnl ----[ Checks for kernel VMAC support ]----
+CPPFLAGS="$CPPFLAGS -I$kernelinc"
+AC_MSG_CHECKING([for kernel macvlan support])
+AC_TRY_COMPILE([
+    #include <bits/sockaddr.h>
+    #include <linux/if_link.h>
+    int macvlan;
+  ], [
+    macvlan = IFLA_MACVLAN_MODE;
+    macvlan = MACVLAN_MODE_PRIVATE;
+  ], [
+    MACVLAN_SUPPORT=yes
+  ], []);
+
+  if test "$MACVLAN_SUPPORT" = "yes"; then
+    VRRP_VMAC="_HAVE_VRRP_VMAC_"
+    AC_MSG_RESULT([yes])
+  else
+    VRRP_VMAC="_WITHOUT_VRRP_VMAC_"
+    AC_MSG_RESULT([no])
+  fi
+
+AC_SUBST(VRRP_VMAC)
+
+
+dnl ----[ Debug or not ? ]----
 if test "${enable_debug}" = "yes"; then
   DFLAGS="-D_DEBUG_"
   AC_SUBST(DFLAGS)
 fi
 
+dnl ----[ Profiling or not ? ]----
 if test "${enable_profile}" = "yes"; then
   CFLAGS="$CFLAGS -pg"
 fi
@@ -243,6 +274,11 @@ fi
 
 if test "${VRRP_SUPPORT}" = "_WITH_VRRP_"; then
   echo "Use VRRP Framework       : Yes"
+  if test "${VRRP_VMAC}" = "_HAVE_VRRP_VMAC_"; then
+    echo "Use VRRP VMAC            : Yes"
+  else
+    echo "Use VRRP VMAC            : No"
+  fi
 else
   echo "Use VRRP Framework       : No"
 fi

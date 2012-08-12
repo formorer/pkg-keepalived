@@ -138,8 +138,6 @@ int reload_check_thread(thread_t *);
 void
 sighup_check(void *v, int sig)
 {
-	log_message(LOG_INFO, "Reloading Healthchecker child process(%d) on signal",
-		    getpid());
 	thread_add_event(master, reload_check_thread, NULL, 0);
 }
 
@@ -147,7 +145,6 @@ sighup_check(void *v, int sig)
 void
 sigend_check(void *v, int sig)
 {
-	log_message(LOG_INFO, "Terminating Healthchecker child process on signal");
 	if (master)
 		thread_add_terminate_event(master);
 }
@@ -219,7 +216,7 @@ check_respawn_thread(thread_t * thread)
 	}
 
 	/* We catch a SIGCHLD, handle it */
-	log_message(LOG_INFO, "Healthcheck child process(%d) died: Respawning", pid);
+	log_message(LOG_ALERT, "Healthcheck child process(%d) died: Respawning", pid);
 	start_check_child();
 	return 0;
 }
@@ -251,7 +248,7 @@ start_check_child(void)
 	}
 
 	/* Opening local CHECK syslog channel */
-	openlog(PROG_CHECK, LOG_PID | (debug & 1) ? LOG_CONS : 0, 
+	openlog(PROG_CHECK, LOG_PID | ((debug & 1) ? LOG_CONS : 0),
 		(log_facility==LOG_DAEMON) ? LOG_LOCAL2 : log_facility);
 
 	/* Child process part, write pidfile */
@@ -267,6 +264,9 @@ start_check_child(void)
 
 	/* change to / dir */
 	ret = chdir("/");
+	if (ret < 0) {
+		log_message(LOG_INFO, "Healthcheck child process: error chdir");
+	}
 
 	/* Set mask */
 	umask(0);
