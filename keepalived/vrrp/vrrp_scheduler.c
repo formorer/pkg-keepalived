@@ -189,7 +189,7 @@ vrrp_init_state(list l)
 		/* In case of VRRP SYNC, we have to carefully check that we are
 		 * not running floating priorities on any VRRP instance.
 		 */
-		if (vrrp->sync && !vrrp->sync->global_tracking) {
+		if (vrrp->sync) {
 			element e;
 			tracked_sc *sc;
 			tracked_if *tip;
@@ -702,11 +702,11 @@ vrrp_update_priority(thread_t * thread)
 	prio_offset = 0;
 
 	/* Now we will sum the weights of all interfaces which are tracked. */
-	if ((!vrrp->sync || vrrp->sync->global_tracking) && !LIST_ISEMPTY(vrrp->track_ifp))
+	if (!vrrp->sync && !LIST_ISEMPTY(vrrp->track_ifp))
 		 prio_offset += vrrp_tracked_weight(vrrp->track_ifp);
 
 	/* Now we will sum the weights of all scripts which are tracked. */
-	if ((!vrrp->sync || vrrp->sync->global_tracking) && !LIST_ISEMPTY(vrrp->track_script))
+	if (!vrrp->sync && !LIST_ISEMPTY(vrrp->track_script))
 		prio_offset += vrrp_script_weight(vrrp->track_script);
 
 	if (vrrp->base_priority == VRRP_PRIO_OWNER) {
@@ -948,14 +948,7 @@ vrrp_script_thread(thread_t * thread)
 	closeall(0);
 	open("/dev/null", O_RDWR);
 	ret = dup(0);
-	if (ret < 0) {
-		log_message(LOG_INFO, "dup(0) error");
-	}
-
 	ret = dup(0);
-	if (ret < 0) {
-		log_message(LOG_INFO, "dup(0) error");
-	}
 
 	status = system_call(vscript->script);
 

@@ -35,7 +35,6 @@
 #include "vrrp_data.h"
 #include "vrrp_sync.h"
 #include "vrrp_index.h"
-#include "vrrp_vmac.h"
 #include "memory.h"
 #include "list.h"
 #include "logger.h"
@@ -234,8 +233,8 @@ vrrp_in_chk(vrrp_rt * vrrp, char *buffer)
 		ihl = ip->ihl << 2;
 
 		if (vrrp->auth_type == VRRP_AUTH_AH) {
-			ah = (ipsec_ah *) (buffer + ihl);
-			hd = (vrrp_pkt *) (ah + vrrp_ipsecah_len());
+			ah = (ipsec_ah *) (buffer + sizeof (struct iphdr));
+			hd = (vrrp_pkt *) (buffer + ihl + vrrp_ipsecah_len());
 		} else {
 			hd = (vrrp_pkt *) (buffer + ihl);
 		}
@@ -331,7 +330,7 @@ vrrp_in_chk(vrrp_rt * vrrp, char *buffer)
 	 */
 	if (vrrp->auth_type != hd->auth_type) {
 		log_message(LOG_INFO, "receive a %d auth, expecting %d!",
-		       hd->auth_type, vrrp->auth_type);
+		       vrrp->auth_type, hd->auth_type);
 		return VRRP_PACKET_KO;
 	}
 
@@ -370,8 +369,7 @@ vrrp_build_ip(vrrp_rt * vrrp, char *buffer, int buflen)
 
 	ip->ihl = 5;
 	ip->version = 4;
-	/* set tos to internet network control */
-	ip->tos = 0xc0;
+	ip->tos = 0;
 	ip->tot_len = ip->ihl * 4 + vrrp_hd_len(vrrp);
 	ip->tot_len = htons(ip->tot_len);
 	ip->id = htons(++vrrp->ip_id);
@@ -742,8 +740,6 @@ vrrp_state_goto_master(vrrp_rt * vrrp)
 	 * Send an advertisement. To force a new master
 	 * election.
 	 */
-        if (vrrp->sync && !vrrp_sync_goto_master(vrrp))
-	      return;
 	vrrp_send_adv(vrrp, vrrp->effective_priority);
 
 	vrrp->state = VRRP_STATE_MAST;
@@ -1002,7 +998,6 @@ open_vrrp_send_socket(sa_family_t family, int proto, int idx)
 		if_setsockopt_hdrincl(&fd);
 		if_setsockopt_bindtodevice(&fd, ifp);
 		if_setsockopt_mcast_loop(family, &fd);
-		if_setsockopt_priority(&fd);
 		if (fd < 0)
 			return -1;
 	} else if (family == AF_INET6) {
@@ -1010,7 +1005,6 @@ open_vrrp_send_socket(sa_family_t family, int proto, int idx)
 		if_setsockopt_mcast_hops(family, &fd);
 		if_setsockopt_mcast_if(family, &fd, ifp);
 		if_setsockopt_mcast_loop(family, &fd);
-		if_setsockopt_priority(&fd);
 		if (fd < 0)
 			return -1;
 	} else {
@@ -1092,13 +1086,9 @@ shutdown_vrrp_instances(void)
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);
 
-		/* Remove VIPs/VROUTEs */
+		/* remove VIPs */
 		if (vrrp->state == VRRP_STATE_MAST)
 			vrrp_restore_interface(vrrp, 1);
-
-		/* Remove VMAC */
-		if (vrrp->vmac)
-			netlink_link_del_vmac(vrrp);
 
 		/* Run stop script */
 		if (vrrp->script_stop)
@@ -1206,8 +1196,7 @@ reset_vrrp_state(vrrp_rt * old_vrrp)
 	vrrp->state = old_vrrp->state;
 	vrrp->init_state = old_vrrp->state;
 	vrrp->wantstate = old_vrrp->state;
-	if (!old_vrrp->sync)
-		vrrp->effective_priority = old_vrrp->effective_priority;
+	vrrp->effective_priority = old_vrrp->effective_priority;
 	memcpy(vrrp->ipsecah_counter, old_vrrp->ipsecah_counter, sizeof(seq_counter));
 
 #ifdef _HAVE_IPVS_SYNCD_

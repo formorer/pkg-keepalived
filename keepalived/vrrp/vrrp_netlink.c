@@ -454,11 +454,6 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	if (ifi->ifi_type == ARPHRD_LOOPBACK)
 		return 0;
 
-	/* Skip it if already exist */
-	ifp = if_get_by_ifname(name);
-	if (ifp)
-		return 0;
-
 	/* Fill the interface structure */
 	ifp = (interface *) MALLOC(sizeof (interface));
 	memcpy(ifp->ifname, name, strlen(name));
@@ -682,8 +677,10 @@ netlink_broadcast_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 int
 kernel_netlink(thread_t * thread)
 {
+	int status = 0;
+
 	if (thread->type != THREAD_READ_TIMEOUT)
-		netlink_parse_info(netlink_broadcast_filter, &nl_kernel, NULL);
+		status = netlink_parse_info(netlink_broadcast_filter, &nl_kernel, NULL);
 	thread_add_read(master, kernel_netlink, NULL, nl_kernel.fd,
 			NETLINK_TIMER);
 	return 0;

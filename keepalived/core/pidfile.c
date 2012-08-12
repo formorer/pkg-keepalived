@@ -20,9 +20,6 @@
  * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include "logger.h"
 #include "pidfile.h"
 extern char *main_pidfile;
@@ -33,9 +30,7 @@ extern char *vrrp_pidfile;
 int
 pidfile_write(char *pid_file, int pid)
 {
-	FILE *pidfile = NULL;
-	int pidfd = creat(pid_file, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-	if (pidfd != -1) pidfile = fdopen(pidfd, "w");
+	FILE *pidfile = fopen(pid_file, "w");
 
 	if (!pidfile) {
 		log_message(LOG_INFO, "pidfile_write : Can not open %s pidfile",
@@ -67,9 +62,6 @@ process_running(char *pid_file)
 		return 0;
 
 	ret = fscanf(pidfile, "%d", &pid);
-	if (ret == EOF && ferror(pidfile) != 0) {
-		log_message(LOG_INFO, "Error opening pid file %s", pid_file);
-	}
 	fclose(pidfile);
 
 	/* If no process is attached to pidfile, remove it */

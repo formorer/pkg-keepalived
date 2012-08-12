@@ -80,8 +80,6 @@ dump_vgroup(void *data)
 		str = VECTOR_SLOT(vgroup->iname, i);
 		log_message(LOG_INFO, "   monitor = %s", str);
 	}
-	if (vgroup->global_tracking)
-		log_message(LOG_INFO, "   Same tracking for all VRRP instances");
 	if (vgroup->script_backup)
 		log_message(LOG_INFO, "   Backup state transition script = %s",
 		       vgroup->script_backup);
@@ -284,7 +282,6 @@ alloc_vrrp_sync_group(char *gname)
 	new->gname = (char *) MALLOC(size + 1);
 	new->state = VRRP_STATE_INIT;
 	memcpy(new->gname, gname, size);
-	new->global_tracking = 0;
 
 	list_add(vrrp_data->vrrp_sync_group, new);
 }

@@ -95,7 +95,6 @@ if_get_by_ifname(const char *ifname)
 		if (!strcmp(ifp->ifname, ifname))
 			return ifp;
 	}
-
 	log_message(LOG_ERR, "No such interface, %s", ifname);
 	return NULL;
 }
@@ -262,9 +261,9 @@ free_if(void *data)
 }
 
 void
-dump_if(void *data)
+dump_if(void *if_data)
 {
-	interface *ifp = data;
+	interface *ifp = if_data;
 	char addr_str[41];
 
 	log_message(LOG_INFO, "------< NIC >------");
@@ -615,24 +614,6 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface *ifp)
 	ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex));
 	if (ret < 0) {
 		log_message(LOG_INFO, "cant set IPV6_MULTICAST_IF IP option. errno=%d (%m)", errno);
-		close(*sd);
-		*sd = -1;
-	}
-
-	return *sd;
-}
-
-int if_setsockopt_priority(int *sd) {
-	int ret;
-	int priority = 6;
-
-	if (*sd < 0)
-		return -1;
-
-	/* Set SO_PRIORITY for VRRP traffic */
-	ret = setsockopt(*sd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
-	if (ret < 0) {
-		log_message(LOG_INFO, "cant set SO_PRIORITY IP option. errno=%d (%m)", errno);
 		close(*sd);
 		*sd = -1;
 	}

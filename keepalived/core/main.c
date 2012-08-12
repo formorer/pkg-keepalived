@@ -87,6 +87,9 @@ start_keepalived(void)
 void
 sighup(void *v, int sig)
 {
+	/* Set the reloading flag */
+	SET_RELOAD;
+
 	/* Signal child process */
 	if (vrrp_child > 0)
 		kill(vrrp_child, SIGHUP);
@@ -101,6 +104,7 @@ sigend(void *v, int sig)
 	int status;
 
 	/* register the terminate thread */
+	log_message(LOG_INFO, "Terminating on signal");
 	thread_add_terminate_event(master);
 
 	if (vrrp_child > 0) {
@@ -313,7 +317,7 @@ main(int argc, char **argv)
 	 */
 	parse_cmdline(argc, argv);
 
-	openlog(PROG, LOG_PID | ((debug & 1) ? LOG_CONS : 0), log_facility);
+	openlog(PROG, LOG_PID | (debug & 1) ? LOG_CONS : 0, log_facility);
 	log_message(LOG_INFO, "Starting " VERSION_STRING);
 
 	/* Check if keepalived is already running */
@@ -321,9 +325,6 @@ main(int argc, char **argv)
 		log_message(LOG_INFO, "daemon is already running");
 		goto end;
 	}
-
-	if (debug & 1)
-		enable_console_log();
 
 	/* daemonize process */
 	if (!(debug & 2))

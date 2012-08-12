@@ -8,13 +8,13 @@ CC	 = @CC@
 INCLUDES = -I../include -I../../lib
 CFLAGS	 = @CFLAGS@ @CPPFLAGS@ $(INCLUDES) \
 	   -Wall -Wunused -Wstrict-prototypes
-DEFS	 = -D@KERN@ -D@IPVS_SUPPORT@ -D@IPVS_SYNCD@ -D@VRRP_VMAC@ @DFLAGS@
+DEFS	 = -D@KERN@ -D@IPVS_SUPPORT@ -D@IPVS_SYNCD@ @DFLAGS@
 COMPILE	 = $(CC) $(CFLAGS) $(DEFS)
 
 OBJS = 	vrrp_daemon.o vrrp_data.o vrrp_parser.o \
 	vrrp.o vrrp_notify.o vrrp_scheduler.o vrrp_sync.o vrrp_index.o \
 	vrrp_netlink.o vrrp_arp.o vrrp_if.o vrrp_track.o vrrp_ipaddress.o \
-	vrrp_iproute.o vrrp_ipsecah.o vrrp_ndisc.o vrrp_vmac.o
+	vrrp_iproute.o vrrp_ipsecah.o vrrp_ndisc.o
 HEADERS = $(OBJS:.o=.h)
 
 .c.o:
@@ -44,7 +44,7 @@ vrrp_parser.o: vrrp_parser.c ../include/vrrp_parser.h \
 vrrp.o: vrrp.c ../include/vrrp.h ../include/vrrp_scheduler.h \
   ../include/vrrp_notify.h ../include/ipvswrapper.h ../../lib/memory.h \
   ../../lib/list.h ../include/vrrp_data.h ../include/vrrp_sync.h ../include/vrrp_index.h \
-  ../include/vrrp_arp.h ../../lib/utils.h ../include/vrrp_vmac.h
+  ../include/vrrp_arp.h ../../lib/utils.h
 vrrp_notify.o: vrrp_notify.c ../include/vrrp_notify.h ../../lib/memory.h \
   ../../lib/notify.h
 vrrp_scheduler.o: vrrp_scheduler.c ../include/vrrp_scheduler.h \
@@ -72,5 +72,3 @@ vrrp_iproute.o: vrrp_iproute.c ../include/vrrp_iproute.h ../include/vrrp_netlink
 vrrp_ipsecah.o: vrrp_ipsecah.c ../include/vrrp_ipsecah.h
 vrrp_ndisc.o: vrrp_ndisc.c ../include/vrrp_ndisc.h ../include/vrrp_ipaddress.h \
   ../../lib/utils.h ../../lib/memory.h
-vrrp_vmac.o: vrrp_vmac.c ../include/vrrp_vmac.h ../include/vrrp_netlink.h \
-  ../include/vrrp_data.h ../../lib/logger.h ../../lib/memory.h ../../lib/utils.h

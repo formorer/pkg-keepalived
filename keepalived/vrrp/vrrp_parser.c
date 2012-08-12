@@ -27,7 +27,6 @@
 #include "vrrp_sync.h"
 #include "vrrp_index.h"
 #include "vrrp_if.h"
-#include "vrrp_vmac.h"
 #include "vrrp.h"
 #include "global_data.h"
 #include "global_parser.h"
@@ -96,37 +95,9 @@ vrrp_gsmtp_handler(vector strvec)
 	vgroup->smtp_alert = 1;
 }
 static void
-vrrp_gglobal_tracking_handler(vector strvec)
-{
-	vrrp_sgroup *vgroup = LIST_TAIL_DATA(vrrp_data->vrrp_sync_group);
-	vgroup->global_tracking = 1;
-}
-static void
 vrrp_handler(vector strvec)
 {
 	alloc_vrrp(VECTOR_SLOT(strvec, 1));
-}
-static void
-vrrp_vmac_handler(vector strvec)
-{
-	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	vrrp->vmac = 1;
-	if (!vrrp->mcast_saddr)
-		vrrp->mcast_saddr  = IF_ADDR(vrrp->ifp);
-	if (VECTOR_SIZE(strvec) == 2) {
-		strncpy(vrrp->vmac_ifname, VECTOR_SLOT(strvec, 1),
-			IFNAMSIZ - 1);
-	} else if (vrrp->vrid) {
-		snprintf(vrrp->vmac_ifname, IFNAMSIZ, "vrrp.%d", vrrp->vrid);
-	}
-
-	if (strlen(vrrp->vmac_ifname)) {
-		log_message(LOG_INFO, "vmac_ifname=%s for vrrp_instace %s"
-				    , vrrp->vmac_ifname
-				    , vrrp->iname);
-	}
-	if (vrrp->ifp && !(vrrp->vmac & 2))
-		netlink_link_add_vmac(vrrp);
 }
 static void
 vrrp_native_ipv6_handler(vector strvec)
@@ -159,8 +130,6 @@ vrrp_int_handler(vector strvec)
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	char *name = VECTOR_SLOT(strvec, 1);
 	vrrp->ifp = if_get_by_ifname(name);
-	if (vrrp->vmac && !(vrrp->vmac & 2))
-		netlink_link_add_vmac(vrrp);
 }
 static void
 vrrp_track_int_handler(vector strvec)
@@ -191,19 +160,11 @@ vrrp_vrid_handler(vector strvec)
 	vrrp->vrid = atoi(VECTOR_SLOT(strvec, 1));
 
 	if (VRRP_IS_BAD_VID(vrrp->vrid)) {
-		log_message(LOG_INFO, "VRRP Error : VRID not valid !");
+		log_message(LOG_INFO, "VRRP Error : VRID not valid !\n");
 		log_message(LOG_INFO,
-		       "             must be between 1 & 255. reconfigure !");
-	} else {
+		       "             must be between 1 & 255. reconfigure !\n");
+	} else
 		alloc_vrrp_bucket(vrrp);
-		if (vrrp->vmac && strlen(vrrp->vmac_ifname) == 0) {
-			snprintf(vrrp->vmac_ifname, IFNAMSIZ, "vrrp.%d"
-						  , vrrp->vrid);
-			log_message(LOG_INFO, "vmac_ifname=%s for vrrp_instace %s"
-					    , vrrp->vmac_ifname
-					    , vrrp->iname);
-		}
-	}
 }
 static void
 vrrp_prio_handler(vector strvec)
@@ -212,9 +173,9 @@ vrrp_prio_handler(vector strvec)
 	vrrp->effective_priority = vrrp->base_priority = atoi(VECTOR_SLOT(strvec, 1));
 
 	if (VRRP_IS_BAD_PRIORITY(vrrp->base_priority)) {
-		log_message(LOG_INFO, "VRRP Error : Priority not valid !");
+		log_message(LOG_INFO, "VRRP Error : Priority not valid !\n");
 		log_message(LOG_INFO,
-		       "             must be between 1 & 255. reconfigure !");
+		       "             must be between 1 & 255. reconfigure !\n");
 		log_message(LOG_INFO,
 			    "             Using default value : %d\n", VRRP_PRIO_DFL);
 		vrrp->effective_priority = vrrp->base_priority = VRRP_PRIO_DFL;
@@ -227,10 +188,10 @@ vrrp_adv_handler(vector strvec)
 	vrrp->adver_int = atoi(VECTOR_SLOT(strvec, 1));
 
 	if (VRRP_IS_BAD_ADVERT_INT(vrrp->adver_int)) {
-		log_message(LOG_INFO, "VRRP Error : Advert interval not valid !");
+		log_message(LOG_INFO, "VRRP Error : Advert interval not valid !\n");
 		log_message(LOG_INFO,
-		       "             must be between less than 1sec.");
-		log_message(LOG_INFO, "             Using default value : 1sec");
+		       "             must be between less than 1sec.\n");
+		log_message(LOG_INFO, "             Using default value : 1sec\n");
 		vrrp->adver_int = 1;
 	}
 	vrrp->adver_int *= TIMER_HZ;
@@ -242,8 +203,8 @@ vrrp_debug_handler(vector strvec)
 	vrrp->debug = atoi(VECTOR_SLOT(strvec, 1));
 
 	if (VRRP_IS_BAD_DEBUG_INT(vrrp->debug)) {
-		log_message(LOG_INFO, "VRRP Error : Debug interval not valid !");
-		log_message(LOG_INFO, "             must be between 0-4");
+		log_message(LOG_INFO, "VRRP Error : Debug interval not valid !\n");
+		log_message(LOG_INFO, "             must be between 0-4\n");
 		vrrp->debug = 0;
 	}
 }
@@ -266,8 +227,8 @@ vrrp_preempt_delay_handler(vector strvec)
 	vrrp->preempt_delay = atoi(VECTOR_SLOT(strvec, 1));
 
 	if (VRRP_IS_BAD_PREEMPT_DELAY(vrrp->preempt_delay)) {
-		log_message(LOG_INFO, "VRRP Error : Preempt_delay not valid !");
-		log_message(LOG_INFO, "             must be between 0-%d",
+		log_message(LOG_INFO, "VRRP Error : Preempt_delay not valid !\n");
+		log_message(LOG_INFO, "             must be between 0-%d\n",
 		       TIMER_MAX_SEC);
 		vrrp->preempt_delay = 0;
 	}
@@ -326,8 +287,6 @@ vrrp_garp_delay_handler(vector strvec)
 {
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	vrrp->garp_delay = atoi(VECTOR_SLOT(strvec, 1)) * TIMER_HZ;
-	if (vrrp->garp_delay < TIMER_HZ)
-		vrrp->garp_delay = TIMER_HZ;
 }
 static void
 vrrp_auth_type_handler(vector strvec)
@@ -348,11 +307,8 @@ vrrp_auth_pass_handler(vector strvec)
 	int max_size = sizeof (vrrp->auth_data);
 	int str_len = strlen(str);
 
-	if (str_len > max_size) {
+	if (str_len > max_size)
 		str_len = max_size;
-		log_message(LOG_INFO,
-			    "Truncating auth_pass to %d characters", max_size);
-	}
 
 	memset(vrrp->auth_data, 0, max_size);
 	memcpy(vrrp->auth_data, str, str_len);
@@ -422,8 +378,6 @@ vrrp_vscript_interval_handler(vector strvec)
 {
 	vrrp_script *vscript = LIST_TAIL_DATA(vrrp_data->vrrp_script);
 	vscript->interval = atoi(VECTOR_SLOT(strvec, 1)) * TIMER_HZ;
-	if (vscript->interval < TIMER_HZ)
-		vscript->interval = TIMER_HZ;
 }
 static void
 vrrp_vscript_weight_handler(vector strvec)
@@ -466,9 +420,7 @@ vrrp_init_keywords(void)
 	install_keyword("notify_fault", &vrrp_gnotify_fault_handler);
 	install_keyword("notify", &vrrp_gnotify_handler);
 	install_keyword("smtp_alert", &vrrp_gsmtp_handler);
-	install_keyword("global_tracking", &vrrp_gglobal_tracking_handler);
 	install_keyword_root("vrrp_instance", &vrrp_handler);
-	install_keyword("use_vmac", &vrrp_vmac_handler);
 	install_keyword("native_ipv6", &vrrp_native_ipv6_handler);
 	install_keyword("state", &vrrp_state_handler);
 	install_keyword("interface", &vrrp_int_handler);

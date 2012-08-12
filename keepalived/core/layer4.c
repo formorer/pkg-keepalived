@@ -43,7 +43,7 @@ tcp_bind_connect(int fd, struct sockaddr_storage *addr, struct sockaddr_storage 
 	fcntl(fd, F_SETFL, val | O_NONBLOCK);
 
 	/* Bind socket */
-	if (bind_addr && ((struct sockaddr *) bind_addr)->sa_family != AF_UNSPEC) {
+	if (bind_addr) {
 		addrlen = sizeof(*bind_addr);
 		if (bind(fd, (struct sockaddr *) bind_addr, addrlen) != 0)
 			return connect_error;
@@ -119,7 +119,7 @@ tcp_socket_state(int fd, thread_t * thread, int (*func) (thread_t *))
 	return connect_success;
 }
 
-int
+void
 tcp_connection_state(int fd, enum connect_result status, thread_t * thread,
 		     int (*func) (thread_t *), long timeout)
 {
@@ -128,16 +128,20 @@ tcp_connection_state(int fd, enum connect_result status, thread_t * thread,
 	checker = THREAD_ARG(thread);
 
 	switch (status) {
+	case connect_error:
+		close(fd);
+		break;
+
 	case connect_success:
 		thread_add_write(thread->master, func, checker, fd, timeout);
-		return 0;
+		break;
 
 		/* Checking non-blocking connect, we wait until socket is writable */
 	case connect_in_progress:
 		thread_add_write(thread->master, func, checker, fd, timeout);
-		return 0;
+		break;
 
 	default:
-		return 1;
+		break;
 	}
 }
