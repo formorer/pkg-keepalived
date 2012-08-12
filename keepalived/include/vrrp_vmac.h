@@ -1,17 +1,17 @@
-/* 
+/*
  * Soft:        Keepalived is a failover program for the LVS project
  *              <www.linuxvirtualserver.org>. It monitor & manipulate
  *              a loadbalanced server pool using multi-layer checks.
- * 
- * Part:        logging facility.
- *  
+ *
+ * Part:        vrrp_vmac.c include file.
+ *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
- *              
+ *
  *              This program is distributed in the hope that it will be useful,
  *              but WITHOUT ANY WARRANTY; without even the implied warranty of
  *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  *              See the GNU General Public License for more details.
- *
+ *              
  *              This program is free software; you can redistribute it and/or
  *              modify it under the terms of the GNU General Public License
  *              as published by the Free Software Foundation; either version
@@ -20,31 +20,23 @@
  * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
-#include <syslog.h>
+#ifndef _VRRP_VMAC_H
+#define _VRRP_VMAC_H
+
+/* global includes */
 #include <stdio.h>
-#include <stdarg.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <syslog.h>
+#include <net/ethernet.h>
 
-/* Boolean flag - send messages to console as well as syslog */
-static int log_console = 0;
+/* local includes */
+#include "vrrp.h"
+#include "vrrp_if.h"
 
-void
-enable_console_log(void) {
-	log_console = 1;
-}
+/* prototypes */
+extern int netlink_link_add_vmac(vrrp_rt *);
+extern int netlink_link_del_vmac(vrrp_rt *);
 
-void
-log_message(const int facility, const char *format, ...)
-{
-	va_list args;
-	char buf[256];
-
-	va_start(args, format);
-	vsnprintf(buf, sizeof(buf), format, args);
-	va_end(args);
-
-	if (log_console) {
-		fprintf(stderr, "%s\n", buf);
-	}
-
-	syslog(facility, "%s", buf);
-}
+#endif

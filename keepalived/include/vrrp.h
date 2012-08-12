@@ -74,6 +74,9 @@ typedef struct _vrrp_sgroup {
 	vector iname;		/* Set of VRRP instances in this group */
 	list index_list;	/* List of VRRP instances */
 	int state;		/* current stable state */
+	int global_tracking;	/* Use floating priority and scripts
+				 * All VRRP must share same tracking conf
+				 */
 
 	/* State transition notification */
 	int notify_exec;
@@ -91,6 +94,8 @@ typedef struct _vrrp_rt {
 	vrrp_sgroup *sync;	/* Sync group we belong to */
 	interface *ifp;		/* Interface we belong to */
 	int dont_track_primary; /* If set ignores ifp faults */
+	int vmac;		/* If set try to set VRRP VMAC */
+	char vmac_ifname[IFNAMSIZ]; /* Name of VRRP VMAC interface */
 	list track_ifp;		/* Interface state we monitor */
 	list track_script;	/* Script state we monitor */
 	uint32_t mcast_saddr;	/* Src IP address to use in VRRP IP header */
