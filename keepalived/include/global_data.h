@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _GLOBAL_DATA_H
@@ -51,10 +51,13 @@ typedef struct _conf_data {
 	struct sockaddr_storage smtp_server;
 	long smtp_connection_to;
 	list email;
+#ifdef _WITH_SNMP_
+	int enable_traps;
+#endif
 } conf_data_t;
 
 /* Global vars exported */
-extern conf_data_t *data;	/* Global configuration data */
+extern conf_data_t *global_data; /* Global configuration data */
 
 /* Prototypes */
 extern void alloc_email(char *);

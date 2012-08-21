@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "layer4.h"
@@ -81,7 +81,7 @@ tcp_socket_state(int fd, thread_t * thread, uint32_t addr_ip, uint16_t addr_port
 	int status;
 	socklen_t slen;
 	int ret = 0;
-	TIMEVAL timer_min;
+	timeval_t timer_min;
 
 	/* Handle connection timeout */
 	if (thread->type == THREAD_WRITE_TIMEOUT) {
@@ -116,7 +116,7 @@ tcp_socket_state(int fd, thread_t * thread, uint32_t addr_ip, uint16_t addr_port
 
 		timer_min = timer_sub_now(thread->sands);
 		thread_add_write(thread->master, func, THREAD_ARG(thread)
-				 , thread->u.fd, TIMER_LONG(timer_min));
+				 , thread->u.fd, timer_long(timer_min));
 		return connect_in_progress;
 	}
 

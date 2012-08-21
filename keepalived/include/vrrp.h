@@ -18,7 +18,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _VRRP_H
@@ -71,7 +71,7 @@ typedef struct {		/* rfc2338.5.1 */
  */
 typedef struct _vrrp_sgroup {
 	char *gname;		/* Group name */
-	vector iname;		/* Set of VRRP instances in this group */
+	vector_t *iname;	/* Set of VRRP instances in this group */
 	list index_list;	/* List of VRRP instances */
 	int state;		/* current stable state */
 	int global_tracking;	/* Use floating priority and scripts
@@ -96,6 +96,7 @@ typedef struct _vrrp_rt {
 	int dont_track_primary; /* If set ignores ifp faults */
 	int vmac;		/* If set try to set VRRP VMAC */
 	char vmac_ifname[IFNAMSIZ]; /* Name of VRRP VMAC interface */
+	unsigned int vmac_ifindex;	/* ifindex of vmac interface */
 	list track_ifp;		/* Interface state we monitor */
 	list track_script;	/* Script state we monitor */
 	uint32_t mcast_saddr;	/* Src IP address to use in VRRP IP header */
@@ -120,7 +121,7 @@ typedef struct _vrrp_rt {
 				 * preemption based on higher prio over lower
 				 * prio is allowed.  0 means no delay.
 				 */
-	TIMEVAL preempt_time;   /* Time after which preemption can happen */
+	timeval_t preempt_time; /* Time after which preemption can happen */
 	int state;		/* internal state (init/backup/master) */
 	int init_state;		/* the initial state of the instance */
 	int wantstate;		/* user explicitly wants a state (back/mast) */

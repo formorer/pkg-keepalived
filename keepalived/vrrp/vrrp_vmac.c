@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 /* local include */
@@ -27,6 +27,7 @@
 #include "logger.h"
 #include "memory.h"
 #include "utils.h"
+#include "parser.h"
 
 /* private matter */
 static const char *ll_kind = "macvlan";
@@ -153,6 +154,18 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 	memset(ifname, 0, IFNAMSIZ);
 	strncpy(ifname, vrrp->vmac_ifname, IFNAMSIZ - 1);
 
+	/* 
+	 * Check to see if this vmac interface was created 
+	 * by a previous instance.
+	 */
+	if (reload && (ifp = if_get_by_ifname(ifname))) {
+		vrrp->ifp = ifp;
+		/* Save ifindex for use on delete */
+		vrrp->vmac_ifindex = IF_INDEX(vrrp->ifp);
+		vrrp->vmac |= 2;
+		return 1;
+	}
+	
 	req.n.nlmsg_len = NLMSG_LENGTH(sizeof (struct ifinfomsg));
 	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
 	req.n.nlmsg_type = RTM_NEWLINK;
@@ -178,6 +191,7 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 	if (!ifp)
 		return -1;
 	vrrp->ifp = ifp;
+	vrrp->vmac_ifindex = IF_INDEX(vrrp->ifp); /* For use on delete */
 	vrrp->vmac |= 2;
 	netlink_link_setlladdr(vrrp);
 	netlink_link_up(vrrp);
@@ -214,7 +228,7 @@ netlink_link_del_vmac(vrrp_rt *vrrp)
 	req.n.nlmsg_flags = NLM_F_REQUEST;
 	req.n.nlmsg_type = RTM_DELLINK;
 	req.ifi.ifi_family = AF_INET;
-	req.ifi.ifi_index = IF_INDEX(vrrp->ifp);
+	req.ifi.ifi_index = vrrp->vmac_ifindex;
 
 	if (netlink_talk(&nl_cmd, &req.n) < 0)
 		status = -1;

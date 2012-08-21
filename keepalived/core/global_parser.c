@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <netdb.h>
@@ -34,51 +34,58 @@
 /* data handlers */
 /* Global def handlers */
 static void
-use_polling_handler(vector strvec)
+use_polling_handler(vector_t *strvec)
 {
-	data->linkbeat_use_polling = 1;
+	global_data->linkbeat_use_polling = 1;
 }
 static void
-routerid_handler(vector strvec)
+routerid_handler(vector_t *strvec)
 {
-	FREE_PTR(data->router_id);
-	data->router_id = set_value(strvec);
+	FREE_PTR(global_data->router_id);
+	global_data->router_id = set_value(strvec);
 }
 static void
-plugin_handler(vector strvec)
+plugin_handler(vector_t *strvec)
 {
-	data->plugin_dir = set_value(strvec);
+	global_data->plugin_dir = set_value(strvec);
 }
 static void
-emailfrom_handler(vector strvec)
+emailfrom_handler(vector_t *strvec)
 {
-	FREE_PTR(data->email_from);
-	data->email_from = set_value(strvec);
+	FREE_PTR(global_data->email_from);
+	global_data->email_from = set_value(strvec);
 }
 static void
-smtpto_handler(vector strvec)
+smtpto_handler(vector_t *strvec)
 {
-	data->smtp_connection_to = atoi(VECTOR_SLOT(strvec, 1)) * TIMER_HZ;
+	global_data->smtp_connection_to = atoi(vector_slot(strvec, 1)) * TIMER_HZ;
 }
 static void
-smtpip_handler(vector strvec)
+smtpip_handler(vector_t *strvec)
 {
-	inet_stosockaddr(VECTOR_SLOT(strvec, 1), SMTP_PORT_STR, &data->smtp_server);
+	inet_stosockaddr(vector_slot(strvec, 1), SMTP_PORT_STR, &global_data->smtp_server);
 }
 static void
-email_handler(vector strvec)
+email_handler(vector_t *strvec)
 {
-	vector email_vec = read_value_block();
+	vector_t *email_vec = read_value_block();
 	int i;
 	char *str;
 
-	for (i = 0; i < VECTOR_SIZE(email_vec); i++) {
-		str = VECTOR_SLOT(email_vec, i);
+	for (i = 0; i < vector_size(email_vec); i++) {
+		str = vector_slot(email_vec, i);
 		alloc_email(str);
 	}
 
 	free_strvec(email_vec);
 }
+#ifdef _WITH_SNMP_
+static void
+trap_handler(vector_t *strvec)
+{
+	global_data->enable_traps = 1;
+}
+#endif
 
 void
 global_init_keywords(void)
@@ -92,4 +99,7 @@ global_init_keywords(void)
 	install_keyword("smtp_server", &smtpip_handler);
 	install_keyword("smtp_connect_timeout", &smtpto_handler);
 	install_keyword("notification_email", &email_handler);
+#ifdef _WITH_SNMP_
+	install_keyword("enable_traps", &trap_handler);
+#endif
 }

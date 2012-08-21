@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 /* global include */
@@ -377,7 +377,7 @@ init_if_linkbeat(void)
 int
 if_linkbeat(const interface * ifp)
 {
-	if (!data->linkbeat_use_polling)
+	if (!global_data->linkbeat_use_polling)
 		return 1;
 
 	if (IF_MII_SUPPORTED(ifp) || IF_ETHTOOL_SUPPORTED(ifp))
@@ -407,7 +407,7 @@ init_interface_queue(void)
 void
 init_interface_linkbeat(void)
 {
-	if (data->linkbeat_use_polling) {
+	if (global_data->linkbeat_use_polling) {
 		log_message(LOG_INFO, "Using MII-BMSR NIC polling thread...");
 		init_if_linkbeat();
 	} else {

@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _MAIN_H
@@ -46,5 +46,8 @@ extern pid_t vrrp_child;	/* VRRP child process ID */
 extern pid_t checkers_child;	/* Healthcheckers child process ID */
 extern int daemon_mode;		/* VRRP/CHECK subsystem selection */
 extern int linkwatch;		/* Use linkwatch kernel netlink reflection */
+#ifdef _WITH_SNMP_
+extern int snmp;		/* Enable SNMP support */
+#endif
 
 #endif

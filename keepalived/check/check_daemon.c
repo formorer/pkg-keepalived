@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "check_daemon.h"
@@ -40,6 +40,9 @@
 #include "parser.h"
 #include "vrrp_netlink.h"
 #include "vrrp_if.h"
+#ifdef _WITH_SNMP_
+  #include "check_snmp.h"
+#endif
 
 extern char *checkers_pidfile;
 
@@ -55,12 +58,16 @@ stop_check(void)
 	if (!(debug & 16))
 		clear_services();
 	ipvs_stop();
+#ifdef _WITH_SNMP_
+	if (snmp)
+		check_snmp_agent_close();
+#endif
 
 	/* Stop daemon */
 	pidfile_rm(checkers_pidfile);
 
 	/* Clean data */
-	free_global_data(data);
+	free_global_data(global_data);
 	free_check_data(check_data);
 #ifdef _WITH_VRRP_
 	free_interface_queue();
@@ -89,9 +96,13 @@ start_check(void)
 	init_interface_queue();
 	kernel_netlink_init();
 #endif
+#ifdef _WITH_SNMP_
+	if (!reload && snmp)
+		check_snmp_agent_init();
+#endif
 
 	/* Parse configuration file */
-	data = alloc_global_data();
+	global_data = alloc_global_data();
 	check_data = alloc_check_data();
 	init_data(conf_file, check_init_keywords);
 	if (!check_data) {
@@ -120,7 +131,7 @@ start_check(void)
 
 	/* Dump configuration */
 	if (debug & 4) {
-		dump_global_data(data);
+		dump_global_data(global_data);
 		dump_check_data(check_data);
 	}
 
@@ -174,7 +185,7 @@ reload_check_thread(thread_t * thread)
 	/* Destroy master thread */
 	thread_destroy_master(master);
 	master = thread_make_master();
-	free_global_data(data);
+	free_global_data(global_data);
 	free_checkers_queue();
 #ifdef _WITH_VRRP_
 	free_interface_queue();

@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _CHECK_DATA_H
@@ -84,6 +84,13 @@ typedef struct _real_server {
 	int alive;
 	list failed_checkers;	/* List of failed checkers */
 	int set;		/* in the IPVS table */
+#if defined(_WITH_SNMP_) && defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+	/* Statistics */
+	uint32_t activeconns;  /* active connections */
+	uint32_t inactconns;   /* inactive connections */
+	uint32_t persistconns; /* persistent connections */
+	struct ip_vs_stats_user stats;
+#endif
 } real_server;
 
 /* Virtual Server group definition */
@@ -126,6 +133,11 @@ typedef struct _virtual_server {
 
 	long unsigned hysteresis;	/* up/down events "lag" WRT quorum. */
 	unsigned quorum_state;		/* Reflects result of the last transition done. */
+#if defined(_WITH_SNMP_) && defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+	/* Statistics */
+	time_t lastupdated;
+	struct ip_vs_stats_user stats;
+#endif
 } virtual_server;
 
 /* Configuration data root */
@@ -224,7 +236,7 @@ extern check_conf_data *old_check_data;
 extern SSL_DATA *alloc_ssl(void);
 extern void free_ssl(void);
 extern void alloc_vsg(char *);
-extern void alloc_vsg_entry(vector);
+extern void alloc_vsg_entry(vector_t *);
 extern void alloc_vs(char *, char *);
 extern void alloc_rs(char *, char *);
 extern void alloc_ssvr(char *, char *);

@@ -22,6 +22,15 @@
  * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+/* SNMP should be included first: it redefines "FREE" */
+#ifdef _WITH_SNMP_
+#include <net-snmp/net-snmp-config.h>
+#include <net-snmp/net-snmp-includes.h>
+#include <net-snmp/agent/net-snmp-agent-includes.h>
+#include <net-snmp/agent/snmp_vars.h>
+#undef FREE
+#endif
+
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/select.h>
@@ -445,10 +454,10 @@ thread_cancel_event(thread_master_t * m, void *arg)
 
 /* Update timer value */
 static void
-thread_update_timer(thread_list_t *list, TIMEVAL *timer_min)
+thread_update_timer(thread_list_t *list, timeval_t *timer_min)
 {
 	if (list->head) {
-		if (!TIMER_ISNULL(*timer_min)) {
+		if (!timer_isnull(*timer_min)) {
 			if (timer_cmp(list->head->sands, *timer_min) <= 0) {
 				*timer_min = list->head->sands;
 			}
@@ -460,19 +469,19 @@ thread_update_timer(thread_list_t *list, TIMEVAL *timer_min)
 
 /* Compute the wait timer. Take care of timeouted fd */
 static void
-thread_compute_timer(thread_master_t * m, TIMEVAL * timer_wait)
+thread_compute_timer(thread_master_t * m, timeval_t * timer_wait)
 {
-	TIMEVAL timer_min;
+	timeval_t timer_min;
 
 	/* Prepare timer */
-	TIMER_RESET(timer_min);
+	timer_reset(timer_min);
 	thread_update_timer(&m->timer, &timer_min);
 	thread_update_timer(&m->write, &timer_min);
 	thread_update_timer(&m->read, &timer_min);
 	thread_update_timer(&m->child, &timer_min);
 
 	/* Take care about monothonic clock */
-	if (!TIMER_ISNULL(timer_min)) {
+	if (!timer_isnull(timer_min)) {
 		timer_min = timer_sub(timer_min, time_now);
 		if (timer_min.tv_sec < 0) {
 			timer_min.tv_sec = timer_min.tv_usec = 0;
@@ -498,13 +507,18 @@ thread_fetch(thread_master_t * m, thread_t * fetch)
 	fd_set readfd;
 	fd_set writefd;
 	fd_set exceptfd;
-	TIMEVAL timer_wait;
+	timeval_t timer_wait;
 	int signal_fd;
+#ifdef _WITH_SNMP_
+	timeval_t snmp_timer_wait;
+	int snmpblock = 0;
+	int fdsetsize;
+#endif
 
 	assert(m != NULL);
 
 	/* Timer initialization */
-	memset(&timer_wait, 0, sizeof (TIMEVAL));
+	memset(&timer_wait, 0, sizeof (timeval_t));
 
 retry:	/* When thread can't fetch try to find next thread again. */
 
@@ -546,10 +560,32 @@ retry:	/* When thread can't fetch try to find next thread again. */
 	signal_fd = signal_rfd();
 	FD_SET(signal_fd, &readfd);
 
+#ifdef _WITH_SNMP_
+	/* When SNMP is enabled, we may have to select() on additional
+	 * FD. snmp_select_info() will add them to `readfd'. The trick
+	 * with this function is its last argument. We need to set it
+	 * to 0 and we need to use the provided new timer only if it
+	 * is still set to 0. */
+	fdsetsize = FD_SETSIZE;
+	snmpblock = 0;
+	memcpy(&snmp_timer_wait, &timer_wait, sizeof(timeval_t));
+	snmp_select_info(&fdsetsize, &readfd, &snmp_timer_wait, &snmpblock);
+	if (snmpblock == 0)
+		memcpy(&timer_wait, &snmp_timer_wait, sizeof(timeval_t));
+#endif
+
 	ret = select(FD_SETSIZE, &readfd, &writefd, &exceptfd, &timer_wait);
 
 	/* we have to save errno here because the next syscalls will set it */
 	old_errno = errno;
+
+       /* Handle SNMP stuff */
+#ifdef _WITH_SNMP_
+	if (ret > 0)
+		snmp_read(&readfd);
+	else if (ret == 0)
+		snmp_timeout();
+#endif
 
 	/* handle signals synchronously, including child reaping */
 	if (FD_ISSET(signal_fd, &readfd))
@@ -648,6 +684,11 @@ retry:	/* When thread can't fetch try to find next thread again. */
 
 	/* Return one event. */
 	thread = thread_trim_head(&m->ready);
+
+#ifdef _WITH_SNMP_
+	run_alarms();
+	netsnmp_check_outstanding_agent_requests();
+#endif
 
 	/* There is no ready thread. */
 	if (!thread)

@@ -20,7 +20,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "check_misc.h"
@@ -61,7 +61,7 @@ dump_misc_check(void *data)
 }
 
 void
-misc_check_handler(vector strvec)
+misc_check_handler(vector_t *strvec)
 {
 	misc_checker_t *misck_checker = (misc_checker_t *) MALLOC(sizeof (misc_checker_t));
 
@@ -71,21 +71,21 @@ misc_check_handler(vector strvec)
 }
 
 void
-misc_path_handler(vector strvec)
+misc_path_handler(vector_t *strvec)
 {
 	misc_checker_t *misck_checker = CHECKER_GET();
 	misck_checker->path = CHECKER_VALUE_STRING(strvec);
 }
 
 void
-misc_timeout_handler(vector strvec)
+misc_timeout_handler(vector_t *strvec)
 {
 	misc_checker_t *misck_checker = CHECKER_GET();
 	misck_checker->timeout = CHECKER_VALUE_INT(strvec) * TIMER_HZ;
 }
 
 void
-misc_dynamic_handler(vector strvec)
+misc_dynamic_handler(vector_t *strvec)
 {
 	misc_checker_t *misck_checker = CHECKER_GET();
 	misck_checker->dynamic = 1;

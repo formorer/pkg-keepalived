@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "vrrp_data.h"
@@ -36,7 +36,7 @@ char *vrrp_buffer;
 
 /* Static addresses facility function */
 void
-alloc_saddress(vector strvec)
+alloc_saddress(vector_t *strvec)
 {
 	if (LIST_ISEMPTY(vrrp_data->static_addresses))
 		vrrp_data->static_addresses = alloc_list(free_ipaddress, dump_ipaddress);
@@ -45,7 +45,7 @@ alloc_saddress(vector strvec)
 
 /* Static routes facility function */
 void
-alloc_sroute(vector strvec)
+alloc_sroute(vector_t *strvec)
 {
 	if (LIST_ISEMPTY(vrrp_data->static_routes))
 		vrrp_data->static_routes = alloc_list(free_iproute, dump_iproute);
@@ -76,8 +76,8 @@ dump_vgroup(void *data)
 
 	log_message(LOG_INFO, " VRRP Sync Group = %s, %s", vgroup->gname,
 	       (vgroup->state == VRRP_STATE_MAST) ? "MASTER" : "BACKUP");
-	for (i = 0; i < VECTOR_SIZE(vgroup->iname); i++) {
-		str = VECTOR_SLOT(vgroup->iname, i);
+	for (i = 0; i < vector_size(vgroup->iname); i++) {
+		str = vector_slot(vgroup->iname, i);
 		log_message(LOG_INFO, "   monitor = %s", str);
 	}
 	if (vgroup->global_tracking)
@@ -116,9 +116,10 @@ dump_vscript(void *data)
 	log_message(LOG_INFO, " VRRP Script = %s", vscript->sname);
 	log_message(LOG_INFO, "   Command = %s", vscript->script);
 	log_message(LOG_INFO, "   Interval = %d sec", vscript->interval / TIMER_HZ);
+	log_message(LOG_INFO, "   Timeout = %d sec", vscript->timeout / TIMER_HZ);
 	log_message(LOG_INFO, "   Weight = %d", vscript->weight);
 	log_message(LOG_INFO, "   Rise = %d", vscript->rise);
-	log_message(LOG_INFO, "   Full = %d", vscript->fall);
+	log_message(LOG_INFO, "   Fall = %d", vscript->fall);
 
 	switch (vscript->result) {
 	case VRRP_SCRIPT_STATUS_INIT:
@@ -315,7 +316,7 @@ alloc_vrrp(char *iname)
 }
 
 void
-alloc_vrrp_track(vector strvec)
+alloc_vrrp_track(vector_t *strvec)
 {
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
@@ -325,7 +326,7 @@ alloc_vrrp_track(vector strvec)
 }
 
 void
-alloc_vrrp_track_script(vector strvec)
+alloc_vrrp_track_script(vector_t *strvec)
 {
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
@@ -335,7 +336,7 @@ alloc_vrrp_track_script(vector strvec)
 }
 
 void
-alloc_vrrp_vip(vector strvec)
+alloc_vrrp_vip(vector_t *strvec)
 {
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	if (vrrp->ifp == NULL) {
@@ -347,7 +348,7 @@ alloc_vrrp_vip(vector strvec)
 	alloc_ipaddress(vrrp->vip, strvec, vrrp->ifp);
 }
 void
-alloc_vrrp_evip(vector strvec)
+alloc_vrrp_evip(vector_t *strvec)
 {
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
@@ -357,7 +358,7 @@ alloc_vrrp_evip(vector strvec)
 }
 
 void
-alloc_vrrp_vroute(vector strvec)
+alloc_vrrp_vroute(vector_t *strvec)
 {
 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
@@ -377,6 +378,7 @@ alloc_vrrp_script(char *sname)
 	new->sname = (char *) MALLOC(size + 1);
 	memcpy(new->sname, sname, size + 1);
 	new->interval = VRRP_SCRIPT_DI * TIMER_HZ;
+	new->timeout = VRRP_SCRIPT_DT * TIMER_HZ;
 	new->weight = VRRP_SCRIPT_DW;
 	new->result = VRRP_SCRIPT_STATUS_INIT;
 	new->inuse = 0;
@@ -415,46 +417,46 @@ alloc_vrrp_data(void)
 }
 
 void
-free_vrrp_data(vrrp_conf_data * vrrp_data)
+free_vrrp_data(vrrp_conf_data * data)
 {
-	free_list(vrrp_data->static_addresses);
-	free_list(vrrp_data->static_routes);
-	free_mlist(vrrp_data->vrrp_index, 255+1);
-	free_mlist(vrrp_data->vrrp_index_fd, 1024+1);
-	free_list(vrrp_data->vrrp);
-	free_list(vrrp_data->vrrp_sync_group);
-	free_list(vrrp_data->vrrp_script);
-//	free_list(vrrp_data->vrrp_socket_pool);
-	FREE(vrrp_data);
+	free_list(data->static_addresses);
+	free_list(data->static_routes);
+	free_mlist(data->vrrp_index, 255+1);
+	free_mlist(data->vrrp_index_fd, 1024+1);
+	free_list(data->vrrp);
+	free_list(data->vrrp_sync_group);
+	free_list(data->vrrp_script);
+//	free_list(data->vrrp_socket_pool);
+	FREE(data);
 }
 
 void
-free_vrrp_sockpool(vrrp_conf_data * vrrp_data)
+free_vrrp_sockpool(vrrp_conf_data * data)
 {
-	free_list(vrrp_data->vrrp_socket_pool);
+	free_list(data->vrrp_socket_pool);
 }
 
 void
-dump_vrrp_data(vrrp_conf_data * vrrp_data)
+dump_vrrp_data(vrrp_conf_data * data)
 {
-	if (!LIST_ISEMPTY(vrrp_data->static_addresses)) {
+	if (!LIST_ISEMPTY(data->static_addresses)) {
 		log_message(LOG_INFO, "------< Static Addresses >------");
-		dump_list(vrrp_data->static_addresses);
+		dump_list(data->static_addresses);
 	}
-	if (!LIST_ISEMPTY(vrrp_data->static_routes)) {
+	if (!LIST_ISEMPTY(data->static_routes)) {
 		log_message(LOG_INFO, "------< Static Routes >------");
-		dump_list(vrrp_data->static_routes);
+		dump_list(data->static_routes);
 	}
-	if (!LIST_ISEMPTY(vrrp_data->vrrp)) {
+	if (!LIST_ISEMPTY(data->vrrp)) {
 		log_message(LOG_INFO, "------< VRRP Topology >------");
-		dump_list(vrrp_data->vrrp);
+		dump_list(data->vrrp);
 	}
-	if (!LIST_ISEMPTY(vrrp_data->vrrp_sync_group)) {
+	if (!LIST_ISEMPTY(data->vrrp_sync_group)) {
 		log_message(LOG_INFO, "------< VRRP Sync groups >------");
-		dump_list(vrrp_data->vrrp_sync_group);
+		dump_list(data->vrrp_sync_group);
 	}
-	if (!LIST_ISEMPTY(vrrp_data->vrrp_script)) {
+	if (!LIST_ISEMPTY(data->vrrp_script)) {
 		log_message(LOG_INFO, "------< VRRP Scripts >------");
-		dump_list(vrrp_data->vrrp_script);
+		dump_list(data->vrrp_script);
 	}
 }
