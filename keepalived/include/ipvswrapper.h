@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _IPVSWRAPPER_H
@@ -97,5 +97,11 @@ extern int ipvs_cmd(int, list, virtual_server *, real_server *);
 extern int ipvs_syncd_cmd(int, char *, int, int);
 extern void ipvs_syncd_master(char *, int);
 extern void ipvs_syncd_backup(char *, int);
+
+#ifdef _KRNL_2_6_
+/* Refresh statistics at most every 5 seconds */
+#define STATS_REFRESH 5
+extern void ipvs_update_stats(virtual_server * vs);
+#endif
 
 #endif

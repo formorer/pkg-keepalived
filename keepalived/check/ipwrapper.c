@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "ipwrapper.h"
@@ -27,6 +27,9 @@
 #include "utils.h"
 #include "notify.h"
 #include "main.h"
+#ifdef _WITH_SNMP_
+  #include "check_snmp.h"
+#endif
 
 /* Returns the sum of all RS weight in a virtual server. */
 long unsigned
@@ -73,19 +76,27 @@ clear_service_rs(list vs_group, virtual_server * vs, list l)
 						    , ntohs(inet_sockaddrport(&vs->addr)));
 				notify_exec(rs->notify_down);
 			}
+#ifdef _WITH_SNMP_
+			check_snmp_rs_trap(rs, vs);
+#endif
 
 			/* Sooner or later VS will lose the quorum (if any). However,
 			 * we don't push in a sorry server then, hence the regression
 			 * is intended.
 			 */
-			if (vs->quorum_state == UP && vs->quorum_down &&
+			if (vs->quorum_state == UP &&
 			    weigh_live_realservers(vs) < vs->quorum - vs->hysteresis) {
 				vs->quorum_state = DOWN;
-				log_message(LOG_INFO, "Executing [%s] for VS [%s]:%d"
-						    , vs->quorum_down
-						    , (vs->vsgname) ? vs->vsgname : inet_sockaddrtos(&vs->addr)
-						    , ntohs(inet_sockaddrport(&vs->addr)));
-				notify_exec(vs->quorum_down);
+				if (vs->quorum_down) {
+					log_message(LOG_INFO, "Executing [%s] for VS [%s]:%d"
+							    , vs->quorum_down
+							    , (vs->vsgname) ? vs->vsgname : inet_sockaddrtos(&vs->addr)
+							    , ntohs(inet_sockaddrport(&vs->addr)));
+					notify_exec(vs->quorum_down);
+				}
+#ifdef _WITH_SNMP_
+				check_snmp_quorum_trap(vs);
+#endif
 			}
 		}
 	}
@@ -122,11 +133,9 @@ clear_services(void)
 	element e;
 	list l = check_data->vs;
 	virtual_server *vs;
-	real_server *rs;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vs = ELEMENT_DATA(e);
-		rs = ELEMENT_DATA(LIST_HEAD(vs->rs));
 		if (!clear_service_vs(check_data->vs_group, vs))
 			return 0;
 	}
@@ -266,6 +275,9 @@ update_quorum_state(virtual_server * vs)
 					    , ntohs(inet_sockaddrport(&vs->addr)));
 			notify_exec(vs->quorum_up);
 		}
+#ifdef _WITH_SNMP_
+               check_snmp_quorum_trap(vs);
+#endif
 		return;
 	}
 
@@ -303,6 +315,9 @@ update_quorum_state(virtual_server * vs)
 			/* Remove remaining alive real servers */
 			perform_quorum_state(vs, 0);
 		}
+#ifdef _WITH_SNMP_
+		check_snmp_quorum_trap(vs);
+#endif
 		return;
 	}
 }
@@ -341,6 +356,9 @@ perform_svr_state(int alive, virtual_server * vs, real_server * rs)
 					    , ntohs(inet_sockaddrport(&vs->addr)));
 			notify_exec(rs->notify_up);
 		}
+#ifdef _WITH_SNMP_
+		check_snmp_rs_trap(rs, vs);
+#endif
 
 		/* We may have gained quorum */
 		update_quorum_state(vs);
@@ -370,6 +388,9 @@ perform_svr_state(int alive, virtual_server * vs, real_server * rs)
 					    , ntohs(inet_sockaddrport(&vs->addr)));
 			notify_exec(rs->notify_down);
 		}
+#ifdef _WITH_SNMP_
+		check_snmp_rs_trap(rs, vs);
+#endif
 
 		/* We may have lost quorum */
 		update_quorum_state(vs);
@@ -497,7 +518,7 @@ clear_diff_vsge(list old, list new, virtual_server * old_vs)
 	for (e = LIST_HEAD(old); e; ELEMENT_NEXT(e)) {
 		vsge = ELEMENT_DATA(e);
 		if (!vsge_exist(vsge, new)) {
-			log_message(LOG_INFO, "VS [%s:%d:%d:%d] in group %s no longer exist\n" 
+			log_message(LOG_INFO, "VS [[%s]:%d:%d:%d] in group %s no longer exist" 
 					    , inet_sockaddrtos(&vsge->addr)
 					    , ntohs(inet_sockaddrport(&vsge->addr))
 					    , vsge->range

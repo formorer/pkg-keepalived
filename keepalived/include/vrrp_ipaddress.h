@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _VRRP_IPADDR_H
@@ -79,7 +79,7 @@ typedef struct {
 extern void netlink_iplist(list, int);
 extern void free_ipaddress(void *);
 extern void dump_ipaddress(void *);
-extern void alloc_ipaddress(list, vector, interface *);
+extern void alloc_ipaddress(list, vector_t *, interface *);
 extern void clear_diff_address(list, list);
 extern void clear_diff_saddresses(void);
 

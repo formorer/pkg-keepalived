@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _VRRP_IPROUTE_H
@@ -64,7 +64,7 @@ extern int netlink_route_ipv4(ip_route *, int);
 extern void netlink_rtlist_ipv4(list, int);
 extern void free_iproute(void *);
 extern void dump_iproute(void *);
-extern void alloc_route(list, vector);
+extern void alloc_route(list, vector_t *);
 extern void clear_diff_routes(list, list);
 extern void clear_diff_sroutes(void);
 

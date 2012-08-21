@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "vrrp_scheduler.h"
@@ -37,6 +37,9 @@
 #include "main.h"
 #include "smtp.h"
 #include "signals.h"
+#ifdef _WITH_SNMP_
+#include "vrrp_snmp.h"
+#endif
 
 /* VRRP FSM (Finite State Machine) design.
  *
@@ -189,8 +192,7 @@ vrrp_init_state(list l)
 		/* In case of VRRP SYNC, we have to carefully check that we are
 		 * not running floating priorities on any VRRP instance.
 		 */
-		if (vrrp->sync) {
-			element e;
+		if (vrrp->sync && !vrrp->sync->global_tracking) {
 			tracked_sc *sc;
 			tracked_if *tip;
 			int warning = 0;
@@ -255,6 +257,9 @@ vrrp_init_state(list l)
 			vrrp->state = VRRP_STATE_BACK;
 			vrrp_smtp_notifier(vrrp);
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
+#ifdef _WITH_SNMP_
+			vrrp_snmp_instance_trap(vrrp);
+#endif
 
 			/* Init group if needed  */
 			if ((vgroup = vrrp->sync)) {
@@ -262,6 +267,9 @@ vrrp_init_state(list l)
 					vgroup->state = VRRP_STATE_BACK;
 					vrrp_sync_smtp_notifier(vgroup);
 					notify_group_exec(vgroup, VRRP_STATE_BACK);
+#ifdef _WITH_SNMP_
+					vrrp_snmp_group_trap(vgroup);
+#endif
 				}
 			}
 		}
@@ -305,20 +313,20 @@ vrrp_init_script(list l)
 }
 
 /* Timer functions */
-static TIMEVAL
+static timeval_t
 vrrp_compute_timer(const int fd)
 {
 	vrrp_rt *vrrp;
 	element e;
 	list l = &vrrp_data->vrrp_index_fd[fd%1024 + 1];
-	TIMEVAL timer;
+	timeval_t timer;
 
 	/* Multiple instances on the same interface */
-	TIMER_RESET(timer);
+	timer_reset(timer);
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);
 		if (timer_cmp(vrrp->sands, timer) < 0 ||
-		    TIMER_ISNULL(timer))
+		    timer_isnull(timer))
 			timer = timer_dup(vrrp->sands);
 	}
 
@@ -328,12 +336,12 @@ vrrp_compute_timer(const int fd)
 static long
 vrrp_timer_fd(const int fd)
 {
-	TIMEVAL timer, vrrp_timer;
+	timeval_t timer, vrrp_timer;
 	long vrrp_long;
 
 	timer = vrrp_compute_timer(fd);
 	vrrp_timer = timer_sub(timer, time_now);
-	vrrp_long = TIMER_LONG(vrrp_timer);
+	vrrp_long = timer_long(vrrp_timer);
 
 	return (vrrp_long < 0) ? TIMER_MAX_SEC : vrrp_long;
 }
@@ -344,15 +352,15 @@ vrrp_timer_vrid_timeout(const int fd)
 	vrrp_rt *vrrp;
 	element e;
 	list l = &vrrp_data->vrrp_index_fd[fd%1024 + 1];
-	TIMEVAL timer;
+	timeval_t timer;
 	int vrid = 0;
 
 	/* Multiple instances on the same interface */
-	TIMER_RESET(timer);
+	timer_reset(timer);
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);
 		if (timer_cmp(vrrp->sands, timer) < 0 ||
-		    TIMER_ISNULL(timer)) {
+		    timer_isnull(timer)) {
 			timer = timer_dup(vrrp->sands);
 			vrid = vrrp->vrid;
 		}
@@ -365,7 +373,7 @@ static void
 vrrp_register_workers(list l)
 {
 	sock_t *sock;
-	TIMEVAL timer;
+	timeval_t timer;
 	long vrrp_timer = 0;
 	element e;
 
@@ -641,6 +649,9 @@ vrrp_leave_fault(vrrp_rt * vrrp, char *buffer, int len)
 				vrrp->state = VRRP_STATE_BACK;
 				vrrp_smtp_notifier(vrrp);
 				notify_instance_exec(vrrp, VRRP_STATE_BACK);
+#ifdef _WITH_SNMP_
+				vrrp_snmp_instance_trap(vrrp);
+#endif
 			}
 		} else {
 			log_message(LOG_INFO, "VRRP_Instance(%s) Entering BACKUP STATE",
@@ -648,6 +659,9 @@ vrrp_leave_fault(vrrp_rt * vrrp, char *buffer, int len)
 			vrrp->state = VRRP_STATE_BACK;
 			vrrp_smtp_notifier(vrrp);
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
+#ifdef _WITH_SNMP_
+			vrrp_snmp_instance_trap(vrrp);
+#endif
 		}
 	}
 }
@@ -664,6 +678,9 @@ vrrp_goto_master(vrrp_rt * vrrp)
 		vrrp->state = VRRP_STATE_FAULT;
 		vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
 		notify_instance_exec(vrrp, VRRP_STATE_FAULT);
+#ifdef _WITH_SNMP_
+		vrrp_snmp_instance_trap(vrrp);
+#endif
 	} else {
 		/* If becoming MASTER in IPSEC AH AUTH, we reset the anti-replay */
 		if (vrrp->ipsecah_counter->cycle) {
@@ -702,11 +719,11 @@ vrrp_update_priority(thread_t * thread)
 	prio_offset = 0;
 
 	/* Now we will sum the weights of all interfaces which are tracked. */
-	if (!vrrp->sync && !LIST_ISEMPTY(vrrp->track_ifp))
+	if ((!vrrp->sync || vrrp->sync->global_tracking) && !LIST_ISEMPTY(vrrp->track_ifp))
 		 prio_offset += vrrp_tracked_weight(vrrp->track_ifp);
 
 	/* Now we will sum the weights of all scripts which are tracked. */
-	if (!vrrp->sync && !LIST_ISEMPTY(vrrp->track_script))
+	if ((!vrrp->sync || vrrp->sync->global_tracking) && !LIST_ISEMPTY(vrrp->track_script))
 		prio_offset += vrrp_script_weight(vrrp->track_script);
 
 	if (vrrp->base_priority == VRRP_PRIO_OWNER) {
@@ -802,6 +819,9 @@ vrrp_fault(vrrp_rt * vrrp)
 		if (vrrp->init_state == VRRP_STATE_BACK) {
 			vrrp->state = VRRP_STATE_BACK;
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
+#ifdef _WITH_SNMP_
+			vrrp_snmp_instance_trap(vrrp);
+#endif
 		} else {
 			vrrp_goto_master(vrrp);
 		}
@@ -936,10 +956,9 @@ vrrp_script_thread(thread_t * thread)
 
 	/* In case of this is parent process */
 	if (pid) {
-		long timeout;
-		timeout = vscript->interval;
 		thread_add_child(thread->master, vrrp_script_child_thread,
-				 vscript, pid, timeout);
+				 vscript, pid,
+				 (vscript->timeout) ? vscript->timeout : vscript->interval);
 		return 0;
 	}
 
@@ -948,7 +967,14 @@ vrrp_script_thread(thread_t * thread)
 	closeall(0);
 	open("/dev/null", O_RDWR);
 	ret = dup(0);
+	if (ret < 0) {
+		log_message(LOG_INFO, "dup(0) error");
+	}
+
 	ret = dup(0);
+	if (ret < 0) {
+		log_message(LOG_INFO, "dup(0) error");
+	}
 
 	status = system_call(vscript->script);
 

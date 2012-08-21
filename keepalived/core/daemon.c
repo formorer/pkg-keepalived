@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <syslog.h>
@@ -55,8 +55,12 @@ xdaemon(int nochdir, int noclose, int exitflag)
 	}
 
 	/* Change directory to root. */
-	if (!nochdir)
+	if (!nochdir) {
 		ret = chdir("/");
+		if (ret < 0) {
+			log_message(LOG_INFO, "xdaemon: chdir error");
+		}
+	}
 
 	/* File descriptor close. */
 	if (!noclose) {
