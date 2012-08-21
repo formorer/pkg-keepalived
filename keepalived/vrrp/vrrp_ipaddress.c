@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 /* local include */
@@ -131,7 +131,7 @@ dump_ipaddress(void *if_data)
 	FREE(addr_str);
 }
 void
-alloc_ipaddress(list ip_list, vector strvec, interface *ifp)
+alloc_ipaddress(list ip_list, vector_t *strvec, interface *ifp)
 {
 	ip_address *new;
 	interface *ifp_local;
@@ -157,39 +157,39 @@ alloc_ipaddress(list ip_list, vector strvec, interface *ifp)
 	}
 
 	/* FMT parse */
-	while (i < VECTOR_SIZE(strvec)) {
-		str = VECTOR_SLOT(strvec, i);
+	while (i < vector_size(strvec)) {
+		str = vector_slot(strvec, i);
 
 		/* cmd parsing */
 		if (!strcmp(str, "dev")) {
-			ifp_local = if_get_by_ifname(VECTOR_SLOT(strvec, ++i));
+			ifp_local = if_get_by_ifname(vector_slot(strvec, ++i));
 			if (!ifp_local) {
 				log_message(LOG_INFO, "VRRP is trying to assign VIP to unknown %s"
 				       " interface !!! go out and fixe your conf !!!",
-				       (char *)VECTOR_SLOT(strvec, i));
+				       (char *)vector_slot(strvec, i));
 				FREE(new);
 				return;
 			}
 			new->ifa.ifa_index = IF_INDEX(ifp_local);
 			new->ifp = ifp_local;
 		} else if (!strcmp(str, "scope")) {
-			new->ifa.ifa_scope = netlink_scope_a2n(VECTOR_SLOT(strvec, ++i));
+			new->ifa.ifa_scope = netlink_scope_a2n(vector_slot(strvec, ++i));
 		} else if (!strcmp(str, "broadcast") || !strcmp(str, "brd")) {
 			if (IP_IS6(new)) {
 				log_message(LOG_INFO, "VRRP is trying to assign a broadcast %s to the IPv6 address %s !!?? "
 						      "WTF... skipping VIP..."
-						    , VECTOR_SLOT(strvec, i), VECTOR_SLOT(strvec, addr_idx));
+						    , vector_slot(strvec, i), vector_slot(strvec, addr_idx));
 				FREE(new);
 				return;
-			} else if (!inet_pton(AF_INET, VECTOR_SLOT(strvec, ++i), &new->u.sin.sin_brd)) {
+			} else if (!inet_pton(AF_INET, vector_slot(strvec, ++i), &new->u.sin.sin_brd)) {
 				log_message(LOG_INFO, "VRRP is trying to assign invalid broadcast %s. "
-						      "skipping VIP...", VECTOR_SLOT(strvec, i));
+						      "skipping VIP...", vector_slot(strvec, i));
 				FREE(new);
 				return;
 			}
 		} else if (!strcmp(str, "label")) {
 			new->label = MALLOC(IFNAMSIZ);
-			strncpy(new->label, VECTOR_SLOT(strvec, ++i), IFNAMSIZ);
+			strncpy(new->label, vector_slot(strvec, ++i), IFNAMSIZ);
 		} else {
 			p = strchr(str, '/');
 			if (p) {

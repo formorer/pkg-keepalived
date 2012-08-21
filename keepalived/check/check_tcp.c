@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "check_tcp.h"
@@ -55,7 +55,7 @@ dump_tcp_check(void *data)
 }
 
 void
-tcp_check_handler(vector strvec)
+tcp_check_handler(vector_t *strvec)
 {
 	tcp_checker_t *tcp_chk = (tcp_checker_t *) MALLOC(sizeof (tcp_checker_t));
 
@@ -65,7 +65,7 @@ tcp_check_handler(vector strvec)
 }
 
 void
-connect_port_handler(vector strvec)
+connect_port_handler(vector_t *strvec)
 {
 	tcp_checker_t *tcp_chk = CHECKER_GET();
 
@@ -73,14 +73,14 @@ connect_port_handler(vector strvec)
 }
 
 void
-bind_handler(vector strvec)
+bind_handler(vector_t *strvec)
 {
 	tcp_checker_t *tcp_chk = CHECKER_GET();
-	inet_stosockaddr(VECTOR_SLOT(strvec, 1), 0, &tcp_chk->bindto);
+	inet_stosockaddr(vector_slot(strvec, 1), 0, &tcp_chk->bindto);
 }
 
 void
-connect_timeout_handler(vector strvec)
+connect_timeout_handler(vector_t *strvec)
 {
 	tcp_checker_t *tcp_chk = CHECKER_GET();
 	tcp_chk->connection_to = CHECKER_VALUE_INT(strvec) * TIMER_HZ;
@@ -169,19 +169,23 @@ tcp_connect_thread(thread_t * thread)
 	}
 
 	if ((fd = socket(tcp_check->dst.ss_family, SOCK_STREAM, IPPROTO_TCP)) == -1) {
-		DBG("TCP connect fail to create socket.");
+		log_message(LOG_INFO, "TCP connect fail to create socket. Rescheduling.");
+		thread_add_timer(thread->master, tcp_connect_thread, checker,
+				checker->vs->delay_loop);
+ 
 		return 0;
 	}
 
 	status = tcp_bind_connect(fd, &tcp_check->dst, &tcp_check->bindto);
-	if (status == connect_error) {
-		thread_add_timer(thread->master, tcp_connect_thread, checker,
-				 checker->vs->delay_loop);
-		return 0;
-	}
 
 	/* handle tcp connection status & register check worker thread */
-	tcp_connection_state(fd, status, thread, tcp_check_thread,
-			     tcp_check->connection_to);
+	if(tcp_connection_state(fd, status, thread, tcp_check_thread,
+			tcp_check->connection_to)) {
+		close(fd);
+		log_message(LOG_INFO, "TCP socket bind failed. Rescheduling.");
+		thread_add_timer(thread->master, tcp_connect_thread, checker,
+				checker->vs->delay_loop);
+	}
+ 
 	return 0;
 }

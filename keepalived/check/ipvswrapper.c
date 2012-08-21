@@ -18,7 +18,7 @@
  *               as published by the Free Software Foundation; either version
  *               2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "ipvswrapper.h"
@@ -455,9 +455,9 @@ ipvs_group_range_cmd(int cmd, virtual_server_group_entry *vsg_entry)
 
 /* set IPVS group rules */
 static void
-ipvs_group_cmd(int cmd, list vs_group, real_server * rs, char * vsgname)
+ipvs_group_cmd(int cmd, list vs_group, real_server * rs, virtual_server * vs)
 {
-	virtual_server_group *vsg = ipvs_get_group_by_name(vsgname, vs_group);
+	virtual_server_group *vsg = ipvs_get_group_by_name(vs->vsgname, vs_group);
 	virtual_server_group_entry *vsg_entry;
 	list l;
 	element e;
@@ -493,6 +493,12 @@ ipvs_group_cmd(int cmd, list vs_group, real_server * rs, char * vsgname)
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vsg_entry = ELEMENT_DATA(e);
 		srule->af = AF_INET;
+		/* Need to get address family from first real server */
+		if (vs->rs && !LIST_ISEMPTY(vs->rs) &&
+		    (((real_server *)ELEMENT_DATA(LIST_HEAD(vs->rs)))->addr.ss_family == AF_INET6)) {
+			srule->af = AF_INET6;
+			srule->netmask = 128;
+		}
 		srule->fwmark = vsg_entry->vfwmark;
 
 		/* Talk to the IPVS channel */
@@ -584,10 +590,16 @@ ipvs_cmd(int cmd, list vs_group, virtual_server * vs, real_server * rs)
 
 	/* Set vs rule and send to kernel */
 	if (vs->vsgname) {
-		ipvs_group_cmd(cmd, vs_group, rs, vs->vsgname);
+		ipvs_group_cmd(cmd, vs_group, rs, vs);
 	} else {
 		if (vs->vfwmark) {
 			srule->af = AF_INET;
+			/* Need to get address family from first real server */
+			if (vs->rs && !LIST_ISEMPTY(vs->rs) &&
+			    (((real_server *)ELEMENT_DATA(LIST_HEAD(vs->rs)))->addr.ss_family == AF_INET6)) {
+				srule->af = AF_INET6;
+				srule->netmask = 128;
+			}
 			srule->fwmark = vs->vfwmark;
 		} else {
 			srule->af = vs->addr.ss_family;
@@ -665,6 +677,226 @@ ipvs_group_remove_entry(virtual_server *vs, virtual_server_group_entry *vsge)
 	return IPVS_SUCCESS;
 }
 
+#ifdef _WITH_SNMP_
+/* Update statistics for a given virtual server. This includes
+   statistics of real servers. The update is only done if we need
+   refreshing. */
+void
+ipvs_update_stats(virtual_server *vs)
+{
+	element e, ge = NULL;
+	real_server *rs;
+	virtual_server_group *vsg = NULL;
+	virtual_server_group_entry *vsg_entry = NULL;
+	uint32_t addr_ip = 0;
+	union nf_inet_addr nfaddr;
+	ipvs_service_entry_t * serv = NULL;
+	struct ip_vs_get_dests * dests = NULL;
+	int i;
+#define UPDATE_STATS_INIT 1
+#define UPDATE_STATS_VSG_IP 2
+#define UPDATE_STATS_VSG_FWMARK 4
+#define UPDATE_STATS_VSG_RANGE 6
+#define UPDATE_STATS_VSG_RANGE_IP 7
+#define UPDATE_STATS_END 99
+	int state = UPDATE_STATS_INIT;
+
+	if (time(NULL) - vs->lastupdated < STATS_REFRESH)
+		return;
+	vs->lastupdated = time(NULL);
+	/* Reset stats */
+	memset(&vs->stats, 0, sizeof(vs->stats));
+	if (vs->s_svr) {
+		memset(&vs->s_svr->stats, 0, sizeof(vs->s_svr->stats));
+		vs->s_svr->activeconns =
+			vs->s_svr->inactconns = vs->s_svr->persistconns = 0;
+	}
+	if (!LIST_ISEMPTY(vs->rs)) {
+		for (e = LIST_HEAD(vs->rs); e; ELEMENT_NEXT(e)) {
+			rs = ELEMENT_DATA(e);
+			memset(&rs->stats, 0, sizeof(rs->stats));
+			rs->activeconns = rs->inactconns = rs->persistconns = 0;
+		}
+	}
+	/* FSM: at each transition, we process "serv" if it is not NULL */
+	while (state != UPDATE_STATS_END) {
+		serv = NULL;
+		switch (state) {
+		case UPDATE_STATS_INIT:
+			/* We need to know the next state to reach */
+			if (vs->vsgname) {
+				if (!LIST_ISEMPTY(check_data->vs_group))
+					vsg = ipvs_get_group_by_name(vs->vsgname,
+								     check_data->vs_group);
+				else
+					vsg = NULL;
+				if (!vsg)
+					state = UPDATE_STATS_END;
+				else {
+					state = UPDATE_STATS_VSG_IP;
+					ge = NULL;
+				}
+				continue;
+			}
+			state = UPDATE_STATS_END;
+			if (vs->vfwmark) {
+				memset(&nfaddr, 0, sizeof(nfaddr));
+				serv = ipvs_get_service(vs->vfwmark,
+							AF_INET,
+							vs->service_type,
+							nfaddr, 0);
+				break;
+			}
+			memcpy(&nfaddr, (vs->addr.ss_family == AF_INET6)?
+			       (void*)(&((struct sockaddr_in6 *)&vs->addr)->sin6_addr):
+			       (void*)(&((struct sockaddr_in *)&vs->addr)->sin_addr),
+			       sizeof(nfaddr));
+			serv = ipvs_get_service(0,
+						vs->addr.ss_family,
+						vs->service_type,
+						nfaddr,
+						inet_sockaddrport(&vs->addr));
+			break;
+		case UPDATE_STATS_VSG_IP:
+			if (!ge)
+				ge = LIST_HEAD(vsg->addr_ip);
+			else
+				ELEMENT_NEXT(ge);
+			if (!ge) {
+				state = UPDATE_STATS_VSG_FWMARK;
+				continue;
+			}
+			vsg_entry = ELEMENT_DATA(ge);
+			memcpy(&nfaddr, (vsg_entry->addr.ss_family == AF_INET6)?
+			       (void*)(&((struct sockaddr_in6 *)&vsg_entry->addr)->sin6_addr):
+			       (void*)(&((struct sockaddr_in *)&vsg_entry->addr)->sin_addr),
+			       sizeof(nfaddr));
+			serv = ipvs_get_service(0,
+						vsg_entry->addr.ss_family,
+						vs->service_type,
+						nfaddr,
+						inet_sockaddrport(&vsg_entry->addr));
+			break;
+		case UPDATE_STATS_VSG_FWMARK:
+			if (!ge)
+				ge = LIST_HEAD(vsg->vfwmark);
+			else
+				ELEMENT_NEXT(ge);
+			if (!ge) {
+				state = UPDATE_STATS_VSG_RANGE;
+				continue;
+			}
+			vsg_entry = ELEMENT_DATA(ge);
+			memset(&nfaddr, 0, sizeof(nfaddr));
+			serv = ipvs_get_service(vsg_entry->vfwmark,
+						AF_INET,
+						vs->service_type,
+						nfaddr, 0);
+			break;
+		case UPDATE_STATS_VSG_RANGE:
+			if (!ge)
+				ge = LIST_HEAD(vsg->range);
+			else
+				ELEMENT_NEXT(ge);
+			if (!ge) {
+				state = UPDATE_STATS_END;
+				continue;
+			}
+			vsg_entry = ELEMENT_DATA(ge);
+			addr_ip = (vsg_entry->addr.ss_family == AF_INET6) ?
+				  ((struct sockaddr_in6 *)&vsg_entry->addr)->sin6_addr.s6_addr32[3]:
+				  ((struct sockaddr_in *)&vsg_entry->addr)->sin_addr.s_addr;
+			state = UPDATE_STATS_VSG_RANGE_IP;
+			continue;
+		case UPDATE_STATS_VSG_RANGE_IP:
+			if (((addr_ip >> 24) & 0xFF) > vsg_entry->range) {
+				state = UPDATE_STATS_VSG_RANGE;
+				continue;
+			}
+			if (vsg_entry->addr.ss_family == AF_INET6) {
+				inet_sockaddrip6(&vsg_entry->addr, &nfaddr.in6);
+				nfaddr.in6.s6_addr32[3] = addr_ip;
+			} else {
+				nfaddr.in.s_addr = addr_ip;
+			}
+			serv = ipvs_get_service(0,
+						vsg_entry->addr.ss_family,
+						vs->service_type,
+						nfaddr,
+						inet_sockaddrport(&vsg_entry->addr));
+			addr_ip += 0x01000000;
+			break;
+		}
+		if (!serv)
+			continue;
+
+		/* Update virtual server stats */
+#define ADD_TO_VSSTATS(X) vs->stats.X += serv->stats.X;
+		ADD_TO_VSSTATS(conns);
+		ADD_TO_VSSTATS(inpkts);
+		ADD_TO_VSSTATS(outpkts);
+		ADD_TO_VSSTATS(inbytes);
+		ADD_TO_VSSTATS(outbytes);
+		ADD_TO_VSSTATS(cps);
+		ADD_TO_VSSTATS(inpps);
+		ADD_TO_VSSTATS(outpps);
+		ADD_TO_VSSTATS(inbps);
+		ADD_TO_VSSTATS(outbps);
+
+		/* Get real servers */
+		dests = ipvs_get_dests(serv);
+		if (!dests) {
+			FREE(serv);
+			return;
+		}
+		for (i = 0; i < dests->num_dests; i++) {
+			rs = NULL;
+
+#define VSD_EQUAL(entity) (((entity)->addr.ss_family == AF_INET &&	\
+			    dests->entrytable[i].af == AF_INET &&	\
+			    inaddr_equal(AF_INET,			\
+					 &dests->entrytable[i].addr,    \
+					 &((struct sockaddr_in *)&(entity)->addr)->sin_addr) &&	\
+			    dests->entrytable[i].port == ((struct sockaddr_in *)&(entity)->addr)->sin_port) || \
+			    ((entity)->addr.ss_family == AF_INET6 &&	\
+			    dests->entrytable[i].af == AF_INET6 &&	\
+			    inaddr_equal(AF_INET6,			\
+					 &dests->entrytable[i].addr,	\
+					 &((struct sockaddr_in6 *)&(entity)->addr)->sin6_addr) &&	\
+			    dests->entrytable[i].port == ((struct sockaddr_in6 *)&(entity)->addr)->sin6_port))
+			/* Is it the sorry server? */
+			if (vs->s_svr && VSD_EQUAL(vs->s_svr))
+				rs = vs->s_svr;
+			else if (!LIST_ISEMPTY(vs->rs))
+				/* Search for a match in the list of real servers */
+				for (e = LIST_HEAD(vs->rs); e; ELEMENT_NEXT(e)) {
+					rs = ELEMENT_DATA(e);
+					if (VSD_EQUAL(rs))
+						break;
+				}
+			if (rs) {
+#define ADD_TO_RSSTATS(X) rs->X += dests->entrytable[i].X
+				ADD_TO_RSSTATS(activeconns);
+				ADD_TO_RSSTATS(inactconns);
+				ADD_TO_RSSTATS(persistconns);
+				ADD_TO_RSSTATS(stats.conns);
+				ADD_TO_RSSTATS(stats.inpkts);
+				ADD_TO_RSSTATS(stats.outpkts);
+				ADD_TO_RSSTATS(stats.inbytes);
+				ADD_TO_RSSTATS(stats.outbytes);
+				ADD_TO_RSSTATS(stats.cps);
+				ADD_TO_RSSTATS(stats.inpps);
+				ADD_TO_RSSTATS(stats.outpps);
+				ADD_TO_RSSTATS(stats.inbps);
+				ADD_TO_RSSTATS(stats.outbps);
+			}
+		}
+		FREE(dests);
+		FREE(serv);
+	}
+}
+#endif /* _WITH_SNMP_ */
+
 #endif
 
 /*
@@ -728,7 +960,7 @@ string_to_number(const char *s, int min, int max)
 static int
 modprobe_ipvs(void)
 {
-	char *argv[] = { "/sbin/modprobe", "-s", "-k", "--", "ip_vs", NULL };
+	char *argv[] = { "/sbin/modprobe", "-s", "--", "ip_vs", NULL };
 	int child;
 	int status;
 	int rc;
@@ -739,6 +971,10 @@ modprobe_ipvs(void)
 	}
 
 	rc = waitpid(child, &status, 0);
+	if (rc < 0) {
+		log_message(LOG_INFO, "IPVS: waitpid error (%s)"
+				    , strerror(errno));
+	}
 
 	if (!WIFEXITED(status) || WEXITSTATUS(status)) {
 		return 1;

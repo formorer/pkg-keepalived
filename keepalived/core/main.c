@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "main.h"
@@ -36,6 +36,9 @@ int linkwatch = 0;		/* Use linkwatch kernel netlink reflection */
 char *main_pidfile = KEEPALIVED_PID_FILE;	/* overrule default pidfile */
 char *checkers_pidfile = CHECKERS_PID_FILE;	/* overrule default pidfile */
 char *vrrp_pidfile = VRRP_PID_FILE;	/* overrule default pidfile */
+#ifdef _WITH_SNMP_
+int snmp = 0;			/* Enable SNMP support */
+#endif
 
 /* Log facility table */
 static struct {
@@ -87,9 +90,6 @@ start_keepalived(void)
 void
 sighup(void *v, int sig)
 {
-	/* Set the reloading flag */
-	SET_RELOAD;
-
 	/* Signal child process */
 	if (vrrp_child > 0)
 		kill(vrrp_child, SIGHUP);
@@ -104,7 +104,6 @@ sigend(void *v, int sig)
 	int status;
 
 	/* register the terminate thread */
-	log_message(LOG_INFO, "Terminating on signal");
 	thread_add_terminate_event(master);
 
 	if (vrrp_child > 0) {
@@ -154,12 +153,18 @@ usage(const char *prog)
 		"  %s --log-console        -l    Log message to local console.\n"
 		"  %s --log-detail         -D    Detailed log messages.\n"
 		"  %s --log-facility       -S    0-7 Set syslog facility to LOG_LOCAL[0-7]. (default=LOG_DAEMON)\n"
+#ifdef _WITH_SNMP_
+		"  %s --snmp               -x    Enable SNMP subsystem\n"
+#endif
 		"  %s --help               -h    Display this short inlined help screen.\n"
 		"  %s --version            -v    Display the version number\n"
 		"  %s --pid                -p    pidfile\n"
 		"  %s --checkers_pid       -c    checkers pidfile\n"
 		"  %s --vrrp_pid           -r    vrrp pidfile\n",
 		prog, prog, prog, prog, prog, prog, prog, prog,
+#ifdef _WITH_SNMP_
+		prog,
+#endif
 		prog, prog, prog, prog, prog, prog, prog);
 }
 
@@ -187,6 +192,9 @@ parse_cmdline(int argc, char **argv)
 		{"pid", 'p', POPT_ARG_STRING, &option_arg, 'p'},
 		{"checkers_pid", 'c', POPT_ARG_STRING, &option_arg, 'c'},
 		{"vrrp_pid", 'r', POPT_ARG_STRING, &option_arg, 'r'},
+#ifdef _WITH_SNMP_
+		{"snmp", 'x', POPT_ARG_NONE, NULL, 'x'},
+#endif
 		{NULL, 0, 0, NULL, 0}
 	};
 
@@ -245,6 +253,11 @@ parse_cmdline(int argc, char **argv)
 	case 'r':
 		vrrp_pidfile = option_arg;
 		break;
+#ifdef _WITH_SNMP_
+	case 'x':
+		snmp = 1;
+		break;
+#endif
 	}
 
 	/* the others */
@@ -290,6 +303,11 @@ parse_cmdline(int argc, char **argv)
 		case 'r':
 			vrrp_pidfile = option_arg;
 			break;
+#ifdef _WITH_SNMP_
+		case 'x':
+			snmp = 1;
+			break;
+#endif
 		}
 	}
 
@@ -317,7 +335,7 @@ main(int argc, char **argv)
 	 */
 	parse_cmdline(argc, argv);
 
-	openlog(PROG, LOG_PID | (debug & 1) ? LOG_CONS : 0, log_facility);
+	openlog(PROG, LOG_PID | ((debug & 1) ? LOG_CONS : 0), log_facility);
 	log_message(LOG_INFO, "Starting " VERSION_STRING);
 
 	/* Check if keepalived is already running */
@@ -325,6 +343,9 @@ main(int argc, char **argv)
 		log_message(LOG_INFO, "daemon is already running");
 		goto end;
 	}
+
+	if (debug & 1)
+		enable_console_log();
 
 	/* daemonize process */
 	if (!(debug & 2))

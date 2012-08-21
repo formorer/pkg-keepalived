@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 /* global include */
@@ -95,6 +95,7 @@ if_get_by_ifname(const char *ifname)
 		if (!strcmp(ifp->ifname, ifname))
 			return ifp;
 	}
+
 	log_message(LOG_ERR, "No such interface, %s", ifname);
 	return NULL;
 }
@@ -261,9 +262,9 @@ free_if(void *data)
 }
 
 void
-dump_if(void *if_data)
+dump_if(void *data)
 {
-	interface *ifp = if_data;
+	interface *ifp = data;
 	char addr_str[41];
 
 	log_message(LOG_INFO, "------< NIC >------");
@@ -376,7 +377,7 @@ init_if_linkbeat(void)
 int
 if_linkbeat(const interface * ifp)
 {
-	if (!data->linkbeat_use_polling)
+	if (!global_data->linkbeat_use_polling)
 		return 1;
 
 	if (IF_MII_SUPPORTED(ifp) || IF_ETHTOOL_SUPPORTED(ifp))
@@ -406,7 +407,7 @@ init_interface_queue(void)
 void
 init_interface_linkbeat(void)
 {
-	if (data->linkbeat_use_polling) {
+	if (global_data->linkbeat_use_polling) {
 		log_message(LOG_INFO, "Using MII-BMSR NIC polling thread...");
 		init_if_linkbeat();
 	} else {
@@ -614,6 +615,24 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface *ifp)
 	ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex));
 	if (ret < 0) {
 		log_message(LOG_INFO, "cant set IPV6_MULTICAST_IF IP option. errno=%d (%m)", errno);
+		close(*sd);
+		*sd = -1;
+	}
+
+	return *sd;
+}
+
+int if_setsockopt_priority(int *sd) {
+	int ret;
+	int priority = 6;
+
+	if (*sd < 0)
+		return -1;
+
+	/* Set SO_PRIORITY for VRRP traffic */
+	ret = setsockopt(*sd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
+	if (ret < 0) {
+		log_message(LOG_INFO, "cant set SO_PRIORITY IP option. errno=%d (%m)", errno);
 		close(*sd);
 		*sd = -1;
 	}

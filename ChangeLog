@@ -1,3 +1,170 @@
+2012-08-20  Alexandre Cassen  <acassen@linux-vs.org>
+	* keepalived-1.2.6 released.
+	* Rename global config data variable 'global_data'.
+	  From Ryan O'Hara :
+	  This patch renames the global configuration data
+	  variable from 'data' to 'global_data'. Three reasons for
+	  renaming this varibale:
+	  - Fixes shadow declaration of 'data' in several locations.
+	  - Is more consistent with other global data variables
+	    (ie. vrrp_data, check_data).
+	  - Functions like free_global_data and dump_global_data were
+	    ignoring conf_data_t argument and using global variable
+	    instead.
+	* Ryan O'Hara: Fix shadow declaration of 'vrrp_data' variable.
+	* Ryan O'Hara: Fix shadow declaration of 'check_data' variable.
+	* Ryan O'Hara: Remove shadow declaration of 'element e' in
+	  vrrp_init_state.
+	* check: Avoid the use of kernel defines in libipvs userland
+	  prototypes.
+	* vrrp: Correctly handle macvlan interface when config file is
+	  re-loaded. From Bob Gilligan :
+	  Testing with the 1.2.0 branch, bring keepalived up with a
+	  vrrp_instance that is configured with use_vmac.  Then delete
+	  that vrrp_instance from the config file.  Then tell keepalived
+	  to re-read its config file with SIGHUP.  The vrrp_instance will
+	  be stopped, but the macvlan interface will remain.  The obvious
+	  fix would be to add code to call netlink_link_del_vmac() in
+	  clear_diff_vrrp().  There's one problem with that: the code
+	  needs the ifindex of the macvlan interface to delete it, but
+	  that resides in the interface structure that was freed earlier
+	  in the reload process.  My fix is to add a field to the
+	  vrrp_rt struct to remember the macvlan ifindex.  This patch
+	  addresses this problem plus two others that can occur in
+	  reloading the config file:  1) If the vrrp_instance
+	  configuration is kept, but the use_vmac entry is removed, the
+	  macvlan interface will not be deleted; 2) If a vrrp_instance
+	  with use_vmac is left unchanged, the code will attempt to
+	  re-create the macvlan interface, but this will fail and the
+	  program will end up not using the macvlan interface.
+	* vrrp: VRRP should notify other routers before it does any
+	  action that effects traffic flow. From John Southworth:
+	  Move the shutdown_vrrp_instances code to before the deletion
+	  of sock_pool. Move sending priority 0 adverts to before address
+	  removal occurs
+	* vrrp: From John Southworth: Stop timers before shutting down
+	  vrrp instances. This is to avoid a possible condition where
+	  a priority 0 advertisement is sent and before the master
+	  thread is killed another advertisement can be generated and sent.
+	* vrrp: Change when socket fd's are freed.
+	  From John Southworth:
+	  Priority 0 advertisements were not being sent as desired on
+	  config reload. This was causing long delays on manually failed
+	  over instances. The socket pool was being freed too early, as a
+	  result the file descriptor for the socket was no longer valid at
+	  the time the priority 0 advertisment was attempted.
+	* vrrp: Added a separate timeout parameter for vrrp_script checks
+	  From Jonathan Harden:
+	  I've added a timeout parameter to the vrrp check scripts which
+	  allow you to have the check timeout different to the interval.
+	  When no timeout has been specified the interval is used (which
+	  mimics the current behaviour).  To explain the reasoning: We
+	  wanted to have check scripts time out faster than our check
+	  interval. Doing the check we need to perform is a little load
+	  intensive and so we don't want to perform it every few seconds.
+	  With this patch we set an interval of 60 seconds but a timeout
+	  of 5 seconds (if the check takes more than a few seconds then
+	  the service is not working correctly).
+	* Extended vector lib for futur work
+	* some cosmetics.
+
+2012-08-13  Alexandre Cassen  <acassen@linux-vs.org>
+	* keepalived-1.2.5 released.
+	* Merge SNMP support from Vincent Bernat.
+	* SNMP is not compiled nor activated by default.
+	* Updated autoconf script
+	* Created Keepalived MIB
+	* Integration of NetSNMP into main scheduling loop
+	* vrrp: Most internal data can be queried with SNMP.
+	* check: Most internal values can be queried using SNMP.
+	  The main exception is the ability to query checkers
+	  which is not present.
+	* check: SNMP support for IPVS stats. IPVS stats are
+	  exported with SNMP. A cache is used to avoid to query
+	  the kernel too much.
+	* Created core framework for SNMP trap
+	* vrrp: SNMP traps are sent when instance state changes
+	  and when sync group state changes
+	* check: SNMP traprs are sent when real server state changes
+	  and when virtual server quorum state changes
+	* vrrp: add support to write/update operations from SNMP.
+	  Write/update support is available for changing the base priority
+	  and for changing instance preemption.
+	* check: add support to write/update operations from SNMP.
+	  Write support is available for changing the weight of a real
+	  server.
+	* workaround for AgentX ping blocking Keepalived. When establishing
+	  AgentX session with the master agent, we setup low timeout and
+	  retries values. If the master agent is blocked, we will wait for
+	  less than 1 second for them and therefore, there will be no
+	  disruption for VRRP.
+	* Copyright update
+	* some cosmetics.
+	
+2012-07-27  Alexandre Cassen  <acassen@linux-vs.org>
+	* keepalived-1.2.4 released.
+	* Please look at git repo for credits.
+	* remove CR from manpage
+	* check: fix pid display in syslog messages
+	* vrrp: better documentation of the limitation on password
+	  length
+	* cosmetics to be pleasant with GCC4
+	* Update autoconf script to properly detect VRRP VMAC
+	  support
+	* security: Fix exploitable issue in sighandler !
+	* Add datarootdir to Makefile.in files.
+	* Fix logging to console.
+	* Remove newlines from log_message calls.
+
+2012-07-13  Alexandre Cassen  <acassen@linux-vs.org>
+	* keepalived-1.2.3 released.
+	* Please look at git repo for credits.
+	* VRRP : allow group to use priority with 'global_tracking'
+	  group keyword
+	* VRRP : Adjust TOS values. The TOS value used by other
+	  vendors is ip precedence 6, so change that. Use socket
+	  priority option to force packets into band 0 of pfifo_fast.
+	* VRRP : Fix sync-group thrashing.The sync group implementation
+	  was not very robust. If one synced instance lost communication
+	  without going to fault state then all synced intances would
+	  transition to master. Following this all instances would
+	  transition back to backup because they heard higher priority
+	  advertisements. This thrashing would continue indefinitely.
+	  To fix this the sync-group code was made to prefer backup state.
+	  That is, the sync-groups don't sync to master state unless
+	  every instance wants to be master.
+	* VRRP : Fix dst lladdr in IPv6 Unsollicited NA.
+	* VRRP : fix pid display in syslog messages.
+	* Fix configure script to correctly identify kernel version.
+	* check : handle unspecified sockaddr_storage when comparing
+	* VRRP : ensure VRRP script interval and GARP delay is not 0.
+	* check: ensure non 0 default values for timeouts.
+	* VRRP : Fix priority not changing on reload.
+	* check : Fix IPv4 address comparison routine.
+	* Don't use bind() with AF_UNSPEC.
+	* check : enable the use of fwmark with IPv6 virtual servers.
+	* Fix modprobe arguments.
+	* Fix double ntohs() in SMTP checker.
+	* Pretty-print IP:port as [%s]:%d.
+	* check : keep retry in case of early TCP failures in checks.
+	* when specifying an IPv6 range, range is hexadecimal value.
+	* Only define kernel types for ip_vs.h header to avoid problems
+	  when loading other headers.
+	* When respawning VRRP or check process, use LOG_ALERT.
+	* Do not set reload flag in the main process.
+	* Set correct rights on PID file.
+	* fix 'gratuitous' typos.
+	* ipvs: don't include linux/types.h or asm/types.h.
+	* configure: check for nl_socket_modify_cb for libnl.
+	* configure: don't check for IPVS support with kernel 2.6.x.
+	* VRRP : On shutdown, release sockets later to be able to send
+	  shutdown packet.
+	* fix documentation on linkbeat_use_polling keyword.
+	* Fix a typo for healthchecker.
+	* fix syslog message if bogous vrrp packet (wrong auth type)
+	  received.
+	* manpage update.
+
 2011-01-09  Alexandre Cassen  <acassen@linux-vs.org>
 	* keepalived-1.2.2 released.
 	* IPv6 : extended autoconf script to support libnl detection.
@@ -218,7 +385,7 @@
 	  linkwatch has been around for long time so set it as
 	  default strategy. Alternatively you can choose to use
 	  MII BSMR polling strategy by adding new keyword
-	  'vrrp_linkbeat_use_polling' in your configuration file.
+	  'linkbeat_use_polling' in your configuration file.
 	* Vincent Bernat <bernat <at> luffy.cx> fixed ip_vs.h includes.
 	* Removed vrrp_running and check_running test since it is
 	  already performed by keepalived_running.

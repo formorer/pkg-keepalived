@@ -20,7 +20,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <openssl/err.h>
@@ -76,7 +76,7 @@ build_ssl_ctx(void)
 		ssl = check_data->ssl;
 
 	/* Initialize SSL context for SSL v2/3 */
-	ssl->meth = SSLv23_method();
+	ssl->meth = (SSL_METHOD *) SSLv23_method();
 	ssl->ctx = SSL_CTX_new(ssl->meth);
 
 	/* return for autogen context */
@@ -141,7 +141,7 @@ init_ssl_ctx(void)
 		log_message(LOG_INFO, "  SSL  keyfile:%s", ssl->keyfile);
 		log_message(LOG_INFO, "  SSL password:%s", ssl->password);
 		log_message(LOG_INFO, "  SSL   cafile:%s", ssl->cafile);
-		log_message(LOG_INFO, "Terminate...\n");
+		log_message(LOG_INFO, "Terminate...");
 		clear_ssl(ssl);
 		return 0;
 	}
