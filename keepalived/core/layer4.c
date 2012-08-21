@@ -18,7 +18,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include "layer4.h"
@@ -43,7 +43,7 @@ tcp_bind_connect(int fd, struct sockaddr_storage *addr, struct sockaddr_storage 
 	fcntl(fd, F_SETFL, val | O_NONBLOCK);
 
 	/* Bind socket */
-	if (bind_addr) {
+	if (bind_addr && ((struct sockaddr *) bind_addr)->sa_family != AF_UNSPEC) {
 		addrlen = sizeof(*bind_addr);
 		if (bind(fd, (struct sockaddr *) bind_addr, addrlen) != 0)
 			return connect_error;
@@ -82,7 +82,7 @@ tcp_socket_state(int fd, thread_t * thread, int (*func) (thread_t *))
 	int status;
 	socklen_t addrlen;
 	int ret = 0;
-	TIMEVAL timer_min;
+	timeval_t timer_min;
 
 	/* Handle connection timeout */
 	if (thread->type == THREAD_WRITE_TIMEOUT) {
@@ -109,7 +109,7 @@ tcp_socket_state(int fd, thread_t * thread, int (*func) (thread_t *))
 	if (status == EINPROGRESS) {
 		timer_min = timer_sub_now(thread->sands);
 		thread_add_write(thread->master, func, THREAD_ARG(thread),
-				 thread->u.fd, TIMER_LONG(timer_min));
+				 thread->u.fd, timer_long(timer_min));
 		return connect_in_progress;
 	} else if (status != 0) {
 		close(thread->u.fd);
@@ -119,7 +119,7 @@ tcp_socket_state(int fd, thread_t * thread, int (*func) (thread_t *))
 	return connect_success;
 }
 
-void
+int
 tcp_connection_state(int fd, enum connect_result status, thread_t * thread,
 		     int (*func) (thread_t *), long timeout)
 {
@@ -128,20 +128,16 @@ tcp_connection_state(int fd, enum connect_result status, thread_t * thread,
 	checker = THREAD_ARG(thread);
 
 	switch (status) {
-	case connect_error:
-		close(fd);
-		break;
-
 	case connect_success:
 		thread_add_write(thread->master, func, checker, fd, timeout);
-		break;
+		return 0;
 
 		/* Checking non-blocking connect, we wait until socket is writable */
 	case connect_in_progress:
 		thread_add_write(thread->master, func, checker, fd, timeout);
-		break;
+		return 0;
 
 	default:
-		break;
+		return 1;
 	}
 }

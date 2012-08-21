@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _VRRP_TRACK_H
@@ -39,8 +39,9 @@
 #define SCRIPT_ISUP(L)	(vrrp_script_up((L)))
 
 /* VRRP script tracking defaults */
-#define VRRP_SCRIPT_DI 1       /* external script track interval (in sec) */
-#define VRRP_SCRIPT_DW 0       /* external script default weight */
+#define VRRP_SCRIPT_DI 1	/* external script track interval (in sec) */
+#define VRRP_SCRIPT_DT 0	/* external script track timeout (in sec) */
+#define VRRP_SCRIPT_DW 0	/* external script default weight */
 
 /* VRRP script tracking results.
  * The result is an integer between 0 and rise-1 to indicate a DOWN state,
@@ -57,7 +58,8 @@
 typedef struct _vrrp_script {
 	char *sname;		/* instance name */
 	char *script;		/* the command to be called */
-	int interval;		/* interval between script calls */
+	long interval;		/* interval between script calls */
+	long timeout;		/* seconds before script timeout */
 	int weight;		/* weight associated to this script */
 	int result;		/* result of last call to this script: 0..R-1 = KO, R..R+F-1 = OK */
 	int inuse;		/* how many users have weight>0 ? */
@@ -73,9 +75,9 @@ typedef struct _tracked_sc {
 
 /* prototypes */
 extern void dump_track(void *);
-extern void alloc_track(list, vector);
+extern void alloc_track(list, vector_t *);
 extern void dump_track_script(void *);
-extern void alloc_track_script(list, vector);
+extern void alloc_track_script(list, vector_t *);
 extern int vrrp_tracked_up(list);
 extern void vrrp_log_tracked_down(list);
 extern int vrrp_tracked_weight(list);

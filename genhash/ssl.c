@@ -19,7 +19,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <openssl/err.h>
@@ -47,7 +47,7 @@ init_ssl(void)
 	SSL_load_error_strings();
 	bio_err = BIO_new_fp(stderr, BIO_NOCLOSE);
 	/* Initialize SSL context for SSL v2/3 */
-	req->meth = SSLv23_method();
+	req->meth = (SSL_METHOD *) SSLv23_method();
 	req->ctx = SSL_CTX_new(req->meth);
 
 #if (OPENSSL_VERSION_NUMBER < 0x00905100L)

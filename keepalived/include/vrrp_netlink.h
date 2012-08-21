@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #ifndef _VRRP_NETLINK_H
@@ -45,6 +45,7 @@ struct nl_handle {
 
 /* Define types */
 #define NETLINK_TIMER (30 * TIMER_HZ)
+#define NLMSG_TAIL(nmsg) ((struct rtattr *) (((void *) (nmsg)) + NLMSG_ALIGN((nmsg)->nlmsg_len)))
 
 /* Global vars exported */
 extern struct nl_handle nl_kernel;	/* Kernel reflection channel */
