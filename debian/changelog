@@ -1,3 +1,13 @@
+keepalived (1:1.2.6-1) experimental; urgency=low
+
+  * [b72cd7a] Remove obsolete patches
+  * [0cadef0] Enable snmp support
+  * [7442e85] Build-depend against libsnmp-dev
+  * [b84e381] Imported Upstream version 1.2.4
+  * [9f29e62] Imported Upstream version 1.2.6
+
+ -- Alexander Wirt <formorer@debian.org>  Tue, 21 Aug 2012 18:14:42 +0200
+
 keepalived (1:1.2.2-3) unstable; urgency=low
 
   * [c28d5f0] Readd ip_vs.h - this reenables ipvs (Closes: #649778)
