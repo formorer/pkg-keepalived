@@ -1,0 +1,12 @@
+--- a/keepalived/vrrp/vrrp_arp.c
++++ b/keepalived/vrrp/vrrp_arp.c
+@@ -23,6 +23,9 @@
+ /* system includes */
+ #include <netpacket/packet.h>
+ 
++/* Work around incompatibility between linux/types.h and sys/types.h */
++#define __KERNEL_STRICT_NAMES
++
+ /* local includes */
+ #include "logger.h"
+ #include "memory.h"
