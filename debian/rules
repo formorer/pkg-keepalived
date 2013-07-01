@@ -1,21 +1,33 @@
 #!/usr/bin/make -f
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+#export DH_OPTIONS=-v
 
-include /usr/share/cdbs/1/rules/debhelper.mk
-include /usr/share/cdbs/1/rules/simple-patchsys.mk
-include /usr/share/cdbs/1/class/autotools.mk
+%:
+	dh  $@
 
-DEB_AUTO_UPDATE_AUTOCONF = 2.50 
-DEB_CONFIGURE_SCRIPT_ENV := STRIP=/bin/true $(DEB_CONFIGURE_SCRIPT_ENV)
-DEB_CONFIGURE_EXTRA_FLAGS := --with-kernel-dir=debian/ --enable-snmp
-
-binary-install/keepalived::
-	rm -rf $(DEB_DESTDIR)/etc/keepalived/samples
-	rm -rf $(DEB_DESTDIR)/etc/keepalived/keepalived.conf
-	rm -rf $(DEB_DESTDIR)/etc/init.d/keepalived.init
-	rm -rf $(DEB_DESTDIR)/etc/rc.d
-	rm -rf $(DEB_DESTDIR)/etc/sysconfig
-	rm -rf $(DEB_DESTDIR)/usr/man
-
-clean::
-	-rm config.status
-	-rm config.log
+# Use override_dh_* targets to customize this.
+# ---------------------------------------------------
+# Followings are the old debian/rules
+#
+# #!/usr/bin/make -f
+# 
+# include /usr/share/cdbs/1/rules/debhelper.mk
+# include /usr/share/cdbs/1/rules/simple-patchsys.mk
+# include /usr/share/cdbs/1/class/autotools.mk
+# 
+# DEB_AUTO_UPDATE_AUTOCONF = 2.50 
+# DEB_CONFIGURE_SCRIPT_ENV := STRIP=/bin/true $(DEB_CONFIGURE_SCRIPT_ENV)
+# DEB_CONFIGURE_EXTRA_FLAGS := --with-kernel-dir=debian/ --enable-snmp
+# 
+# binary-install/keepalived::
+# 	rm -rf $(DEB_DESTDIR)/etc/keepalived/samples
+# 	rm -rf $(DEB_DESTDIR)/etc/keepalived/keepalived.conf
+# 	rm -rf $(DEB_DESTDIR)/etc/init.d/keepalived.init
+# 	rm -rf $(DEB_DESTDIR)/etc/rc.d
+# 	rm -rf $(DEB_DESTDIR)/etc/sysconfig
+# 	rm -rf $(DEB_DESTDIR)/usr/man
+# 
+# clean::
+# 	-rm config.status
+# 	-rm config.log
