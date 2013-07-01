@@ -1,4 +1,4 @@
-keepalived (1:1.2.7-1) UNRELEASED; urgency=low
+keepalived (1:1.2.7-1) unstable; urgency=low
 
   * [b46efb0] Imported Upstream version 1.2.7
     - Don't use bind() with AF_UNSPEC
@@ -15,7 +15,7 @@ keepalived (1:1.2.7-1) UNRELEASED; urgency=low
   * [525415b] Fix errors in manpage
   * [35dbfe3] Remove unneeded files
 
- -- Alexander Wirt <formorer@debian.org>  Mon, 24 Jun 2013 22:15:37 +0200
+ -- Alexander Wirt <formorer@debian.org>  Mon, 01 Jul 2013 22:02:02 +0200
 
 keepalived (1:1.2.6-1) experimental; urgency=low
 
