@@ -26,6 +26,10 @@ TMPFILES="/tmp/.vrrp /tmp/.healthcheckers"
 test -f $CONFIG || exit 0 
 test -f $DAEMON || exit 0
 
+
+# Read configuration variable file if it is present
+[ -r /etc/default/$NAME ] && . /etc/default/$NAME
+
 case "$1" in
   start)
        	log_daemon_msg "Starting $DESC" "$NAME"
@@ -34,7 +38,7 @@ case "$1" in
        		test -e $file && test ! -L $file && rm $file
 	done
 	if start-stop-daemon --start --quiet --pidfile /var/run/$NAME.pid \
-               --exec $DAEMON; then
+               --exec $DAEMON -- $DAEMON_ARGS; then
 		log_end_msg 0
 	else
 		log_end_msg 1
@@ -65,7 +69,7 @@ case "$1" in
 		/var/run/$NAME.pid --exec $DAEMON || true 
        sleep 1
        if start-stop-daemon --start --quiet --pidfile \
-               /var/run/$NAME.pid --exec $DAEMON; then
+               /var/run/$NAME.pid --exec $DAEMON -- $DAEMON_ARGS; then
 	       log_end_msg 0
 	else
 		log_end_msg 1
