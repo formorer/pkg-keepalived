@@ -3,7 +3,6 @@ Section: admin
 Priority: extra
 Maintainer: Alexander Wirt <formorer@debian.org>
 Build-Depends: autoconf,
-               cdbs,
                debhelper (>= 9),
                libnl-3-dev,
                libnl-genl-3-dev,
