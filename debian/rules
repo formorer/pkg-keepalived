@@ -4,7 +4,10 @@
 #export DH_OPTIONS=-v
 
 %:
-	dh  $@
+	dh  $@ --with autoreconf
+
+override_dh_auto_configure:
+	dh_auto_configure -- --with-kernel-dir=debian/  --enable-snmp
 
 # Use override_dh_* targets to customize this.
 # ---------------------------------------------------
