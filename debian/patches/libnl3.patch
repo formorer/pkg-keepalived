@@ -1,0 +1,108 @@
+Description: Support libnl version 2.0 and higher
+Author: Marc - A. Dahlhaus <mad@wol.de>
+Forwarded: http://article.gmane.org/gmane.linux.keepalived.devel/3522
+Last-Update: 2011-12-21
+
+diff -Nur -x '*.orig' -x '*~' keepalived/configure keepalived.new/configure
+--- keepalived/configure	2011-12-15 22:11:52.353950000 -0500
++++ keepalived.new/configure	2011-12-21 16:25:40.069869704 -0500
+@@ -3884,13 +3884,59 @@
+     LIBS="$LIBS -lnl"
+ 
+ else
++  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_alloc in -lnl" >&5
++$as_echo_n "checking for nl_socket_alloc in -lnl... " >&6; }
++if ${ac_cv_lib_nl_nl_socket_alloc+:} false; then :
++  $as_echo_n "(cached) " >&6
++else
++  ac_check_lib_save_LIBS=$LIBS
++LIBS="-lnl  $LIBS"
++cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++
++/* Override any GCC internal prototype to avoid an error.
++   Use char because int might match the return type of a GCC
++   builtin and then its argument prototype would still apply.  */
++#ifdef __cplusplus
++extern "C"
++#endif
++char nl_socket_alloc ();
++int
++main ()
++{
++return nl_socket_alloc ();
++  ;
++  return 0;
++}
++_ACEOF
++if ac_fn_c_try_link "$LINENO"; then :
++  ac_cv_lib_nl_nl_socket_alloc=yes
++else
++  ac_cv_lib_nl_nl_socket_alloc=no
++fi
++rm -f core conftest.err conftest.$ac_objext \
++    conftest$ac_exeext conftest.$ac_ext
++LIBS=$ac_check_lib_save_LIBS
++fi
++{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nl_nl_socket_alloc" >&5
++$as_echo "$ac_cv_lib_nl_nl_socket_alloc" >&6; }
++if test "x$ac_cv_lib_nl_nl_socket_alloc" = xyes; then :
++
++      USE_NL="LIBIPVS_USE_NL"
++      CFLAGS="$CFLAGS -DLIBNL2"
++      LIBS="$LIBS -lnl-3 -lnl-genl-3"
+ 
+-    USE_NL="LIBIPVS_DONTUSE_NL"
+-    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: keepalived will be built without libnl support." >&5
++else
++
++      USE_NL="LIBIPVS_DONTUSE_NL"
++      { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: keepalived will be built without libnl support." >&5
+ $as_echo "$as_me: WARNING: keepalived will be built without libnl support." >&2;}
+ 
+ fi
+ 
++
++fi
++
+ 
+ CPPFLAGS="$CPPFLAGS -I$kernelinc"
+ { $as_echo "$as_me:${as_lineno-$LINENO}: checking for kernel version" >&5
+diff -Nur -x '*.orig' -x '*~' keepalived/configure.in keepalived.new/configure.in
+--- keepalived/configure.in	2011-12-15 22:11:52.353950000 -0500
++++ keepalived.new/configure.in	2011-12-21 16:27:10.041874926 -0500
+@@ -56,9 +56,16 @@
+     USE_NL="LIBIPVS_USE_NL"
+     LIBS="$LIBS -lnl"
+   ],
+-  [
+-    USE_NL="LIBIPVS_DONTUSE_NL"
+-    AC_MSG_WARN([keepalived will be built without libnl support.])
++  [AC_CHECK_LIB(nl-3, nl_socket_alloc,
++    [
++      USE_NL="LIBIPVS_USE_NL"
++      CFLAGS="$CFLAGS -I/usr/include/libnl3 -DLIBNL2"
++      LIBS="$LIBS -lnl-3 -lnl-genl-3"
++    ],
++    [
++      USE_NL="LIBIPVS_DONTUSE_NL"
++      AC_MSG_WARN([keepalived will be built without libnl support.])
++    ])
+   ])
+ 
+ dnl ----[ Kernel version check ]----
+diff -Nur -x '*.orig' -x '*~' keepalived/keepalived/libipvs-2.6/libipvs.c keepalived.new/keepalived/libipvs-2.6/libipvs.c
+--- keepalived/keepalived/libipvs-2.6/libipvs.c	2011-12-15 22:11:52.353950000 -0500
++++ keepalived.new/keepalived/libipvs-2.6/libipvs.c	2011-12-21 16:25:40.073869704 -0500
+@@ -34,6 +34,11 @@
+ struct ip_vs_getinfo ipvs_info;
+ 
+ #ifdef LIBIPVS_USE_NL
++# ifdef LIBNL2
++#  define nl_handle nl_sock
++#  define nl_handle_alloc nl_socket_alloc
++#  define nl_handle_destroy nl_socket_free
++# endif
+ struct nl_handle *sock = NULL;
+ int family, try_nl = 1;
+ #endif
