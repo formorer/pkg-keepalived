@@ -1,3 +1,22 @@
+keepalived (1:1.2.7-1) UNRELEASED; urgency=low
+
+  * [b46efb0] Imported Upstream version 1.2.7
+    - Don't use bind() with AF_UNSPEC
+      (Closes: #699540)
+    - new upstream version (Closes: #703085) 
+  * [6058efd] wrap-and-sort
+  * [a128718] Build with snmp support
+  * [d9783f9] Remove obsolete patches
+  * [2deaa4e] Move to dh and 3.0(quilt)
+  * [cd5a314] Use libnl3 (Closes: #688164)
+  * [d6493e1] Convert package to dh and quilt(3.0)
+  * [e7f5489] Bump dh compat to dh9
+  * [f6ca92d] Bump standards version
+  * [525415b] Fix errors in manpage
+  * [35dbfe3] Remove unneeded files
+
+ -- Alexander Wirt <formorer@debian.org>  Mon, 24 Jun 2013 22:15:37 +0200
+
 keepalived (1:1.2.6-1) experimental; urgency=low
 
   * [b72cd7a] Remove obsolete patches
