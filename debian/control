@@ -4,12 +4,14 @@ Priority: extra
 Maintainer: Alexander Wirt <formorer@debian.org>
 Build-Depends: autoconf,
                cdbs,
-               debhelper (>= 5),
-               libnl-dev,
+               debhelper (>= 9),
+               libnl-3-dev,
+               libnl-genl-3-dev,
                libpopt-dev,
                libsnmp-dev,
                libssl-dev,
-               linux-libc-dev
+               linux-libc-dev,
+               dh-autoreconf
 Standards-Version: 3.9.2
 Vcs-Browser: https://github.com/formorer/pkg-keepalived
 Vcs-Git: git://github.com/formorer/pkg-keepalived.git
