@@ -30,8 +30,8 @@
 #include "logger.h"
 
 /* global vars */
-vrrp_conf_data *vrrp_data = NULL;
-vrrp_conf_data *old_vrrp_data = NULL;
+vrrp_data_t *vrrp_data = NULL;
+vrrp_data_t *old_vrrp_data = NULL;
 char *vrrp_buffer;
 
 /* Static addresses facility function */
@@ -56,7 +56,7 @@ alloc_sroute(vector_t *strvec)
 static void
 free_vgroup(void *data)
 {
-	vrrp_sgroup *vgroup = data;
+	vrrp_sgroup_t *vgroup = data;
 
 	FREE(vgroup->gname);
 	free_strvec(vgroup->iname);
@@ -70,7 +70,7 @@ free_vgroup(void *data)
 static void
 dump_vgroup(void *data)
 {
-	vrrp_sgroup *vgroup = data;
+	vrrp_sgroup_t *vgroup = data;
 	int i;
 	char *str;
 
@@ -101,7 +101,7 @@ dump_vgroup(void *data)
 static void
 free_vscript(void *data)
 {
-	vrrp_script *vscript = data;
+	vrrp_script_t *vscript = data;
 
 	FREE(vscript->sname);
 	FREE_PTR(vscript->script);
@@ -110,7 +110,7 @@ free_vscript(void *data)
 static void
 dump_vscript(void *data)
 {
-	vrrp_script *vscript = data;
+	vrrp_script_t *vscript = data;
 	char *str;
 
 	log_message(LOG_INFO, " VRRP Script = %s", vscript->sname);
@@ -139,10 +139,14 @@ static void
 free_sock(void *sock_data)
 {
 	sock_t *sock = sock_data;
-	interface *ifp;
+	interface_t *ifp;
 	if (sock->fd_in > 0) {
 		ifp = if_get_by_ifindex(sock->ifindex);
-		if_leave_vrrp_group(sock->family, sock->fd_in, ifp);
+		if (sock->unicast) {
+			close(sock->fd_in);
+		} else {
+			if_leave_vrrp_group(sock->family, sock->fd_in, ifp);
+		}
 	}
 	if (sock->fd_out > 0)
 		close(sock->fd_out);
@@ -153,17 +157,32 @@ static void
 dump_sock(void *sock_data)
 {
 	sock_t *sock = sock_data;
-	log_message(LOG_INFO, "VRRP sockpool: [ifindex(%d), proto(%d), fd(%d,%d)]"
+	log_message(LOG_INFO, "VRRP sockpool: [ifindex(%d), proto(%d), unicast(%d), fd(%d,%d)]"
 			    , sock->ifindex
 			    , sock->proto
+			    , sock->unicast
 			    , sock->fd_in
 			    , sock->fd_out);
 }
 
 static void
+free_unicast_peer(void *data)
+{
+	FREE(data);
+}
+
+static void
+dump_unicast_peer(void *data)
+{
+	struct sockaddr_storage *peer = data;
+
+	log_message(LOG_INFO, "     %s", inet_sockaddrtos(peer));
+}
+
+static void
 free_vrrp(void *data)
 {
-	vrrp_rt *vrrp = data;
+	vrrp_t *vrrp = data;
 	element e;
 
 	FREE(vrrp->iname);
@@ -186,6 +205,7 @@ free_vrrp(void *data)
 			FREE(ELEMENT_DATA(e));
 	free_list(vrrp->track_script);
 
+	free_list(vrrp->unicast_peer);
 	free_list(vrrp->vip);
 	free_list(vrrp->evip);
 	free_list(vrrp->vroutes);
@@ -194,7 +214,7 @@ free_vrrp(void *data)
 static void
 dump_vrrp(void *data)
 {
-	vrrp_rt *vrrp = data;
+	vrrp_t *vrrp = data;
 	char auth_data[sizeof(vrrp->auth_data) + 1];
 
 	log_message(LOG_INFO, " VRRP Instance = %s", vrrp->iname);
@@ -239,9 +259,12 @@ dump_vrrp(void *data)
 		dump_list(vrrp->track_ifp);
 	}
 	if (!LIST_ISEMPTY(vrrp->track_script)) {
-		log_message(LOG_INFO, "   Tracked scripts = %d",
-		       LIST_SIZE(vrrp->track_script));
+		log_message(LOG_INFO, "   Tracked scripts = %d", LIST_SIZE(vrrp->track_script));
 		dump_list(vrrp->track_script);
+	}
+	if (!LIST_ISEMPTY(vrrp->unicast_peer)) {
+		log_message(LOG_INFO, "   Unicast Peer = %d", LIST_SIZE(vrrp->unicast_peer));
+		dump_list(vrrp->unicast_peer);
 	}
 	if (!LIST_ISEMPTY(vrrp->vip)) {
 		log_message(LOG_INFO, "   Virtual IP = %d", LIST_SIZE(vrrp->vip));
@@ -278,10 +301,10 @@ void
 alloc_vrrp_sync_group(char *gname)
 {
 	int size = strlen(gname);
-	vrrp_sgroup *new;
+	vrrp_sgroup_t *new;
 
 	/* Allocate new VRRP group structure */
-	new = (vrrp_sgroup *) MALLOC(sizeof (vrrp_sgroup));
+	new = (vrrp_sgroup_t *) MALLOC(sizeof(vrrp_sgroup_t));
 	new->gname = (char *) MALLOC(size + 1);
 	new->state = VRRP_STATE_INIT;
 	memcpy(new->gname, gname, size);
@@ -294,12 +317,12 @@ void
 alloc_vrrp(char *iname)
 {
 	int size = strlen(iname);
-	seq_counter *counter;
-	vrrp_rt *new;
+	seq_counter_t *counter;
+	vrrp_t *new;
 
 	/* Allocate new VRRP structure */
-	new = (vrrp_rt *) MALLOC(sizeof (vrrp_rt));
-	counter = (seq_counter *) MALLOC(sizeof (seq_counter));
+	new = (vrrp_t *) MALLOC(sizeof(vrrp_t));
+	counter = (seq_counter_t *) MALLOC(sizeof(seq_counter_t));
 
 	/* Build the structure */
 	new->ipsecah_counter = counter;
@@ -316,9 +339,31 @@ alloc_vrrp(char *iname)
 }
 
 void
+alloc_vrrp_unicast_peer(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	struct sockaddr_storage *peer = NULL;
+	int ret;
+
+	if (LIST_ISEMPTY(vrrp->unicast_peer))
+		vrrp->unicast_peer = alloc_list(free_unicast_peer, dump_unicast_peer);
+
+	/* Allocate new unicast peer */
+	peer = (struct sockaddr_storage *) MALLOC(sizeof(struct sockaddr_storage));
+	ret = inet_stosockaddr(vector_slot(strvec, 0), 0, peer);
+	if (ret < 0) {
+		log_message(LOG_ERR, "Configuration error: malformed unicast peer address"
+				     " [%s]. Skipping...");
+		return;
+	}
+
+	list_add(vrrp->unicast_peer, peer);
+}
+
+void
 alloc_vrrp_track(vector_t *strvec)
 {
-	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
 	if (LIST_ISEMPTY(vrrp->track_ifp))
 		vrrp->track_ifp = alloc_list(NULL, dump_track);
@@ -328,7 +373,7 @@ alloc_vrrp_track(vector_t *strvec)
 void
 alloc_vrrp_track_script(vector_t *strvec)
 {
-	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
 	if (LIST_ISEMPTY(vrrp->track_script))
 		vrrp->track_script = alloc_list(NULL, dump_track_script);
@@ -338,7 +383,7 @@ alloc_vrrp_track_script(vector_t *strvec)
 void
 alloc_vrrp_vip(vector_t *strvec)
 {
-	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	if (vrrp->ifp == NULL) {
 		log_message(LOG_ERR, "Configuration error: VRRP definition must belong to an interface");
 	}
@@ -350,7 +395,7 @@ alloc_vrrp_vip(vector_t *strvec)
 void
 alloc_vrrp_evip(vector_t *strvec)
 {
-	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
 	if (LIST_ISEMPTY(vrrp->evip))
 		vrrp->evip = alloc_list(free_ipaddress, dump_ipaddress);
@@ -360,7 +405,7 @@ alloc_vrrp_evip(vector_t *strvec)
 void
 alloc_vrrp_vroute(vector_t *strvec)
 {
-	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
 	if (LIST_ISEMPTY(vrrp->vroutes))
 		vrrp->vroutes = alloc_list(free_iproute, dump_iproute);
@@ -371,10 +416,10 @@ void
 alloc_vrrp_script(char *sname)
 {
 	int size = strlen(sname);
-	vrrp_script *new;
+	vrrp_script_t *new;
 
 	/* Allocate new VRRP group structure */
-	new = (vrrp_script *) MALLOC(sizeof (vrrp_script));
+	new = (vrrp_script_t *) MALLOC(sizeof(vrrp_script_t));
 	new->sname = (char *) MALLOC(size + 1);
 	memcpy(new->sname, sname, size + 1);
 	new->interval = VRRP_SCRIPT_DI * TIMER_HZ;
@@ -400,12 +445,12 @@ free_vrrp_buffer(void)
 	FREE(vrrp_buffer);
 }
 
-vrrp_conf_data *
+vrrp_data_t *
 alloc_vrrp_data(void)
 {
-	vrrp_conf_data *new;
+	vrrp_data_t *new;
 
-	new = (vrrp_conf_data *) MALLOC(sizeof (vrrp_conf_data));
+	new = (vrrp_data_t *) MALLOC(sizeof(vrrp_data_t));
 	new->vrrp = alloc_list(free_vrrp, dump_vrrp);
 	new->vrrp_index = alloc_mlist(NULL, NULL, 255+1);
 	new->vrrp_index_fd = alloc_mlist(NULL, NULL, 1024+1);
@@ -417,7 +462,7 @@ alloc_vrrp_data(void)
 }
 
 void
-free_vrrp_data(vrrp_conf_data * data)
+free_vrrp_data(vrrp_data_t * data)
 {
 	free_list(data->static_addresses);
 	free_list(data->static_routes);
@@ -431,13 +476,13 @@ free_vrrp_data(vrrp_conf_data * data)
 }
 
 void
-free_vrrp_sockpool(vrrp_conf_data * data)
+free_vrrp_sockpool(vrrp_data_t * data)
 {
 	free_list(data->vrrp_socket_pool);
 }
 
 void
-dump_vrrp_data(vrrp_conf_data * data)
+dump_vrrp_data(vrrp_data_t * data)
 {
 	if (!LIST_ISEMPTY(data->static_addresses)) {
 		log_message(LOG_INFO, "------< Static Addresses >------");

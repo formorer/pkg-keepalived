@@ -61,7 +61,7 @@ stop_vrrp(void)
 		shutdown_vrrp_instances();
 
 	/* Clear static entries */
-	netlink_rtlist_ipv4(vrrp_data->static_routes, IPROUTE_DEL);
+	netlink_rtlist(vrrp_data->static_routes, IPROUTE_DEL);
 	netlink_iplist(vrrp_data->static_addresses, IPADDRESS_DEL);
 
 	free_interface_queue();
@@ -144,7 +144,7 @@ start_vrrp(void)
 
 	/* Set static entries */
 	netlink_iplist(vrrp_data->static_addresses, IPADDRESS_ADD);
-	netlink_rtlist_ipv4(vrrp_data->static_routes, IPROUTE_ADD);
+	netlink_rtlist(vrrp_data->static_routes, IPROUTE_ADD);
 
 	/* Dump configuration */
 	if (debug & 4) {
@@ -249,8 +249,13 @@ vrrp_respawn_thread(thread_t * thread)
 	}
 
 	/* We catch a SIGCHLD, handle it */
-	log_message(LOG_ALERT, "VRRP child process(%d) died: Respawning", pid);
-	start_vrrp_child();
+	if (!(debug & 64)) {
+		log_message(LOG_ALERT, "VRRP child process(%d) died: Respawning", pid);
+		start_vrrp_child();
+	} else {
+		log_message(LOG_ALERT, "VRRP child process(%d) died: Exiting", pid);
+		raise(SIGTERM);
+	}
 	return 0;
 }
 

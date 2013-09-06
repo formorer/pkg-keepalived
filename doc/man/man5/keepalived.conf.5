@@ -117,7 +117,7 @@ describes the moveable IP for each instance of a group in vrrp_sync_group.
 Here are described two IPs (on inside_network and on outside_network), 
 on machine "my_hostname", which belong to the group VG_1 and
 which will transition together on any state change.
-.PPa
+.PP
  #You will need to write another block for outside_network.
  vrrp_instance inside_network {
     # Initial state, MASTER|BACKUP
@@ -144,13 +144,24 @@ which will transition together on any state change.
       ...
     }
 
-    #default IP for binding vrrpd is the primary IP 
-    #on interface. If you want to hide location of vrrpd, 
-    #use this IP as src_addr for multicast vrrp packets.
-    #(since it's multicast, vrrpd will get the reply 
-    #packet no matter what src_addr is used).
-    #optional
+    # default IP for binding vrrpd is the primary IP 
+    # on interface. If you want to hide location of vrrpd, 
+    # use this IP as src_addr for multicast vrrp packets.
+    # (since it's multicast, vrrpd will get the reply 
+    # packet no matter what src_addr is used).
+    # optional
     mcast_src_ip <IPADDR> 
+
+    # Do not send VRRP adverts over VRRP multicast group.
+    # Instead it sends adverts to the following list of
+    # ip addresses using unicast design fashion. It can
+    # be cool to use VRRP FSM and features in a networking
+    # environement where multicast is not supported !
+    # IP Addresses specified can IPv4 as well as IPv6
+    unicast_peer {
+      <IPADDR>
+      ...
+    }
 
     # Binding interface for lvs syncd
     lvs_sync_daemon_interface eth1 
@@ -294,6 +305,8 @@ A virtual_server can be a declaration of one of
 
     # LVS scheduler 
     lb_algo rr|wrr|lc|wlc|lblc|sh|dh 
+    # Enable One-Packet-Scheduling for UDP (-O in ipvsadm)
+    ops
     # LVS forwarding method
     lb_kind NAT|DR|TUN 
     # LVS persistence timeout, sec

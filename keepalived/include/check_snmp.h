@@ -97,6 +97,7 @@
 #define CHECK_SNMP_RSRATEOUTPPS 58
 #define CHECK_SNMP_RSRATEINBPS 59
 #define CHECK_SNMP_RSRATEOUTBPS 60
+#define CHECK_SNMP_VSOPS 71
 
 #define STATE_VSGM_FWMARK 1
 #define STATE_VSGM_ADDRESS 2
@@ -126,7 +127,7 @@ do {									\
 /* Prototypes */
 extern void check_snmp_agent_init(void);
 extern void check_snmp_agent_close(void);
-extern void check_snmp_rs_trap(real_server *, virtual_server *);
-extern void check_snmp_quorum_trap(virtual_server *);
+extern void check_snmp_rs_trap(real_server_t *, virtual_server_t *);
+extern void check_snmp_quorum_trap(virtual_server_t *);
 
 #endif
