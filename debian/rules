@@ -7,7 +7,7 @@
 	dh  $@ --with autoreconf
 
 override_dh_auto_configure:
-	dh_auto_configure -- --with-kernel-dir=debian/  --enable-snmp
+	dh_auto_configure -- --with-kernel-dir=debian/  --enable-snmp --enable-sha1
 
 override_dh_auto_install:
 	dh_auto_install
