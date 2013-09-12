@@ -3,10 +3,45 @@ Author: Marc - A. Dahlhaus <mad@wol.de>
 Forwarded: http://article.gmane.org/gmane.linux.keepalived.devel/3522
 Last-Update: 2011-12-21
 
-diff -Nur -x '*.orig' -x '*~' keepalived/configure keepalived.new/configure
---- keepalived/configure	2011-12-15 22:11:52.353950000 -0500
-+++ keepalived.new/configure	2011-12-21 16:25:40.069869704 -0500
-@@ -3884,13 +3884,59 @@
+--- a/configure.in
++++ b/configure.in
+@@ -61,9 +61,16 @@
+     USE_NL="LIBIPVS_USE_NL"
+     LIBS="$LIBS -lnl"
+   ],
+-  [
+-    USE_NL="LIBIPVS_DONTUSE_NL"
+-    AC_MSG_WARN([keepalived will be built without libnl support.])
++  [AC_CHECK_LIB(nl-3, nl_socket_alloc,
++    [
++      USE_NL="LIBIPVS_USE_NL"
++      CFLAGS="$CFLAGS -I/usr/include/libnl3 -DLIBNL2"
++      LIBS="$LIBS -lnl-3 -lnl-genl-3"
++    ],
++    [
++      USE_NL="LIBIPVS_DONTUSE_NL"
++      AC_MSG_WARN([keepalived will be built without libnl support.])
++    ])
+   ])
+ 
+ dnl ----[ Kernel version check ]----
+--- a/keepalived/libipvs-2.6/libipvs.c
++++ b/keepalived/libipvs-2.6/libipvs.c
+@@ -34,6 +34,11 @@
+ struct ip_vs_getinfo ipvs_info;
+ 
+ #ifdef LIBIPVS_USE_NL
++# ifdef LIBNL2
++#  define nl_handle nl_sock
++#  define nl_handle_alloc nl_socket_alloc
++#  define nl_handle_destroy nl_socket_free
++# endif
+ struct nl_handle *sock = NULL;
+ int family, try_nl = 1;
+ #endif
+--- a/configure
++++ b/configure
+@@ -3973,13 +3973,59 @@
      LIBS="$LIBS -lnl"
  
  else
@@ -68,41 +103,3 @@ diff -Nur -x '*.orig' -x '*~' keepalived/configure keepalived.new/configure
  
  CPPFLAGS="$CPPFLAGS -I$kernelinc"
  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for kernel version" >&5
-diff -Nur -x '*.orig' -x '*~' keepalived/configure.in keepalived.new/configure.in
---- keepalived/configure.in	2011-12-15 22:11:52.353950000 -0500
-+++ keepalived.new/configure.in	2011-12-21 16:27:10.041874926 -0500
-@@ -56,9 +56,16 @@
-     USE_NL="LIBIPVS_USE_NL"
-     LIBS="$LIBS -lnl"
-   ],
--  [
--    USE_NL="LIBIPVS_DONTUSE_NL"
--    AC_MSG_WARN([keepalived will be built without libnl support.])
-+  [AC_CHECK_LIB(nl-3, nl_socket_alloc,
-+    [
-+      USE_NL="LIBIPVS_USE_NL"
-+      CFLAGS="$CFLAGS -I/usr/include/libnl3 -DLIBNL2"
-+      LIBS="$LIBS -lnl-3 -lnl-genl-3"
-+    ],
-+    [
-+      USE_NL="LIBIPVS_DONTUSE_NL"
-+      AC_MSG_WARN([keepalived will be built without libnl support.])
-+    ])
-   ])
- 
- dnl ----[ Kernel version check ]----
-diff -Nur -x '*.orig' -x '*~' keepalived/keepalived/libipvs-2.6/libipvs.c keepalived.new/keepalived/libipvs-2.6/libipvs.c
---- keepalived/keepalived/libipvs-2.6/libipvs.c	2011-12-15 22:11:52.353950000 -0500
-+++ keepalived.new/keepalived/libipvs-2.6/libipvs.c	2011-12-21 16:25:40.073869704 -0500
-@@ -34,6 +34,11 @@
- struct ip_vs_getinfo ipvs_info;
- 
- #ifdef LIBIPVS_USE_NL
-+# ifdef LIBNL2
-+#  define nl_handle nl_sock
-+#  define nl_handle_alloc nl_socket_alloc
-+#  define nl_handle_destroy nl_socket_free
-+# endif
- struct nl_handle *sock = NULL;
- int family, try_nl = 1;
- #endif
