@@ -31,14 +31,14 @@
 void
 dump_track(void *track_data)
 {
-	tracked_if *tip = track_data;
+	tracked_if_t *tip = track_data;
 	log_message(LOG_INFO, "     %s weight %d", IF_NAME(tip->ifp), tip->weight);
 }
 void
 alloc_track(list track_list, vector_t *strvec)
 {
-	interface *ifp = NULL;
-	tracked_if *tip = NULL;
+	interface_t *ifp = NULL;
+	tracked_if_t *tip = NULL;
 	int weight = 0;
 	char *tracked = vector_slot(strvec, 0);
 
@@ -60,18 +60,18 @@ alloc_track(list track_list, vector_t *strvec)
 		}
 	}
 
-	tip         = (tracked_if *) MALLOC(sizeof (tracked_if));
+	tip         = (tracked_if_t *) MALLOC(sizeof(tracked_if_t));
 	tip->ifp    = ifp;
 	tip->weight = weight;
 
 	list_add(track_list, tip);
 }
 
-vrrp_script *
+vrrp_script_t *
 find_script_by_name(char *name)
 {
 	element e;
-	vrrp_script *scr;
+	vrrp_script_t *scr;
 
 	if (LIST_ISEMPTY(vrrp_data->vrrp_script))
 		return NULL;
@@ -88,14 +88,14 @@ find_script_by_name(char *name)
 void
 dump_track_script(void *track_data)
 {
-	tracked_sc *tsc = track_data;
+	tracked_sc_t *tsc = track_data;
 	log_message(LOG_INFO, "     %s weight %d", tsc->scr->sname, tsc->weight);
 }
 void
 alloc_track_script(list track_list, vector_t *strvec)
 {
-	vrrp_script *vsc = NULL;
-	tracked_sc *tsc = NULL;
+	vrrp_script_t *vsc = NULL;
+	tracked_sc_t *tsc = NULL;
 	int weight = 0;
 	char *tracked = vector_slot(strvec, 0);
 
@@ -121,7 +121,7 @@ alloc_track_script(list track_list, vector_t *strvec)
 		}
 	}
 
-	tsc         = (tracked_sc *) MALLOC(sizeof (tracked_sc));
+	tsc         = (tracked_sc_t *) MALLOC(sizeof(tracked_sc_t));
 	tsc->scr    = vsc;
 	tsc->weight = weight;
 	vsc->inuse++;
@@ -133,7 +133,7 @@ int
 vrrp_tracked_up(list l)
 {
 	element e;
-	tracked_if *tip;
+	tracked_if_t *tip;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		tip = ELEMENT_DATA(e);
@@ -149,7 +149,7 @@ void
 vrrp_log_tracked_down(list l)
 {
 	element e;
-	tracked_if *tip;
+	tracked_if_t *tip;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		tip = ELEMENT_DATA(e);
@@ -170,7 +170,7 @@ int
 vrrp_tracked_weight(list l)
 {
 	element e;
-	tracked_if *tip;
+	tracked_if_t *tip;
 	int weight = 0;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
@@ -192,7 +192,7 @@ int
 vrrp_script_up(list l)
 {
 	element e;
-	tracked_sc *tsc;
+	tracked_sc_t *tsc;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		tsc = ELEMENT_DATA(e);
@@ -215,7 +215,7 @@ int
 vrrp_script_weight(list l)
 {
 	element e;
-	tracked_sc *tsc;
+	tracked_sc_t *tsc;
 	int weight = 0;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {

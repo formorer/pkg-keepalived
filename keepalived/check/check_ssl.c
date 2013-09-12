@@ -86,10 +86,10 @@ build_ssl_ctx(void)
 	}
 
 	/* Load our keys and certificates */
-	if (check_data->ssl->keyfile)
+	if (check_data->ssl->certfile)
 		if (!
 		    (SSL_CTX_use_certificate_chain_file
-		     (ssl->ctx, check_data->ssl->keyfile))) {
+		     (ssl->ctx, check_data->ssl->certfile))) {
 			log_message(LOG_INFO,
 			       "SSL error : Cant load certificate file...");
 			return 0;
@@ -192,8 +192,8 @@ ssl_connect(thread_t * thread, int new_req)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
 	int ret = 0;
 	int val = 0;
 
@@ -242,8 +242,8 @@ ssl_read_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
 	unsigned char digest[16];
 	int r = 0;
 	int val;

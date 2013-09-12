@@ -55,96 +55,97 @@ typedef unsigned int checker_id_t;
 #define KEEPALIVED_DEFAULT_DELAY	(60 * TIMER_HZ) 
 
 /* SSL specific data */
-typedef struct ssl_data {
-	int enable;
-	int strong_check;
-	SSL_CTX *ctx;
-	SSL_METHOD *meth;
-	char *password;
-	char *cafile;
-	char *certfile;
-	char *keyfile;
+typedef struct _ssl_data {
+	int				enable;
+	int				strong_check;
+	SSL_CTX				*ctx;
+	SSL_METHOD			*meth;
+	char				*password;
+	char				*cafile;
+	char				*certfile;
+	char				*keyfile;
 } ssl_data_t;
 
 /* Real Server definition */
 typedef struct _real_server {
-	struct sockaddr_storage	addr;
-	int weight;
-	int iweight;		/* Initial weight */
+	struct sockaddr_storage		addr;
+	int				weight;
+	int				iweight;	/* Initial weight */
 #ifdef _KRNL_2_6_
-	uint32_t u_threshold;   /* Upper connection limit. */
-	uint32_t l_threshold;   /* Lower connection limit. */
+	uint32_t			u_threshold;   /* Upper connection limit. */
+	uint32_t			l_threshold;   /* Lower connection limit. */
 #endif
-	int inhibit;		/* Set weight to 0 instead of removing
-				 * the service from IPVS topology.
-				 */
-	char *notify_up;	/* Script to launch when RS is added to LVS */
-	char *notify_down;	/* Script to launch when RS is removed from LVS */
-	int alive;
-	list failed_checkers;	/* List of failed checkers */
-	int set;		/* in the IPVS table */
+	int				inhibit;	/* Set weight to 0 instead of removing
+							 * the service from IPVS topology.
+							 */
+	char				*notify_up;	/* Script to launch when RS is added to LVS */
+	char				*notify_down;	/* Script to launch when RS is removed from LVS */
+	int				alive;
+	list				failed_checkers;/* List of failed checkers */
+	int				set;		/* in the IPVS table */
 #if defined(_WITH_SNMP_) && defined(_KRNL_2_6_) && defined(_WITH_LVS_)
 	/* Statistics */
-	uint32_t activeconns;  /* active connections */
-	uint32_t inactconns;   /* inactive connections */
-	uint32_t persistconns; /* persistent connections */
-	struct ip_vs_stats_user stats;
+	uint32_t			activeconns;	/* active connections */
+	uint32_t			inactconns;	/* inactive connections */
+	uint32_t			persistconns;	/* persistent connections */
+	struct ip_vs_stats_user		stats;
 #endif
-} real_server;
+} real_server_t;
 
 /* Virtual Server group definition */
 typedef struct _virtual_server_group_entry {
-	struct sockaddr_storage	addr;
-	uint8_t range;
-	uint32_t vfwmark;
-	int alive;
-} virtual_server_group_entry;
+	struct sockaddr_storage		addr;
+	uint8_t				range;
+	uint32_t			vfwmark;
+	int				alive;
+} virtual_server_group_entry_t;
 
 typedef struct _virtual_server_group {
-	char *gname;
-	list addr_ip;
-	list range;
-	list vfwmark;
-} virtual_server_group;
+	char				*gname;
+	list				addr_ip;
+	list				range;
+	list				vfwmark;
+} virtual_server_group_t;
 
 /* Virtual Server definition */
 typedef struct _virtual_server {
-	char *vsgname;
-	struct sockaddr_storage	addr;
-	real_server *s_svr;
-	uint32_t vfwmark;
-	uint16_t service_type;
-	long delay_loop;
-	int ha_suspend;
-	char sched[SCHED_MAX_LENGTH];
-	char timeout_persistence[MAX_TIMEOUT_LENGTH];
-	unsigned loadbalancing_kind;
-	uint32_t nat_mask;
-	uint32_t granularity_persistence;
-	char *virtualhost;
-	list rs;
-	int alive;
-	unsigned alpha;			/* Alpha mode enabled. */
-	unsigned omega;			/* Omega mode enabled. */
-	char *quorum_up;		/* A hook to call when the VS gains quorum. */
-	char * quorum_down;		/* A hook to call when the VS loses quorum. */
-	long unsigned quorum;		/* Minimum live RSs to consider VS up. */
+	char				*vsgname;
+	struct sockaddr_storage		addr;
+	real_server_t			*s_svr;
+	uint32_t			vfwmark;
+	uint16_t			service_type;
+	long				delay_loop;
+	int				ha_suspend;
+	int				ops;
+	char				sched[SCHED_MAX_LENGTH];
+	char				timeout_persistence[MAX_TIMEOUT_LENGTH];
+	unsigned			loadbalancing_kind;
+	uint32_t			nat_mask;
+	uint32_t			granularity_persistence;
+	char				*virtualhost;
+	list				rs;
+	int				alive;
+	unsigned			alpha;		/* Alpha mode enabled. */
+	unsigned			omega;		/* Omega mode enabled. */
+	char				*quorum_up;	/* A hook to call when the VS gains quorum. */
+	char				*quorum_down;	/* A hook to call when the VS loses quorum. */
+	long unsigned			quorum;		/* Minimum live RSs to consider VS up. */
 
-	long unsigned hysteresis;	/* up/down events "lag" WRT quorum. */
-	unsigned quorum_state;		/* Reflects result of the last transition done. */
+	long unsigned			hysteresis;	/* up/down events "lag" WRT quorum. */
+	unsigned			quorum_state;	/* Reflects result of the last transition done. */
 #if defined(_WITH_SNMP_) && defined(_KRNL_2_6_) && defined(_WITH_LVS_)
 	/* Statistics */
-	time_t lastupdated;
-	struct ip_vs_stats_user stats;
+	time_t				lastupdated;
+	struct ip_vs_stats_user		stats;
 #endif
-} virtual_server;
+} virtual_server_t;
 
 /* Configuration data root */
-typedef struct _check_conf_data {
-	ssl_data_t *ssl;
-	list vs_group;
-	list vs;
-} check_conf_data;
+typedef struct _check_data {
+	ssl_data_t			*ssl;
+	list				vs_group;
+	list				vs;
+} check_data_t;
 
 /* inline stuff */
 static inline int __ip6_addr_equal(const struct in6_addr *a1,
@@ -228,8 +229,8 @@ static inline int inaddr_equal(sa_family_t family, void *addr1, void *addr2)
 			 (X)->iweight   == (Y)->iweight)
 
 /* Global vars exported */
-extern check_conf_data *check_data;
-extern check_conf_data *old_check_data;
+extern check_data_t *check_data;
+extern check_data_t *old_check_data;
 
 /* prototypes */
 extern ssl_data_t *alloc_ssl(void);
@@ -242,8 +243,8 @@ extern void alloc_ssvr(char *, char *);
 extern void alloc_group(char *);
 extern void alloc_rsgroup(char *, char *);
 extern void set_rsgroup(char *);
-extern check_conf_data *alloc_check_data(void);
-extern void free_check_data(check_conf_data *);
-extern void dump_check_data(check_conf_data *);
+extern check_data_t *alloc_check_data(void);
+extern void free_check_data(check_data_t *);
+extern void dump_check_data(check_data_t *);
 
 #endif

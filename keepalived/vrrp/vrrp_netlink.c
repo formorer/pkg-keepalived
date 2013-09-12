@@ -44,17 +44,17 @@
 #include "utils.h"
 
 /* Global vars */
-struct nl_handle nl_kernel;	/* Kernel reflection channel */
-struct nl_handle nl_cmd;	/* Command channel */
+nl_handle_t nl_kernel;	/* Kernel reflection channel */
+nl_handle_t nl_cmd;	/* Command channel */
 
-/* Create a socket to netlink interface */
+/* Create a socket to netlink interface_t */
 int
-netlink_socket(struct nl_handle *nl, unsigned long groups)
+netlink_socket(nl_handle_t *nl, unsigned long groups)
 {
 	socklen_t addr_len;
 	int ret;
 
-	memset(nl, 0, sizeof (nl));
+	memset(nl, 0, sizeof (*nl));
 
 	nl->fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	if (nl->fd < 0) {
@@ -107,7 +107,7 @@ netlink_socket(struct nl_handle *nl, unsigned long groups)
 
 /* Close a netlink socket */
 int
-netlink_close(struct nl_handle *nl)
+netlink_close(nl_handle_t *nl)
 {
 	close(nl->fd);
 	return 0;
@@ -115,7 +115,7 @@ netlink_close(struct nl_handle *nl)
 
 /* Set netlink socket channel as blocking */
 int
-netlink_set_block(struct nl_handle *nl, int *flags)
+netlink_set_block(nl_handle_t *nl, int *flags)
 {
 	if ((*flags = fcntl(nl->fd, F_GETFL, 0)) < 0) {
 		log_message(LOG_INFO, "Netlink: Cannot F_GETFL socket : (%s)",
@@ -133,7 +133,7 @@ netlink_set_block(struct nl_handle *nl, int *flags)
 
 /* Set netlink socket channel as non-blocking */
 int
-netlink_set_nonblock(struct nl_handle *nl, int *flags)
+netlink_set_nonblock(nl_handle_t *nl, int *flags)
 {
 	*flags |= O_NONBLOCK;
 	if (fcntl(nl->fd, F_SETFL, *flags) < 0) {
@@ -240,7 +240,7 @@ netlink_scope_a2n(char *scope)
 /* Our netlink parser */
 static int
 netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
-		   struct nl_handle *nl, struct nlmsghdr *n)
+		   nl_handle_t *nl, struct nlmsghdr *n)
 {
 	int status;
 	int ret = 0;
@@ -354,7 +354,7 @@ netlink_talk_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 
 /* send message to netlink kernel socket, then receive response */
 int
-netlink_talk(struct nl_handle *nl, struct nlmsghdr *n)
+netlink_talk(nl_handle_t *nl, struct nlmsghdr *n)
 {
 	int status;
 	int ret, flags;
@@ -394,7 +394,7 @@ netlink_talk(struct nl_handle *nl, struct nlmsghdr *n)
 
 /* Fetch a specific type information from netlink kernel */
 static int
-netlink_request(struct nl_handle *nl, int family, int type)
+netlink_request(nl_handle_t *nl, int family, int type)
 {
 	int status;
 	struct sockaddr_nl snl;
@@ -430,7 +430,7 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 {
 	struct ifinfomsg *ifi;
 	struct rtattr *tb[IFLA_MAX + 1];
-	interface *ifp;
+	interface_t *ifp;
 	int i, len;
 	char *name;
 
@@ -460,7 +460,7 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 		return 0;
 
 	/* Fill the interface structure */
-	ifp = (interface *) MALLOC(sizeof (interface));
+	ifp = (interface_t *) MALLOC(sizeof(interface_t));
 	memcpy(ifp->ifname, name, strlen(name));
 	ifp->ifindex = ifi->ifi_index;
 	ifp->flags = ifi->ifi_flags;
@@ -487,7 +487,7 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 		}
 	}
 
-	/* Queue this new interface */
+	/* Queue this new interface_t */
 	if_add_queue(ifp);
 	return 0;
 }
@@ -502,7 +502,7 @@ netlink_if_address_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 {
 	struct ifaddrmsg *ifa;
 	struct rtattr *tb[IFA_MAX + 1];
-	interface *ifp;
+	interface_t *ifp;
 	int len;
 	void *addr;
 
@@ -522,7 +522,7 @@ netlink_if_address_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	memset(tb, 0, sizeof (tb));
 	parse_rtattr(tb, IFA_MAX, IFA_RTA(ifa), len);
 
-	/* Fetch interface */
+	/* Fetch interface_t */
 	ifp = if_get_by_ifindex(ifa->ifa_index);
 	if (!ifp)
 		return 0;
@@ -558,7 +558,7 @@ netlink_if_address_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 int
 netlink_interface_lookup(void)
 {
-	struct nl_handle nlh;
+	nl_handle_t nlh;
 	int status = 0;
 	int ret, flags;
 
@@ -587,7 +587,7 @@ end_int:
 static int
 netlink_address_lookup(void)
 {
-	struct nl_handle nlh;
+	nl_handle_t nlh;
 	int status = 0;
 	int ret, flags;
 
@@ -625,7 +625,7 @@ netlink_reflect_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 {
 	struct ifinfomsg *ifi;
 	struct rtattr *tb[IFLA_MAX + 1];
-	interface *ifp;
+	interface_t *ifp;
 	int len;
 
 	ifi = NLMSG_DATA(h);
@@ -646,7 +646,7 @@ netlink_reflect_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	if (ifi->ifi_type == ARPHRD_LOOPBACK)
 		return 0;
 
-	/* find the interface */
+	/* find the interface_t */
 	ifp = if_get_by_ifindex(ifi->ifi_index);
 	if (!ifp)
 		return -1;
