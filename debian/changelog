@@ -1,3 +1,17 @@
+keepalived (1:1.2.8-1) UNRELEASED; urgency=low
+
+  * [b25f231] Patch configure.in instead of configure
+  * [aa70432] Fix configure
+  * [3a728cd] Enable sha1 support
+  * [e257779] Add Homepage field
+  * Allow providing of daemon args via /etc/defaul/keepalived
+    Closes: #693877
+  * Import upstream version 1.2.8 
+    - Fix reload handling (Closes: #652260)
+    - 
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 12 Sep 2013 09:37:35 +0200
+
 keepalived (1:1.2.7-1) unstable; urgency=low
 
   * [b46efb0] Imported Upstream version 1.2.7
