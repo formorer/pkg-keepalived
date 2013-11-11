@@ -70,6 +70,9 @@ struct ethtool_value {
 #define LB_MII     0x2
 #define LB_ETHTOOL 0x4
 
+/* Default values */
+#define IF_DEFAULT_BUFSIZE	(65*1024)
+
 /* Interface structure definition */
 typedef struct _interface {
 	char			ifname[IF_NAMESIZ + 1];	/* Interface name */
@@ -83,6 +86,8 @@ typedef struct _interface {
 	int			hw_addr_len;		/* MAC addresss length */
 	int			lb_type;		/* Interface regs selection */
 	int			linkbeat;		/* LinkBeat from MII BMSR req */
+	int			vmac;			/* Set if interface is a VMAC interface */
+	unsigned int		base_ifindex;		/* Base interface index (if interface is a VMAC interface) */
 } interface_t;
 
 /* Tracked interface structure definition */
@@ -106,6 +111,7 @@ typedef struct _tracked_if {
 
 /* prototypes */
 extern interface_t *if_get_by_ifindex(const int);
+extern interface_t *if_get_by_vmac_base_ifindex(const int);
 extern interface_t *if_get_by_ifname(const char *);
 extern int if_linkbeat(const interface_t *);
 extern int if_mii_probe(const char *);
@@ -124,5 +130,7 @@ extern int if_setsockopt_mcast_loop(sa_family_t, int *);
 extern int if_setsockopt_mcast_hops(sa_family_t, int *);
 extern int if_setsockopt_mcast_if(sa_family_t, int *, interface_t *);
 extern int if_setsockopt_priority(int *);
+extern int if_setsockopt_sndbuf(int *, int);
+extern int if_setsockopt_rcvbuf(int *, int);
 
 #endif

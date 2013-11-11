@@ -518,6 +518,7 @@ vrrp_build_vrrp(vrrp_t * vrrp, int prio, char *buffer)
 	}
 
 	/* finaly compute vrrp checksum */
+	hd->chksum = 0;
 	hd->chksum = in_csum((u_short *) hd, vrrp_hd_len(vrrp), 0);
 
 	return 0;
@@ -605,7 +606,7 @@ vrrp_send_pkt(vrrp_t * vrrp, struct sockaddr_storage *addr)
 	}
 
 	/* Send the packet */
-	return sendmsg(vrrp->fd_out, &msg, MSG_DONTROUTE);
+	return sendmsg(vrrp->fd_out, &msg, (addr) ? 0 : MSG_DONTROUTE);
 }
 
 /* Allocate the sending buffer */
@@ -765,15 +766,32 @@ vrrp_state_become_master(vrrp_t * vrrp)
 #endif
 }
 
+/* If the preempt_delay is set we cannot yet transition to master state.  We
+ * must await the timeout of our preempt_delay.  The preemption delay is used
+ * when starting up, or rebooting, a node which needs time to sort out its
+ * routing table (e.g., BGP or OSPF) before it can assume the master role.
+ */
 void
 vrrp_state_goto_master(vrrp_t * vrrp)
 {
+	if (timer_cmp(vrrp->preempt_time, timer_now()) > 0) {
+		vrrp->ms_down_timer = timer_tol(timer_sub(vrrp->preempt_time, timer_now()));
+		return;
+	}
+
 	/*
 	 * Send an advertisement. To force a new master
 	 * election.
 	 */
-        if (vrrp->sync && !vrrp_sync_goto_master(vrrp))
-	      return;
+	if (vrrp->sync && !vrrp_sync_goto_master(vrrp)) {
+		/*
+		 * Set quick sync flag to enable faster transition, i.e. check
+		 * again in the next interval instead of waiting three.
+		 */
+		vrrp->quick_sync = 1;
+		return;
+	}
+
 	vrrp_send_adv(vrrp, vrrp->effective_priority);
 
 	vrrp->state = VRRP_STATE_MAST;
@@ -841,6 +859,7 @@ vrrp_state_leave_master(vrrp_t * vrrp)
 		vrrp_restore_interface(vrrp, 0);
 		vrrp->state = VRRP_STATE_FAULT;
 		notify_instance_exec(vrrp, VRRP_STATE_FAULT);
+		vrrp_send_adv(vrrp, VRRP_PRIO_STOP);
 #ifdef _WITH_SNMP_
 		vrrp_snmp_instance_trap(vrrp);
 #endif
