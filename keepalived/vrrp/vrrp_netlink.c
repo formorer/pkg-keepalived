@@ -102,6 +102,11 @@ netlink_socket(nl_handle_t *nl, unsigned long groups)
 
 	nl->seq = time(NULL);
 
+	/* Set default rcvbuf size */
+	if_setsockopt_rcvbuf(&nl->fd, IF_DEFAULT_BUFSIZE);
+	if (nl->fd < 0)
+		return -1;
+
 	return ret;
 }
 
@@ -261,7 +266,7 @@ netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
 				continue;
 			if (errno == EWOULDBLOCK || errno == EAGAIN)
 				break;
-			log_message(LOG_INFO, "Netlink: Received message overrun");
+			log_message(LOG_INFO, "Netlink: Received message overrun (%m)");
 			continue;
 		}
 
@@ -456,8 +461,10 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 
 	/* Skip it if already exist */
 	ifp = if_get_by_ifname(name);
-	if (ifp)
+	if (ifp) {
+		ifp->flags = ifi->ifi_flags;
 		return 0;
+	}
 
 	/* Fill the interface structure */
 	ifp = (interface_t *) MALLOC(sizeof(interface_t));
@@ -645,6 +652,13 @@ netlink_reflect_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	/* ignore loopback device */
 	if (ifi->ifi_type == ARPHRD_LOOPBACK)
 		return 0;
+
+	/* find the VMAC interface (if any) */
+	ifp = if_get_by_vmac_base_ifindex(ifi->ifi_index);
+
+	/* if found, reflect base interface flags on VMAC interface */
+	if (ifp)
+		ifp->flags = ifi->ifi_flags;
 
 	/* find the interface_t */
 	ifp = if_get_by_ifindex(ifi->ifi_index);
