@@ -1,3 +1,9 @@
+keepalived (1:1.2.9-1) UNRELEASED; urgency=low
+
+  * [8cd7bad] Imported Upstream version 1.2.9
+
+ -- Alexander Wirt <formorer@debian.org>  Mon, 11 Nov 2013 22:29:30 +0100
+
 keepalived (1:1.2.8-1) unstable; urgency=low
 
   * [b25f231] Patch configure.in instead of configure
