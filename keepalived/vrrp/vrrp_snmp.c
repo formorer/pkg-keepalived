@@ -45,11 +45,11 @@ vrrp_snmp_script(struct variable *vp, oid *name, size_t *length,
 		 int exact, size_t *var_len, WriteMethod **write_method)
 {
         static unsigned long long_ret;
-	vrrp_script *scr;
+	vrrp_script_t *scr;
 
-	if ((scr = (vrrp_script *)snmp_header_list_table(vp, name, length, exact,
-							 var_len, write_method,
-							 vrrp_data->vrrp_script)) == NULL)
+	if ((scr = (vrrp_script_t *)snmp_header_list_table(vp, name, length, exact,
+							   var_len, write_method,
+							   vrrp_data->vrrp_script)) == NULL)
 		return NULL;
 
 	switch (vp->magic) {
@@ -146,13 +146,13 @@ vrrp_header_ar_table(struct variable *vp, oid *name, size_t *length,
 					continue;
 				}
 			}
-			l2 = ((vrrp_rt*)ELEMENT_DATA(e1))->vip;
+			l2 = ((vrrp_t *) ELEMENT_DATA(e1))->vip;
 			current[1] = 0;
 			nextstate = HEADER_STATE_EXCLUDED_VIRTUAL_ADDRESS;
 			break;
 		case HEADER_STATE_EXCLUDED_VIRTUAL_ADDRESS:
 			/* Try excluded virtual addresses */
-			l2 = ((vrrp_rt*)ELEMENT_DATA(e1))->evip;
+			l2 = ((vrrp_t *)ELEMENT_DATA(e1))->evip;
 			nextstate = HEADER_STATE_VIRTUAL_ADDRESS;
 			break;
 		case HEADER_STATE_STATIC_ROUTE:
@@ -171,7 +171,7 @@ vrrp_header_ar_table(struct variable *vp, oid *name, size_t *length,
 			curinstance++;
 			if (e1 == NULL)
 				e1 = LIST_HEAD(vrrp_data->vrrp);
-			l2 = ((vrrp_rt*)ELEMENT_DATA(e1))->vroutes;
+			l2 = ((vrrp_t *)ELEMENT_DATA(e1))->vroutes;
 			current[1] = 0;
 			nextstate = HEADER_STATE_VIRTUAL_ROUTE;
 			break;
@@ -224,10 +224,10 @@ vrrp_snmp_address(struct variable *vp, oid *name, size_t *length,
 		 int exact, size_t *var_len, WriteMethod **write_method)
 {
         static unsigned long long_ret;
-	ip_address *addr;
+	ip_address_t *addr;
 	int state = HEADER_STATE_STATIC_ADDRESS;
 
-	if ((addr = (ip_address *)
+	if ((addr = (ip_address_t *)
 	     vrrp_header_ar_table(vp, name, length, exact,
 				  var_len, write_method,
 				  &state)) == NULL)
@@ -290,10 +290,10 @@ vrrp_snmp_route(struct variable *vp, oid *name, size_t *length,
 		 int exact, size_t *var_len, WriteMethod **write_method)
 {
         static unsigned long long_ret;
-	ip_route *route;
+	ip_route_t *route;
 	int state = HEADER_STATE_STATIC_ROUTE;
 
-	if ((route = (ip_route *)
+	if ((route = (ip_route_t *)
 	     vrrp_header_ar_table(vp, name, length, exact,
 				  var_len, write_method,
 				  &state)) == NULL)
@@ -365,9 +365,9 @@ vrrp_snmp_syncgroup(struct variable *vp, oid *name, size_t *length,
 		 int exact, size_t *var_len, WriteMethod **write_method)
 {
         static unsigned long long_ret;
-	vrrp_sgroup *group;
+	vrrp_sgroup_t *group;
 
-	if ((group = (vrrp_sgroup *)
+	if ((group = (vrrp_sgroup_t *)
 	     snmp_header_list_table(vp, name, length, exact,
 				    var_len, write_method,
 				    vrrp_data->vrrp_sync_group)) == NULL)
@@ -430,7 +430,7 @@ vrrp_snmp_syncgroupmember(struct variable *vp, oid *name, size_t *length,
 	int curgroup, curinstance;
 	char *instance, *binstance = NULL;
 	element e;
-	vrrp_sgroup *group;
+	vrrp_sgroup_t *group;
 
         if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
                 memcpy(name, vp->name, sizeof(oid) * vp->namelen);
@@ -497,12 +497,12 @@ vrrp_snmp_syncgroupmember(struct variable *vp, oid *name, size_t *length,
 	return (u_char*)binstance;
 }
 
-static vrrp_rt*
+static vrrp_t *
 _get_instance(oid *name, size_t name_len)
 {
 	int instance;
 	element e;
-	vrrp_rt *vrrp = NULL;
+	vrrp_t *vrrp = NULL;
 
 	if (name_len < 1) return NULL;
 	instance = name[name_len - 1];
@@ -519,7 +519,7 @@ vrrp_snmp_instance_priority(int action,
 			    u_char *var_val, u_char var_val_type, size_t var_val_len,
 			    u_char *statP, oid *name, size_t name_len)
 {
-	vrrp_rt *vrrp = NULL;
+	vrrp_t *vrrp = NULL;
 	switch (action) {
 	case RESERVE1:
 		/* Check that the proposed priority is acceptable */
@@ -560,7 +560,7 @@ vrrp_snmp_instance_preempt(int action,
 			   u_char *var_val, u_char var_val_type, size_t var_val_len,
 			   u_char *statP, oid *name, size_t name_len)
 {
-	vrrp_rt *vrrp = NULL;
+	vrrp_t *vrrp = NULL;
 	switch (action) {
 	case RESERVE1:
 		/* Check that the proposed value is acceptable */
@@ -608,9 +608,9 @@ vrrp_snmp_instance(struct variable *vp, oid *name, size_t *length,
 		   int exact, size_t *var_len, WriteMethod **write_method)
 {
         static unsigned long long_ret;
-	vrrp_rt *rt;
+	vrrp_t *rt;
 
-	if ((rt = (vrrp_rt *)snmp_header_list_table(vp, name, length, exact,
+	if ((rt = (vrrp_t *)snmp_header_list_table(vp, name, length, exact,
 						    var_len, write_method,
 						    vrrp_data->vrrp)) == NULL)
 		return NULL;
@@ -734,8 +734,8 @@ vrrp_snmp_trackedinterface(struct variable *vp, oid *name, size_t *length,
         int result, target_len;
 	int curinstance;
 	element e1, e2;
-	vrrp_rt *instance;
-	tracked_if *ifp, *bifp = NULL;
+	vrrp_t *instance;
+	tracked_if_t *ifp, *bifp = NULL;
 
         if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
                 memcpy(name, vp->name, sizeof(oid) * vp->namelen);
@@ -817,8 +817,8 @@ vrrp_snmp_trackedscript(struct variable *vp, oid *name, size_t *length,
         int result, target_len;
 	int curinstance, curscr;
 	element e1, e2;
-	vrrp_rt *instance;
-	tracked_sc *scr, *bscr = NULL;
+	vrrp_t *instance;
+	tracked_sc_t *scr, *bscr = NULL;
 
         if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
                 memcpy(name, vp->name, sizeof(oid) * vp->namelen);
@@ -1054,7 +1054,7 @@ vrrp_snmp_agent_close()
 }
 
 void
-vrrp_snmp_instance_trap(vrrp_rt *vrrp)
+vrrp_snmp_instance_trap(vrrp_t *vrrp)
 {
 	/* OID of the notification */
 	oid notification_oid[] = { VRRP_OID, 9, 0, 2 };
@@ -1070,6 +1070,8 @@ vrrp_snmp_instance_trap(vrrp_rt *vrrp)
 	size_t state_oid_len = OID_LENGTH(state_oid);
 	oid initialstate_oid[] = { VRRP_OID, 3, 1, 5};
 	size_t initialstate_oid_len = OID_LENGTH(initialstate_oid);
+	oid routerId_oid[] = { KEEPALIVED_OID, 1, 2, 0 };
+	size_t routerId_oid_len = OID_LENGTH(routerId_oid);
 
 	netsnmp_variable_list *notification_vars = NULL;
 
@@ -1105,6 +1107,13 @@ vrrp_snmp_instance_trap(vrrp_rt *vrrp)
 				  (u_char *)&istate,
 				  sizeof(istate));
 
+	/* routerId */
+	snmp_varlist_add_variable(&notification_vars,
+				  routerId_oid, routerId_oid_len,
+				  ASN_OCTET_STR,
+				  (u_char *)global_data->router_id,
+				  strlen(global_data->router_id));
+
 	log_message(LOG_INFO,
 		    "VRRP_Instance(%s): Sending SNMP notification",
 		    vrrp->iname);
@@ -1113,7 +1122,7 @@ vrrp_snmp_instance_trap(vrrp_rt *vrrp)
 }
 
 void
-vrrp_snmp_group_trap(vrrp_sgroup *group)
+vrrp_snmp_group_trap(vrrp_sgroup_t *group)
 {
 	/* OID of the notification */
 	oid notification_oid[] = { VRRP_OID, 9, 0, 1 };
@@ -1123,10 +1132,12 @@ vrrp_snmp_group_trap(vrrp_sgroup *group)
 	size_t objid_snmptrap_len = OID_LENGTH(objid_snmptrap);
 
 	/* Other OID */
-	oid name_oid[] = { VRRP_OID, 3, 1, 2 };
+	oid name_oid[] = { VRRP_OID, 1, 1, 2 };
 	size_t name_oid_len = OID_LENGTH(name_oid);
-	oid state_oid[] = { VRRP_OID, 3, 1, 4 };
+	oid state_oid[] = { VRRP_OID, 1, 1, 3 };
 	size_t state_oid_len = OID_LENGTH(state_oid);
+	oid routerId_oid[] = { KEEPALIVED_OID, 1, 2, 0 };
+	size_t routerId_oid_len = OID_LENGTH(routerId_oid);
 
 	netsnmp_variable_list *notification_vars = NULL;
 
@@ -1140,19 +1151,27 @@ vrrp_snmp_group_trap(vrrp_sgroup *group)
 				  ASN_OBJECT_ID,
 				  (u_char *) notification_oid,
 				  notification_oid_len * sizeof(oid));
-	/* vrrpInstanceName */
+
+	/* vrrpSyncGroupName */
 	snmp_varlist_add_variable(&notification_vars,
 				  name_oid, name_oid_len,
 				  ASN_OCTET_STR,
 				  (u_char *)group->gname,
                                   strlen(group->gname));
-	/* vrrpInstanceState */
+	/* vrrpSyncGroupState */
 	state = vrrp_snmp_state(group->state);
 	snmp_varlist_add_variable(&notification_vars,
 				  state_oid, state_oid_len,
 				  ASN_INTEGER,
 				  (u_char *)&state,
 				  sizeof(state));
+
+	/* routerId */
+	snmp_varlist_add_variable(&notification_vars,
+				  routerId_oid, routerId_oid_len,
+				  ASN_OCTET_STR,
+				  (u_char *)global_data->router_id,
+				  strlen(global_data->router_id));
 
 	log_message(LOG_INFO,
 		    "VRRP_Group(%s): Sending SNMP notification",

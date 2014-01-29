@@ -35,8 +35,13 @@
 #include "vrrp.h"
 #include "vrrp_if.h"
 
+/* Defines */
+#define VRRP_VMAC_FL_SET	(1 << 0)
+#define VRRP_VMAC_FL_UP		(1 << 1)
+#define VRRP_VMAC_FL_XMITBASE	(1 << 2)
+
 /* prototypes */
-extern int netlink_link_add_vmac(vrrp_rt *);
-extern int netlink_link_del_vmac(vrrp_rt *);
+extern int netlink_link_add_vmac(vrrp_t *);
+extern int netlink_link_del_vmac(vrrp_t *);
 
 #endif

@@ -12,7 +12,8 @@ DEFS	 = @DFLAGS@ -D@SNMP_SUPPORT@
 COMPILE	 = $(CC) $(CFLAGS) $(DEFS)
 
 OBJS = 	memory.o utils.o notify.o timer.o scheduler.o \
-	vector.o list.o html.o parser.o signals.o logger.o
+	vector.o list.o html.o parser.o signals.o logger.o \
+	list_head.o buffer.o command.o vty.o
 HEADERS = $(OBJS:.o=.h)
 
 .c.o:
@@ -24,6 +25,7 @@ clean:
 	rm -f *.a *.o *~
 
 distclean: clean
+	rm -f config.h
 	rm -f Makefile
 
 memory.o: memory.c memory.h utils.h
@@ -37,3 +39,9 @@ html.o: html.c html.h memory.h
 parser.o: parser.c parser.h memory.h
 signals.o: signals.c signals.h
 logger.o: logger.c logger.h
+list_head.o: list_head.c list_head.h
+buffer.o: buffer.c buffer.h memory.h
+command.o: command.c command.h vector.h memory.h vty.h timer.h \
+	config.h logger.h
+vty.o: vty.c vty.h scheduler.h timer.h utils.h command.h logger.h \
+	memory.h

@@ -120,8 +120,10 @@ start_check(void)
 	}
 
 	/* Processing differential configuration parsing */
-	if (reload)
+	if (reload) {
 		clear_diff_services();
+		copy_srv_states();
+	}
 
 	/* Initialize IPVS topology */
 	if (!init_services()) {
@@ -178,6 +180,8 @@ reload_check_thread(thread_t * thread)
 	/* set the reloading flag */
 	SET_RELOAD;
 
+	log_message(LOG_INFO, "Got SIGHUP, reloading checker configuration");
+
 	/* Signals handling */
 	signal_reset();
 	signal_handler_destroy();
@@ -227,8 +231,13 @@ check_respawn_thread(thread_t * thread)
 	}
 
 	/* We catch a SIGCHLD, handle it */
-	log_message(LOG_ALERT, "Healthcheck child process(%d) died: Respawning", pid);
-	start_check_child();
+	if (!(debug & 64)) {
+		log_message(LOG_ALERT, "Healthcheck child process(%d) died: Respawning", pid);
+		start_check_child();
+	} else {
+		log_message(LOG_ALERT, "Healthcheck child process(%d) died: Exiting", pid);
+		raise(SIGTERM);
+	}
 	return 0;
 }
 

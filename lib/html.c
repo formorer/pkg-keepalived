@@ -17,7 +17,7 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2011 Alexandre Cassen, <acassen@linux-vs.org>
+ * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
 #include <string.h>
@@ -34,12 +34,12 @@ int extract_content_length(char *buffer, int size)
 	int inc = 0;
 	int i;
 
-	/* Allocate the room */
-	buf_len = (char *)MALLOC(40);
-
 	/* Pattern not found */
 	if (!clen)
 		return 0;
+
+	/* Allocate the room */
+	buf_len = (char *)MALLOC(40);
 
 	/* Content-Length extraction */
 	while (*(clen++) != ':');

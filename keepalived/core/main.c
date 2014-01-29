@@ -131,139 +131,71 @@ signal_init(void)
 static void
 usage(const char *prog)
 {
-	fprintf(stderr, VERSION_STRING);
-	fprintf(stderr,
-		"\nUsage:\n"
-		"  %s\n"
-		"  %s -n\n"
-		"  %s -f keepalived.conf\n"
-		"  %s -d\n"
-		"  %s -h\n" "  %s -v\n\n", prog, prog, prog, prog, prog, prog);
-	fprintf(stderr,
-		"Commands:\n"
-		"Either long or short options are allowed.\n"
-		"  %s --vrrp               -P    Only run with VRRP subsystem.\n"
-		"  %s --check              -C    Only run with Health-checker subsystem.\n"
-		"  %s --dont-release-vrrp  -V    Dont remove VRRP VIPs & VROUTEs on daemon stop.\n"
-		"  %s --dont-release-ipvs  -I    Dont remove IPVS topology on daemon stop.\n"
-		"  %s --dont-fork          -n    Dont fork the daemon process.\n"
-		"  %s --use-file           -f    Use the specified configuration file.\n"
-		"                                Default is /etc/keepalived/keepalived.conf.\n"
-		"  %s --dump-conf          -d    Dump the configuration data.\n"
-		"  %s --log-console        -l    Log message to local console.\n"
-		"  %s --log-detail         -D    Detailed log messages.\n"
-		"  %s --log-facility       -S    0-7 Set syslog facility to LOG_LOCAL[0-7]. (default=LOG_DAEMON)\n"
+	fprintf(stderr, "Usage: %s [OPTION...]\n", prog);
+	fprintf(stderr, "  -f, --use-file=FILE          Use the specified configuration file\n");
+	fprintf(stderr, "  -P, --vrrp                   Only run with VRRP subsystem\n");
+	fprintf(stderr, "  -C, --check                  Only run with Health-checker subsystem\n");
+	fprintf(stderr, "  -l, --log-console            Log messages to local console\n");
+	fprintf(stderr, "  -D, --log-detail             Detailed log messages\n");
+	fprintf(stderr, "  -S, --log-facility=[0-7]     Set syslog facility to LOG_LOCAL[0-7]\n");
+	fprintf(stderr, "  -V, --dont-release-vrrp      Don't remove VRRP VIPs and VROUTEs on daemon stop\n");
+	fprintf(stderr, "  -I, --dont-release-ipvs      Don't remove IPVS topology on daemon stop\n");
+	fprintf(stderr, "  -R, --dont-respawn           Don't respawn child processes\n");
+	fprintf(stderr, "  -n, --dont-fork              Don't fork the daemon process\n");
+	fprintf(stderr, "  -d, --dump-conf              Dump the configuration data\n");
+	fprintf(stderr, "  -p, --pid=FILE               Use specified pidfile for parent process\n");
+	fprintf(stderr, "  -r, --vrrp_pid=FILE          Use specified pidfile for VRRP child process\n");
+	fprintf(stderr, "  -c, --checkers_pid=FILE      Use specified pidfile for checkers child process\n");
 #ifdef _WITH_SNMP_
-		"  %s --snmp               -x    Enable SNMP subsystem\n"
+	fprintf(stderr, "  -x, --snmp                   Enable SNMP subsystem\n");
 #endif
-		"  %s --help               -h    Display this short inlined help screen.\n"
-		"  %s --version            -v    Display the version number\n"
-		"  %s --pid                -p    pidfile\n"
-		"  %s --checkers_pid       -c    checkers pidfile\n"
-		"  %s --vrrp_pid           -r    vrrp pidfile\n",
-		prog, prog, prog, prog, prog, prog, prog, prog,
-#ifdef _WITH_SNMP_
-		prog,
-#endif
-		prog, prog, prog, prog, prog, prog, prog);
+	fprintf(stderr, "  -v, --version                Display the version number\n");
+	fprintf(stderr, "  -h, --help                   Display this help message\n");
 }
 
 /* Command line parser */
 static void
 parse_cmdline(int argc, char **argv)
 {
-	poptContext context;
-	char *option_arg = NULL;
 	int c;
 
-	struct poptOption options_table[] = {
-		{"version", 'v', POPT_ARG_NONE, NULL, 'v'},
-		{"help", 'h', POPT_ARG_NONE, NULL, 'h'},
-		{"log-console", 'l', POPT_ARG_NONE, NULL, 'l'},
-		{"log-detail", 'D', POPT_ARG_NONE, NULL, 'D'},
-		{"log-facility", 'S', POPT_ARG_STRING, &option_arg, 'S'},
-		{"dont-release-vrrp", 'V', POPT_ARG_NONE, NULL, 'V'},
-		{"dont-release-ipvs", 'I', POPT_ARG_NONE, NULL, 'I'},
-		{"dont-fork", 'n', POPT_ARG_NONE, NULL, 'n'},
-		{"dump-conf", 'd', POPT_ARG_NONE, NULL, 'd'},
-		{"use-file", 'f', POPT_ARG_STRING, &option_arg, 'f'},
-		{"vrrp", 'P', POPT_ARG_NONE, NULL, 'P'},
-		{"check", 'C', POPT_ARG_NONE, NULL, 'C'},
-		{"pid", 'p', POPT_ARG_STRING, &option_arg, 'p'},
-		{"checkers_pid", 'c', POPT_ARG_STRING, &option_arg, 'c'},
-		{"vrrp_pid", 'r', POPT_ARG_STRING, &option_arg, 'r'},
-#ifdef _WITH_SNMP_
-		{"snmp", 'x', POPT_ARG_NONE, NULL, 'x'},
-#endif
-		{NULL, 0, 0, NULL, 0}
+	struct option long_options[] = {
+		{"use-file",          required_argument, 0, 'f'},
+		{"vrrp",              no_argument,       0, 'P'},
+		{"check",             no_argument,       0, 'C'},
+		{"log-console",       no_argument,       0, 'l'},
+		{"log-detail",        no_argument,       0, 'D'},
+		{"log-facility",      required_argument, 0, 'S'},
+		{"dont-release-vrrp", no_argument,       0, 'V'},
+		{"dont-release-ipvs", no_argument,       0, 'I'},
+		{"dont-respawn",      no_argument,       0, 'R'},
+		{"dont-fork",         no_argument,       0, 'n'},
+		{"dump-conf",         no_argument,       0, 'd'},
+		{"pid",               required_argument, 0, 'p'},
+		{"vrrp_pid",          required_argument, 0, 'r'},
+		{"checkers_pid",      required_argument, 0, 'c'},
+ #ifdef _WITH_SNMP_
+		{"snmp",              no_argument,       0, 'x'},
+ #endif
+		{"version",           no_argument,       0, 'v'},
+		{"help",              no_argument,       0, 'h'},
+		{0, 0, 0, 0}
 	};
 
-	context =
-	    poptGetContext(PROG, argc, (const char **) argv, options_table, 0);
-	if ((c = poptGetNextOpt(context)) < 0) {
-		return;
-	}
-
-	/* The first option car */
-	switch (c) {
-	case 'v':
-		fprintf(stderr, VERSION_STRING);
-		exit(0);
-		break;
-	case 'h':
-		usage(argv[0]);
-		exit(0);
-		break;
-	case 'l':
-		debug |= 1;
-		break;
-	case 'n':
-		debug |= 2;
-		break;
-	case 'd':
-		debug |= 4;
-		break;
-	case 'V':
-		debug |= 8;
-		break;
-	case 'I':
-		debug |= 16;
-		break;
-	case 'D':
-		debug |= 32;
-		break;
-	case 'S':
-		log_facility = LOG_FACILITY[atoi(option_arg)].facility;
-		break;
-	case 'f':
-		conf_file = option_arg;
-		break;
-	case 'P':
-		daemon_mode |= 1;
-		break;
-	case 'C':
-		daemon_mode |= 2;
-		break;
-	case 'p':
-		main_pidfile = option_arg;
-		break;
-	case 'c':
-		checkers_pidfile = option_arg;
-		break;
-	case 'r':
-		vrrp_pidfile = option_arg;
-		break;
 #ifdef _WITH_SNMP_
-	case 'x':
-		snmp = 1;
-		break;
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:x", long_options, NULL)) != EOF) {
+#else
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:", long_options, NULL)) != EOF) {
 #endif
-	}
-
-	/* the others */
-	/* fixme: why is this duplicated? */
-	while ((c = poptGetNextOpt(context)) >= 0) {
 		switch (c) {
+		case 'v':
+			fprintf(stderr, VERSION_STRING);
+			exit(0);
+			break;
+		case 'h':
+			usage(argv[0]);
+			exit(0);
+			break;
 		case 'l':
 			debug |= 1;
 			break;
@@ -282,11 +214,14 @@ parse_cmdline(int argc, char **argv)
 		case 'D':
 			debug |= 32;
 			break;
+		case 'R':
+			debug |= 64;
+			break;
 		case 'S':
-			log_facility = LOG_FACILITY[atoi(option_arg)].facility;
+			log_facility = LOG_FACILITY[atoi(optarg)].facility;
 			break;
 		case 'f':
-			conf_file = option_arg;
+			conf_file = optarg;
 			break;
 		case 'P':
 			daemon_mode |= 1;
@@ -295,30 +230,31 @@ parse_cmdline(int argc, char **argv)
 			daemon_mode |= 2;
 			break;
 		case 'p':
-			main_pidfile = option_arg;
+			main_pidfile = optarg;
 			break;
 		case 'c':
-			checkers_pidfile = option_arg;
+			checkers_pidfile = optarg;
 			break;
 		case 'r':
-			vrrp_pidfile = option_arg;
+			vrrp_pidfile = optarg;
 			break;
 #ifdef _WITH_SNMP_
 		case 'x':
 			snmp = 1;
 			break;
 #endif
+		default:
+			exit(0);
+			break;
 		}
 	}
 
-	/* check unexpected arguments */
-	if ((option_arg = (char *) poptGetArg(context))) {
-		fprintf(stderr, "unexpected argument %s\n", option_arg);
-		return;
+	if (optind < argc) {
+		printf("Unexpected argument(s): ");
+		while (optind < argc)
+			printf("%s ", argv[optind++]);
+		printf("\n");
 	}
-
-	/* free the allocated context */
-	poptFreeContext(context);
 }
 
 /* Entry point */

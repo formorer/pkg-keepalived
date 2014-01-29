@@ -31,11 +31,11 @@
 #include "utils.h"
 
 /* global vars */
-conf_data_t *global_data = NULL;
+data_t *global_data = NULL;
 
 /* Default settings */
 static void
-set_default_router_id(conf_data_t * data)
+set_default_router_id(data_t * data)
 {
 	char *new_id = NULL;
 	int len = 0;
@@ -53,7 +53,7 @@ set_default_router_id(conf_data_t * data)
 }
 
 static void
-set_default_email_from(conf_data_t * data)
+set_default_email_from(data_t * data)
 {
 	struct passwd *pwd = NULL;
 	char *hostname = NULL;
@@ -76,13 +76,20 @@ set_default_email_from(conf_data_t * data)
 }
 
 static void
-set_default_smtp_connection_timeout(conf_data_t * data)
+set_default_smtp_connection_timeout(data_t * data)
 {
 	data->smtp_connection_to = DEFAULT_SMTP_CONNECTION_TIMEOUT;
 }
 
 static void
-set_default_values(conf_data_t * data)
+set_default_mcast_group(data_t * data)
+{
+	inet_stosockaddr("224.0.0.18", 0, &data->vrrp_mcast_group4);
+	inet_stosockaddr("ff02::12", 0, &data->vrrp_mcast_group6);
+}
+
+static void
+set_default_values(data_t * data)
 {
 	/* No global data so don't default */
 	if (!data)
@@ -90,18 +97,19 @@ set_default_values(conf_data_t * data)
 	set_default_router_id(data);
 	set_default_smtp_connection_timeout(data);
 	set_default_email_from(data);
+	set_default_mcast_group(data);
 }
 
 /* email facility functions */
 static void
-free_email(void *data_obj)
+free_email(void *data)
 {
-	FREE(data_obj);
+	FREE(data);
 }
 static void
-dump_email(void *data_obj)
+dump_email(void *data)
 {
-	char *addr = data_obj;
+	char *addr = data;
 	log_message(LOG_INFO, " Email notification = %s", addr);
 }
 
@@ -118,12 +126,12 @@ alloc_email(char *addr)
 }
 
 /* data facility functions */
-conf_data_t *
+data_t *
 alloc_global_data(void)
 {
-	conf_data_t *new;
+	data_t *new;
 
-	new = (conf_data_t *) MALLOC(sizeof (conf_data_t));
+	new = (data_t *) MALLOC(sizeof(data_t));
 	new->email = alloc_list(free_email, dump_email);
 
 	set_default_values(new);
@@ -131,7 +139,7 @@ alloc_global_data(void)
 }
 
 void
-free_global_data(conf_data_t * data)
+free_global_data(data_t * data)
 {
 	free_list(data->email);
 	FREE_PTR(data->router_id);
@@ -141,7 +149,7 @@ free_global_data(conf_data_t * data)
 }
 
 void
-dump_global_data(conf_data_t * data)
+dump_global_data(data_t * data)
 {
 	if (!data)
 		return;
@@ -157,12 +165,20 @@ dump_global_data(conf_data_t * data)
 	if (data->smtp_server.ss_family)
 		log_message(LOG_INFO, " Smtp server = %s", inet_sockaddrtos(&data->smtp_server));
 	if (data->smtp_connection_to)
-		log_message(LOG_INFO, " Smtp server connection timeout = %lu",
-		       data->smtp_connection_to / TIMER_HZ);
+		log_message(LOG_INFO, " Smtp server connection timeout = %lu"
+				    , data->smtp_connection_to / TIMER_HZ);
 	if (data->email_from) {
-		log_message(LOG_INFO, " Email notification from = %s",
-		       data->email_from);
+		log_message(LOG_INFO, " Email notification from = %s"
+				    , data->email_from);
 		dump_list(data->email);
+	}
+	if (data->vrrp_mcast_group4.ss_family) {
+		log_message(LOG_INFO, " VRRP IPv4 mcast group = %s"
+				    , inet_sockaddrtos(&data->vrrp_mcast_group4));
+	}
+	if (data->vrrp_mcast_group6.ss_family) {
+		log_message(LOG_INFO, " VRRP IPv6 mcast group = %s"
+				    , inet_sockaddrtos(&data->vrrp_mcast_group4));
 	}
 #ifdef _WITH_SNMP_
 	if (data->enable_traps)

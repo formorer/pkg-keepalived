@@ -43,7 +43,11 @@
 /* GET processing command */
 #define REQUEST_TEMPLATE "GET %s HTTP/1.0\r\n" \
 			 "User-Agent: GenHash (Linux powered)\r\n" \
-			 "Host: %s:%d\r\n\r\n"
+			 "Host: %s%s\r\n\r\n"
+
+#define REQUEST_TEMPLATE_IPV6 "GET %s HTTP/1.0\r\n" \
+			 "User-Agent: GenHash (Linux powered)\r\n" \
+			 "Host: [%s]%s\r\n\r\n"
 
 /* Output delimiters */
 #define DELIM_BEGIN "-----------------------["
@@ -51,8 +55,11 @@
 #define HTTP_HEADER_HEXA  DELIM_BEGIN"    HTTP Header Buffer    "DELIM_END
 #define HTTP_HEADER_ASCII DELIM_BEGIN" HTTP Header Ascii Buffer "DELIM_END
 #define HTML_HEADER_HEXA  DELIM_BEGIN"       HTML Buffer        "DELIM_END
-#define HTML_MD5          DELIM_BEGIN"    HTML MD5 resulting    "DELIM_END
-#define HTML_MD5_FINAL    DELIM_BEGIN" HTML MD5 final resulting "DELIM_END
+#define HTML_HASH          DELIM_BEGIN"    HTML hash resulting    "DELIM_END
+#define HTML_HASH_FINAL    DELIM_BEGIN" HTML hash final resulting "DELIM_END
+
+/* Globals exported */
+extern const hash_t hashes[];
 
 /* Define prototypes */
 extern int epilog(thread_t *);

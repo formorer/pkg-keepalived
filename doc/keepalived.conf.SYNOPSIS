@@ -24,14 +24,16 @@ This block is divided in 2 sub-block :
 global_defs {				# Block identification
     notification_email {		# Email to send alertes to
        <EMAIL ADDRESS>			# Standard email address
-      <EMAIL ADDRESS>
-      ...
+       <EMAIL ADDRESS>
+       ...
     }
     notification_email_from <EMAIL ADDRESS> # Email From dealing with SMTP proto
     smtp_server <IP ADDRESS>		   # SMTP server IP address
     smtp_connect_timeout <INTEGER>	   # Number of seconds timeout connect
  					   #  remote SMTP server
     router_id <STRING>			   # String identifying router
+    vrrp_mcast_group4 <IPv4 ADDRESS>	   # optional, default 224.0.0.18
+    vrrp_mcast_group6 <IPv6 ADDRESS>	   # optional, default ff02::12
 }
 
 linkbeat_use_polling	# Use media link failure detection polling fashion
@@ -121,12 +123,13 @@ vrrp_sync_group <STRING> {	# VRRP sync group declaration
 }
 
 (1) The "notify" script is called AFTER the corresponding notify_* script has
-    been called, and is given exactly 3 arguments (the whole string is interpreted
+    been called, and is given exactly 4 arguments (the whole string is interpreted
     as a litteral filename so don't add parameters!):
 
     $1 = A string indicating whether it's a "GROUP" or an "INSTANCE"
     $2 = The name of said group or instance
     $3 = The state it's transitioning to ("MASTER", "BACKUP" or "FAULT")
+    $4 = The priority value
 
     $1 and $3 are ALWAYS sent in uppercase, and the possible strings sent are the
     same ones listed above ("GROUP"/"INSTANCE", "MASTER"/"BACKUP"/"FAULT").
@@ -145,6 +148,8 @@ Important: for a SYNC group to run reliably, it is vital that all instances in
 
 vrrp_instance <STRING> {		# VRRP instance declaration
     use_vmac				# Use VRRP Virtual MAC
+    vmac_xmit_base			# Send/Recv VRRP messages from base
+					#  interface instead of VMAC interface
     native_ipv6				# Force instance to use IPv6
 					#  when using mixed IPv4&IPv6 conf
     state MASTER|BACKUP			# Start-up default state
@@ -163,9 +168,16 @@ vrrp_instance <STRING> {		# VRRP instance declaration
     dont_track_primary                  # (default unset) ignore VRRP interface faults.
                                         #  useful for cross-connect VRRP config.
     mcast_src_ip <IP ADDRESS>		# src_ip to use into the VRRP packets
+    unicast_src_ip <IP ADDRESS>		# src_ip to use into the VRRP packets (alias to mcast_src_ip)
+    unicast_peer {			# Do not use multicast, instead send VRRP
+      <IP ADDRESS>			#  adverts to following list of ip address
+      ...				#  in unicast design fashion
+    }
     lvs_sync_daemon_interface <STRING>	# Binding interface for lvs syncd
     garp_master_delay <INTEGER>		# delay for gratuitous ARP after MASTER
 					#  state transition
+    garp_master_refresh <INTEGER>	# Periodic delay in seconds sending
+					#  gratuitous ARP while in MASTER state
     virtual_router_id <INTEGER-0..255>	# VRRP VRID
     priority <INTEGER-0..255>		# VRRP PRIO
     advert_int <INTEGER>		# VRRP Advert interval (use default)
@@ -273,6 +285,7 @@ virtual_server fwmark <INTEGER>    {	# VS fwmark declaration
 virtual_server group <STRING>      {	# VS group declaration
     delay_loop <INTEGER>		# delay timer for service polling
     lvs_sched rr|wrr|lc|wlc|lblc|sh|dh	# LVS scheduler used
+    ops					# Apply One-Packet-Scheduling (only for UDP)
     lvs_method NAT|DR|TUN		# LVS method used
     persistence_timeout <INTEGER>	# LVS persistence timeout
     persistence_granularity <NETMASK>	# LVS granularity mask

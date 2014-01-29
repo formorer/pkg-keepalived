@@ -23,6 +23,7 @@
 #include "vrrp_scheduler.h"
 #include "vrrp_ipsecah.h"
 #include "vrrp_if.h"
+#include "vrrp_vmac.h"
 #include "vrrp.h"
 #include "vrrp_sync.h"
 #include "vrrp_notify.h"
@@ -65,14 +66,14 @@
  *     |               |<----------------------|               |
  *     +---------------+                       +---------------+
  */
-static void vrrp_backup(vrrp_rt *, char *, int);
-static void vrrp_leave_master(vrrp_rt *, char *, int);
-static void vrrp_leave_fault(vrrp_rt *, char *, int);
-static void vrrp_become_master(vrrp_rt *, char *, int);
+static void vrrp_backup(vrrp_t *, char *, int);
+static void vrrp_leave_master(vrrp_t *, char *, int);
+static void vrrp_leave_fault(vrrp_t *, char *, int);
+static void vrrp_become_master(vrrp_t *, char *, int);
 
-static void vrrp_goto_master(vrrp_rt *);
-static void vrrp_master(vrrp_rt *);
-static void vrrp_fault(vrrp_rt *);
+static void vrrp_goto_master(vrrp_t *);
+static void vrrp_master(vrrp_t *);
+static void vrrp_fault(vrrp_t *);
 
 static int vrrp_update_priority(thread_t * thread);
 static int vrrp_script_child_timeout_thread(thread_t * thread);
@@ -80,8 +81,8 @@ static int vrrp_script_child_thread(thread_t * thread);
 static int vrrp_script_thread(thread_t * thread);
 
 struct {
-	void (*read) (vrrp_rt *, char *, int);
-	void (*read_to) (vrrp_rt *);
+	void (*read) (vrrp_t *, char *, int);
+	void (*read_to) (vrrp_t *);
 } VRRP_FSM[VRRP_MAX_FSM_STATE + 1] =
 {
 /*    Stream Read Handlers      |    Stream Read_to handlers   *
@@ -131,7 +132,7 @@ struct {
  *            synced to FAULT state.
  */
 struct {
-	void (*handler) (vrrp_rt *);
+	void (*handler) (vrrp_t *);
 } VRRP_TSM[VRRP_MAX_TSM_STATE + 1][VRRP_MAX_TSM_STATE + 1] =
 {
   { {NULL}, {NULL},                      {NULL},             {NULL}            },
@@ -142,7 +143,7 @@ struct {
 
 /* SMTP alert notifier */
 static void
-vrrp_smtp_notifier(vrrp_rt * vrrp)
+vrrp_smtp_notifier(vrrp_t * vrrp)
 {
 	if (vrrp->smtp_alert) {
 		if (vrrp->state == VRRP_STATE_MAST)
@@ -157,7 +158,7 @@ vrrp_smtp_notifier(vrrp_rt * vrrp)
 }
 
 /* Log interface message */
-static void vrrp_log_int_down(vrrp_rt *vrrp)
+static void vrrp_log_int_down(vrrp_t *vrrp)
 {
 	if (!IF_ISUP(vrrp->ifp))
 		log_message(LOG_INFO, "Kernel is reporting: interface %s DOWN",
@@ -166,7 +167,7 @@ static void vrrp_log_int_down(vrrp_rt *vrrp)
 		vrrp_log_tracked_down(vrrp->track_ifp);
 }
 
-static void vrrp_log_int_up(vrrp_rt *vrrp)
+static void vrrp_log_int_up(vrrp_t *vrrp)
 {
 	if (IF_ISUP(vrrp->ifp))
 		log_message(LOG_INFO, "Kernel is reporting: interface %s UP",
@@ -182,8 +183,8 @@ static void vrrp_log_int_up(vrrp_rt *vrrp)
 static void
 vrrp_init_state(list l)
 {
-	vrrp_rt *vrrp;
-	vrrp_sgroup *vgroup;
+	vrrp_t *vrrp;
+	vrrp_sgroup_t *vgroup;
 	element e;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
@@ -193,13 +194,14 @@ vrrp_init_state(list l)
 		 * not running floating priorities on any VRRP instance.
 		 */
 		if (vrrp->sync && !vrrp->sync->global_tracking) {
-			tracked_sc *sc;
-			tracked_if *tip;
+			element e2;
+			tracked_sc_t *sc;
+			tracked_if_t *tip;
 			int warning = 0;
 
 			if (!LIST_ISEMPTY(vrrp->track_ifp)) {
-				for (e = LIST_HEAD(vrrp->track_ifp); e; ELEMENT_NEXT(e)) {
-					tip = ELEMENT_DATA(e);
+				for (e2 = LIST_HEAD(vrrp->track_ifp); e2; ELEMENT_NEXT(e2)) {
+					tip = ELEMENT_DATA(e2);
 					if (tip->weight) {
 						tip->weight = 0;
 						warning++;
@@ -208,9 +210,8 @@ vrrp_init_state(list l)
 			}
 
 			if (!LIST_ISEMPTY(vrrp->track_script)) {
-				for (e = LIST_HEAD(vrrp->track_script); e;
-				     ELEMENT_NEXT(e)) {
-					sc = ELEMENT_DATA(e);
+				for (e2 = LIST_HEAD(vrrp->track_script); e2; ELEMENT_NEXT(e2)) {
+					sc = ELEMENT_DATA(e2);
 					if (sc->weight) {
 						sc->scr->inuse--;
 						warning++;
@@ -279,7 +280,7 @@ vrrp_init_state(list l)
 static void
 vrrp_init_sands(list l)
 {
-	vrrp_rt *vrrp;
+	vrrp_t *vrrp;
 	element e;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
@@ -294,7 +295,7 @@ vrrp_init_sands(list l)
 static void
 vrrp_init_script(list l)
 {
-	vrrp_script *vscript;
+	vrrp_script_t *vscript;
 	element e;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
@@ -316,7 +317,7 @@ vrrp_init_script(list l)
 static timeval_t
 vrrp_compute_timer(const int fd)
 {
-	vrrp_rt *vrrp;
+	vrrp_t *vrrp;
 	element e;
 	list l = &vrrp_data->vrrp_index_fd[fd%1024 + 1];
 	timeval_t timer;
@@ -349,7 +350,7 @@ vrrp_timer_fd(const int fd)
 static int
 vrrp_timer_vrid_timeout(const int fd)
 {
-	vrrp_rt *vrrp;
+	vrrp_t *vrrp;
 	element e;
 	list l = &vrrp_data->vrrp_index_fd[fd%1024 + 1];
 	timeval_t timer;
@@ -408,23 +409,24 @@ vrrp_register_workers(list l)
 
 /* VRRP dispatcher functions */
 static int
-already_exist_sock(list l, sa_family_t family, int proto, int ifindex)
+already_exist_sock(list l, sa_family_t family, int proto, int ifindex, int unicast)
 {
 	sock_t *sock;
 	element e;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		sock = ELEMENT_DATA(e);
-		if ((sock->family == family) &&
-		    (sock->proto == proto)	 &&
-		    (sock->ifindex == ifindex))
+		if ((sock->family == family)	&&
+		    (sock->proto == proto)	&&
+		    (sock->ifindex == ifindex)	&&
+		    (sock->unicast == unicast))
 			return 1;
 	}
 	return 0;
 }
 
 void
-alloc_sock(sa_family_t family, list l, int proto, int ifindex)
+alloc_sock(sa_family_t family, list l, int proto, int ifindex, int unicast)
 {
 	sock_t *new;
 
@@ -432,6 +434,7 @@ alloc_sock(sa_family_t family, list l, int proto, int ifindex)
 	new->family = family;
 	new->proto = proto;
 	new->ifindex = ifindex;
+	new->unicast = unicast;
 
 	list_add(l, new);
 }
@@ -439,23 +442,24 @@ alloc_sock(sa_family_t family, list l, int proto, int ifindex)
 static void
 vrrp_create_sockpool(list l)
 {
-	vrrp_rt *vrrp;
+	vrrp_t *vrrp;
 	list p = vrrp_data->vrrp;
 	element e;
-	int ifindex;
-	int proto;
+	int ifindex, proto, unicast;
 
 	for (e = LIST_HEAD(p); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);
-		ifindex = IF_INDEX(vrrp->ifp);
+		ifindex = (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? IF_BASE_INDEX(vrrp->ifp) :
+								       IF_INDEX(vrrp->ifp);
+		unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
 		if (vrrp->auth_type == VRRP_AUTH_AH)
 			proto = IPPROTO_IPSEC_AH;
 		else
 			proto = IPPROTO_VRRP;
 
 		/* add the vrrp element if not exist */
-		if (!already_exist_sock(l, vrrp->family, proto, ifindex))
-			alloc_sock(vrrp->family, l, proto, ifindex);
+		if (!already_exist_sock(l, vrrp->family, proto, ifindex, unicast))
+			alloc_sock(vrrp->family, l, proto, ifindex, unicast);
 	}
 }
 
@@ -468,12 +472,12 @@ vrrp_open_sockpool(list l)
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		sock = ELEMENT_DATA(e);
 		sock->fd_in = open_vrrp_socket(sock->family, sock->proto,
-						   sock->ifindex);
+					       sock->ifindex, sock->unicast);
 		if (sock->fd_in == -1)
 			sock->fd_out = -1;
 		else
 			sock->fd_out = open_vrrp_send_socket(sock->family, sock->proto,
-								 sock->ifindex);
+							     sock->ifindex, sock->unicast);
 	}
 }
 
@@ -481,23 +485,27 @@ static void
 vrrp_set_fds(list l)
 {
 	sock_t *sock;
-	vrrp_rt *vrrp;
+	vrrp_t *vrrp;
 	list p = vrrp_data->vrrp;
 	element e_sock;
 	element e_vrrp;
-	int proto;
+	int proto, ifindex, unicast;
 
 	for (e_sock = LIST_HEAD(l); e_sock; ELEMENT_NEXT(e_sock)) {
 		sock = ELEMENT_DATA(e_sock);
 		for (e_vrrp = LIST_HEAD(p); e_vrrp; ELEMENT_NEXT(e_vrrp)) {
 			vrrp = ELEMENT_DATA(e_vrrp);
+			ifindex = (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? IF_BASE_INDEX(vrrp->ifp) :
+									       IF_INDEX(vrrp->ifp);
+			unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
 			if (vrrp->auth_type == VRRP_AUTH_AH)
 				proto = IPPROTO_IPSEC_AH;
 			else
 				proto = IPPROTO_VRRP;
 
-			if ((sock->ifindex == IF_INDEX(vrrp->ifp)) &&
-			    (sock->proto == proto)) {
+			if ((sock->ifindex == ifindex)	&&
+			    (sock->proto == proto)	&&
+			    (sock->unicast == unicast)) {
 				vrrp->fd_in = sock->fd_in;
 				vrrp->fd_out = sock->fd_out;
 
@@ -544,22 +552,22 @@ vrrp_dispatcher_init(thread_t * thread)
 }
 
 void
-vrrp_dispatcher_release(vrrp_conf_data *conf_data)
+vrrp_dispatcher_release(vrrp_data_t *data)
 {
-	free_list(conf_data->vrrp_socket_pool);
+	free_list(data->vrrp_socket_pool);
 }
 
 static void
-vrrp_backup(vrrp_rt * vrrp, char *buffer, int len)
+vrrp_backup(vrrp_t * vrrp, char *buffer, int len)
 {
 	struct iphdr *iph;
-	ipsec_ah *ah;
+	ipsec_ah_t *ah;
 
 	if (vrrp->family == AF_INET) {
 		iph = (struct iphdr *) buffer;
 
 		if (iph->protocol == IPPROTO_IPSEC_AH) {
-			ah = (ipsec_ah *) (buffer + sizeof (struct iphdr));
+			ah = (ipsec_ah_t *) (buffer + sizeof (struct iphdr));
 			if (ntohl(ah->seq_number) >= vrrp->ipsecah_counter->seq_number)
 				vrrp->ipsecah_counter->cycle = 0;
 		}
@@ -569,10 +577,10 @@ vrrp_backup(vrrp_rt * vrrp, char *buffer, int len)
 }
 
 static void
-vrrp_become_master(vrrp_rt * vrrp, char *buffer, int len)
+vrrp_become_master(vrrp_t * vrrp, char *buffer, int len)
 {
 	struct iphdr *iph;
-	ipsec_ah *ah;
+	ipsec_ah_t *ah;
 
 	if (vrrp->family == AF_INET) {
 		iph = (struct iphdr *) buffer;
@@ -584,7 +592,7 @@ vrrp_become_master(vrrp_rt * vrrp, char *buffer, int len)
 		if (iph->protocol == IPPROTO_IPSEC_AH) {
 			log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : seq_num sync",
 			       vrrp->iname);
-			ah = (ipsec_ah *) (buffer + sizeof (struct iphdr));
+			ah = (ipsec_ah_t *) (buffer + sizeof (struct iphdr));
 			vrrp->ipsecah_counter->seq_number = ntohl(ah->seq_number) + 1;
 			vrrp->ipsecah_counter->cycle = 0;
 		}
@@ -596,7 +604,7 @@ vrrp_become_master(vrrp_rt * vrrp, char *buffer, int len)
 }
 
 static void
-vrrp_leave_master(vrrp_rt * vrrp, char *buffer, int len)
+vrrp_leave_master(vrrp_t * vrrp, char *buffer, int len)
 {
 	if (!VRRP_ISUP(vrrp)) {
 		vrrp_log_int_down(vrrp);
@@ -609,7 +617,7 @@ vrrp_leave_master(vrrp_rt * vrrp, char *buffer, int len)
 }
 
 static void
-vrrp_ah_sync(vrrp_rt *vrrp)
+vrrp_ah_sync(vrrp_t *vrrp)
 {
 	/*
 	 * Transition to BACKUP state for AH
@@ -622,7 +630,7 @@ vrrp_ah_sync(vrrp_rt *vrrp)
 }
 
 static void
-vrrp_leave_fault(vrrp_rt * vrrp, char *buffer, int len)
+vrrp_leave_fault(vrrp_t * vrrp, char *buffer, int len)
 {
 	if (!VRRP_ISUP(vrrp))
 		return;
@@ -667,7 +675,7 @@ vrrp_leave_fault(vrrp_rt * vrrp, char *buffer, int len)
 }
 
 static void
-vrrp_goto_master(vrrp_rt * vrrp)
+vrrp_goto_master(vrrp_t * vrrp)
 {
 	if (!VRRP_ISUP(vrrp)) {
 		vrrp_log_int_down(vrrp);
@@ -698,7 +706,7 @@ vrrp_goto_master(vrrp_rt * vrrp)
 int
 vrrp_gratuitous_arp_thread(thread_t * thread)
 {
-	vrrp_rt *vrrp = THREAD_ARG(thread);
+	vrrp_t *vrrp = THREAD_ARG(thread);
 
 	/* Simply broadcast the gratuitous ARP */
 	vrrp_send_link_update(vrrp);
@@ -712,7 +720,7 @@ vrrp_gratuitous_arp_thread(thread_t * thread)
 static int
 vrrp_update_priority(thread_t * thread)
 {
-	vrrp_rt *vrrp = THREAD_ARG(thread);
+	vrrp_t *vrrp = THREAD_ARG(thread);
 	int prio_offset, new_prio;
 
 	/* compute prio_offset right here */
@@ -746,7 +754,7 @@ vrrp_update_priority(thread_t * thread)
 }
 
 static void
-vrrp_master(vrrp_rt * vrrp)
+vrrp_master(vrrp_t * vrrp)
 {
 	/* Check if interface we are running on is UP */
 	if (vrrp->wantstate != VRRP_STATE_GOTO_FAULT) {
@@ -789,9 +797,9 @@ vrrp_master(vrrp_rt * vrrp)
 }
 
 static void
-vrrp_fault(vrrp_rt * vrrp)
+vrrp_fault(vrrp_t * vrrp)
 {
-	vrrp_sgroup *vgroup = vrrp->sync;
+	vrrp_sgroup_t *vgroup = vrrp->sync;
 
 	if (vgroup) {
 		if (!vrrp_sync_leave_fault(vrrp))
@@ -832,7 +840,7 @@ vrrp_fault(vrrp_rt * vrrp)
 static int
 vrrp_dispatcher_read_to(int fd)
 {
-	vrrp_rt *vrrp;
+	vrrp_t *vrrp;
 	int vrid = 0;
 	int prev_state = 0;
 
@@ -857,6 +865,17 @@ vrrp_dispatcher_read_to(int fd)
 	 * compute new sands timer safely.
 	 */
 	vrrp_init_instance_sands(vrrp);
+
+	/*
+	 * If quick sync is set, refresh sands to one advert interval, i.e. the next
+	 * timeout will occur in one interval instead of three, and a check for a
+	 * possible transition check will perform more quickly.
+	 */
+	if (vrrp->quick_sync) {
+		vrrp->sands = timer_add_long(time_now, vrrp->adver_int);
+		vrrp->quick_sync = 0;
+        }
+
 	return vrrp->fd_in;
 }
 
@@ -864,8 +883,8 @@ vrrp_dispatcher_read_to(int fd)
 static int
 vrrp_dispatcher_read(sock_t * sock)
 {
-	vrrp_rt *vrrp;
-	vrrp_pkt *hd;
+	vrrp_t *vrrp;
+	vrrphdr_t *hd;
 	int len = 0, prev_state = 0, proto = 0;
 	uint32_t saddr;
 
@@ -937,7 +956,7 @@ vrrp_read_dispatcher_thread(thread_t * thread)
 static int
 vrrp_script_thread(thread_t * thread)
 {
-	vrrp_script *vscript = THREAD_ARG(thread);
+	vrrp_script_t *vscript = THREAD_ARG(thread);
 	int status, ret;
 	pid_t pid;
 
@@ -990,7 +1009,7 @@ static int
 vrrp_script_child_thread(thread_t * thread)
 {
 	int wait_status;
-	vrrp_script *vscript = THREAD_ARG(thread);
+	vrrp_script_t *vscript = THREAD_ARG(thread);
 
 	if (thread->type == THREAD_CHILD_TIMEOUT) {
 		pid_t pid;

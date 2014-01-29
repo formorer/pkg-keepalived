@@ -35,7 +35,7 @@ static const char *ll_kind = "macvlan";
 #ifdef _HAVE_VRRP_VMAC_
 /* Link layer handling */
 static int
-netlink_link_setlladdr(vrrp_rt *vrrp)
+netlink_link_setlladdr(vrrp_t *vrrp)
 {
 	int status = 1;
 	u_char ll_addr[ETH_ALEN] = {0x00, 0x00, 0x5e, 0x00, 0x01, vrrp->vrid};
@@ -64,7 +64,7 @@ netlink_link_setlladdr(vrrp_rt *vrrp)
 }
 
 static int
-netlink_link_setmode(vrrp_rt *vrrp)
+netlink_link_setmode(vrrp_t *vrrp)
 {
 	int status = 1;
 	struct {
@@ -85,9 +85,7 @@ netlink_link_setmode(vrrp_rt *vrrp)
 
 	linkinfo = NLMSG_TAIL(&req.n);
 	addattr_l(&req.n, sizeof(req), IFLA_LINKINFO, NULL, 0);
-	addattr_l(&req.n, sizeof(req), IFLA_INFO_KIND, (void *) ll_kind,
-		  strlen(ll_kind));
-
+	addattr_l(&req.n, sizeof(req), IFLA_INFO_KIND, (void *) ll_kind, strlen(ll_kind));
 	data = NLMSG_TAIL(&req.n);
 	addattr_l(&req.n, sizeof(req), IFLA_INFO_DATA, NULL, 0);
 
@@ -98,7 +96,6 @@ netlink_link_setmode(vrrp_rt *vrrp)
 	addattr32(&req.n, sizeof(req), IFLA_MACVLAN_MODE,
 		  MACVLAN_MODE_PRIVATE);
 	data->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)data;
-
 	linkinfo->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)linkinfo;
 
 	if (netlink_talk(&nl_cmd, &req.n) < 0)
@@ -108,7 +105,7 @@ netlink_link_setmode(vrrp_rt *vrrp)
 }
 
 static int
-netlink_link_up(vrrp_rt *vrrp)
+netlink_link_up(vrrp_t *vrrp)
 {
 	int status = 1;
 	struct {
@@ -135,11 +132,12 @@ netlink_link_up(vrrp_rt *vrrp)
 #endif
 
 int
-netlink_link_add_vmac(vrrp_rt *vrrp)
+netlink_link_add_vmac(vrrp_t *vrrp)
 {
 #ifdef _HAVE_VRRP_VMAC_
 	struct rtattr *linkinfo;
-	interface *ifp;
+	unsigned int base_ifindex;
+	interface_t *ifp;
 	char ifname[IFNAMSIZ];
 	struct {
 		struct nlmsghdr n;
@@ -147,7 +145,7 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 		char buf[256];
 	} req;
 
-	if (!vrrp->ifp)
+	if (!vrrp->ifp || vrrp->vmac_flags & VRRP_VMAC_FL_UP || !vrrp->vrid)
 		return -1;
 
 	memset(&req, 0, sizeof (req));
@@ -162,7 +160,7 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 		vrrp->ifp = ifp;
 		/* Save ifindex for use on delete */
 		vrrp->vmac_ifindex = IF_INDEX(vrrp->ifp);
-		vrrp->vmac |= 2;
+		vrrp->vmac_flags |= VRRP_VMAC_FL_UP;
 		return 1;
 	}
 	
@@ -179,8 +177,14 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 	addattr_l(&req.n, sizeof(req), IFLA_LINK, &IF_INDEX(vrrp->ifp), sizeof(uint32_t));
 	addattr_l(&req.n, sizeof(req), IFLA_IFNAME, ifname, strlen(ifname));
 
-	if (netlink_talk(&nl_cmd, &req.n) < 0)
+	if (netlink_talk(&nl_cmd, &req.n) < 0) {
+		log_message(LOG_INFO, "vmac: Error creating VMAC interface %s for vrrp_instance %s!!!"
+				    , ifname, vrrp->iname);
 		return -1;
+	}
+
+	log_message(LOG_INFO, "vmac: Success creating VMAC interface %s for vrrp_instance %s"
+			    , ifname, vrrp->iname);
 
 	/*
 	 * Update interface queue and vrrp instance interface binding.
@@ -190,9 +194,12 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 	ifp = if_get_by_ifname(ifname);
 	if (!ifp)
 		return -1;
+	base_ifindex = vrrp->ifp->ifindex;
 	vrrp->ifp = ifp;
+	vrrp->ifp->base_ifindex = base_ifindex;
+	vrrp->ifp->vmac = 1;
 	vrrp->vmac_ifindex = IF_INDEX(vrrp->ifp); /* For use on delete */
-	vrrp->vmac |= 2;
+	vrrp->vmac_flags |= VRRP_VMAC_FL_UP;
 	netlink_link_setlladdr(vrrp);
 	netlink_link_up(vrrp);
 
@@ -208,7 +215,7 @@ netlink_link_add_vmac(vrrp_rt *vrrp)
 }
 
 int
-netlink_link_del_vmac(vrrp_rt *vrrp)
+netlink_link_del_vmac(vrrp_t *vrrp)
 {
 	int status = 1;
 
@@ -230,8 +237,14 @@ netlink_link_del_vmac(vrrp_rt *vrrp)
 	req.ifi.ifi_family = AF_INET;
 	req.ifi.ifi_index = vrrp->vmac_ifindex;
 
-	if (netlink_talk(&nl_cmd, &req.n) < 0)
+	if (netlink_talk(&nl_cmd, &req.n) < 0) {
+		log_message(LOG_INFO, "vmac: Error removing VMAC interface %s for vrrp_instance %s!!!"
+				    , vrrp->vmac_ifname, vrrp->iname);
 		status = -1;
+	}
+
+	log_message(LOG_INFO, "vmac: Success removing VMAC interface %s for vrrp_instance %s"
+			    , vrrp->vmac_ifname, vrrp->iname);
 #endif
 
 	return status;

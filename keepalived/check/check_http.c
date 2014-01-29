@@ -92,7 +92,7 @@ alloc_http_get(char *proto)
 	http_checker_t *http_get_chk;
 
 	http_get_chk = (http_checker_t *) MALLOC(sizeof (http_checker_t));
-	http_get_chk->arg = (http_arg_t *) MALLOC(sizeof (http_arg_t));
+	http_get_chk->arg = (http_t *) MALLOC(sizeof (http_t));
 	http_get_chk->proto =
 	    (!strcmp(proto, "HTTP_GET")) ? PROTO_HTTP : PROTO_SSL;
 	http_get_chk->url = alloc_list(free_url, dump_url);
@@ -270,13 +270,13 @@ epilog(thread_t * thread, int method, int t, int c)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
 	long delay = 0;
 
 	if (method) {
-		http_arg->url_it += t ? t : -http_arg->url_it;
-		http_arg->retry_it += c ? c : -http_arg->retry_it;
+		http->url_it += t ? t : -http->url_it;
+		http->retry_it += c ? c : -http->retry_it;
 	}
 
 	/*
@@ -285,11 +285,11 @@ epilog(thread_t * thread, int method, int t, int c)
 	 * html buffer. This is sometime needed with some applications
 	 * servers.
 	 */
-	if (http_arg->retry_it > http_get_check->nb_get_retry-1) {
+	if (http->retry_it > http_get_check->nb_get_retry-1) {
 		if (svr_checker_up(checker->id, checker->rs)) {
 			log_message(LOG_INFO, "Check on service [%s]:%d failed after %d retry."
 			       , inet_sockaddrtos(&http_get_check->dst)
-			       , ntohs(inet_sockaddrport(&http_get_check->dst)), http_arg->retry_it);
+			       , ntohs(inet_sockaddrport(&http_get_check->dst)), http->retry_it);
 			smtp_alert(checker->rs, NULL, NULL,
 				   "DOWN",
 				   "=> CHECK failed on service"
@@ -300,8 +300,8 @@ epilog(thread_t * thread, int method, int t, int c)
 		}
 
 		/* Reset it counters */
-		http_arg->url_it = 0;
-		http_arg->retry_it = 0;
+		http->url_it = 0;
+		http->retry_it = 0;
 	}
 
 	/* register next timer thread */
@@ -314,7 +314,7 @@ epilog(thread_t * thread, int method, int t, int c)
 			    http_get_check->delay_before_retry;
 		break;
 	case 2:
-		if (http_arg->url_it == 0 && http_arg->retry_it == 0)
+		if (http->url_it == 0 && http->retry_it == 0)
 			delay = checker->vs->delay_loop;
 		else
 			delay = http_get_check->delay_before_retry;
@@ -328,7 +328,7 @@ epilog(thread_t * thread, int method, int t, int c)
 		if (req->buffer)
 			FREE(req->buffer);
 		FREE(req);
-		http_arg->req = NULL;
+		http->req = NULL;
 		close(thread->u.fd);
 	}
 
@@ -364,9 +364,9 @@ timeout_epilog(thread_t * thread, char *smtp_msg, char *debug_msg)
 url_t *
 fetch_next_url(http_checker_t * http_get_check)
 {
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	http_t *http = HTTP_ARG(http_get_check);
 
-	return list_element(http_get_check->url, http_arg->url_it);
+	return list_element(http_get_check->url, http->url_it);
 }
 
 /* Handle response */
@@ -376,11 +376,16 @@ http_handle_response(thread_t * thread, unsigned char digest[16]
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
 	int r, di = 0;
 	char *digest_tmp;
 	url_t *fetched_url = fetch_next_url(http_get_check);
+	enum {
+		none,
+		on_status,
+		on_digest
+	} last_success = none; /* the source of last considered success */
 
 	/* First check if remote webserver returned data */
 	if (empty_buffer)
@@ -411,23 +416,17 @@ http_handle_response(thread_t * thread, unsigned char digest[16]
 				DBG("HTTP Status_code to [%s]:%d url(%d) = [%d]."
 				    , inet_sockaddrtos(&http_get_check->dst)
 				    , ntohs(inet_sockaddrport(&http_get_check->dst))
-				    , http_arg->url_it + 1
+				    , http->url_it + 1
 				    , req->status_code);
 				/*
 				 * We set retry iterator to max value to not retry
 				 * when service is already know as die.
 				 */
-				http_arg->retry_it = http_get_check->nb_get_retry;
+				http->retry_it = http_get_check->nb_get_retry;
 			}
 			return epilog(thread, 2, 0, 1);
 		} else {
-			if (!svr_checker_up(checker->id, checker->rs))
-				log_message(LOG_INFO,
-				       "HTTP status code success to [%s]:%d url(%d)."
-				       , inet_sockaddrtos(&http_get_check->dst)
-				       , ntohs(inet_sockaddrport(&http_get_check->dst))
-				       , http_arg->url_it + 1);
-			return epilog(thread, 1, 1, 0) + 1;
+			last_success = on_status;
 		}
 	}
 
@@ -461,24 +460,40 @@ http_handle_response(thread_t * thread, unsigned char digest[16]
 				DBG("MD5SUM to [%s]:%d url(%d) = [%s]."
 				    , inet_sockaddrtos(&http_get_check->dst)
 				    , ntohs(inet_sockaddrport(&http_get_check->dst))
-				    , http_arg->url_it + 1
+				    , http->url_it + 1
 				    , digest_tmp);
 				/*
 				 * We set retry iterator to max value to not retry
 				 * when service is already know as die.
 				 */
-				http_arg->retry_it = http_get_check->nb_get_retry;
+				http->retry_it = http_get_check->nb_get_retry;
 			}
 			FREE(digest_tmp);
 			return epilog(thread, 2, 0, 1);
 		} else {
-			if (!svr_checker_up(checker->id, checker->rs))
-				log_message(LOG_INFO, "MD5 digest success to [%s]:%d url(%d)."
+			last_success = on_digest;
+			FREE(digest_tmp);
+		}
+	}
+
+	if (!svr_checker_up(checker->id, checker->rs)) {
+		switch (last_success) {
+			case none:
+				break;
+			case on_status:
+				log_message(LOG_INFO,
+				       "HTTP status code success to [%s]:%d url(%d)."
 				       , inet_sockaddrtos(&http_get_check->dst)
 				       , ntohs(inet_sockaddrport(&http_get_check->dst))
-				       , http_arg->url_it + 1);
-			FREE(digest_tmp);
-			return epilog(thread, 1, 1, 0) + 1;
+				       , http->url_it + 1);
+				return epilog(thread, 1, 1, 0) + 1;
+			case on_digest:
+				if (!svr_checker_up(checker->id, checker->rs))
+					log_message(LOG_INFO, "MD5 digest success to [%s]:%d url(%d)."
+						   , inet_sockaddrtos(&http_get_check->dst)
+						   , ntohs(inet_sockaddrport(&http_get_check->dst))
+						   , http->url_it + 1);
+				return epilog(thread, 1, 1, 0) + 1;
 		}
 	}
 
@@ -517,8 +532,8 @@ http_read_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
 	unsigned char digest[16];
 	int r = 0;
 	int val;
@@ -601,8 +616,8 @@ http_response_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
 
 	/* Handle read timeout */
 	if (thread->type == THREAD_READ_TIMEOUT)
@@ -632,9 +647,12 @@ http_request_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http_arg);
+	http_t *http = HTTP_ARG(http_get_check);
+	request_t *req = HTTP_REQ(http);
+	struct sockaddr_storage *addr = &http_get_check->dst;
 	char *vhost = CHECKER_VHOST(checker);
+	char *request_host = 0;
+	char *request_host_port = 0;
 	char *str_request;
 	url_t *fetched_url;
 	int ret = 0;
@@ -650,12 +668,34 @@ http_request_thread(thread_t * thread)
 	str_request = (char *) MALLOC(GET_BUFFER_LENGTH);
 
 	fetched_url = fetch_next_url(http_get_check);
-	snprintf(str_request, GET_BUFFER_LENGTH, REQUEST_TEMPLATE,
-		 fetched_url->path,
-		 (vhost) ? vhost : inet_sockaddrtos(&http_get_check->dst)
-		 , ntohs(inet_sockaddrport(&http_get_check->dst)));
+	
+	if (vhost) {
+		/* If vhost was defined we don't need to override it's port */
+		request_host = vhost;
+		request_host_port = (char*) MALLOC(1);
+		*request_host_port = 0;
+	} else {
+		request_host = inet_sockaddrtos(&http_get_check->dst);
+		
+		/* Allocate a buffer for the port string ( ":" [0-9][0-9][0-9][0-9][0-9] "\0" ) */
+		request_host_port = (char*) MALLOC(7);
+		snprintf(request_host_port, 7, ":%d", 
+			 ntohs(inet_sockaddrport(&http_get_check->dst)));
+	}
+
+	if(addr->ss_family == AF_INET6 && !vhost){
+		/* if literal ipv6 address, use ipv6 template, see RFC 2732 */
+		snprintf(str_request, GET_BUFFER_LENGTH, REQUEST_TEMPLATE_IPV6,
+			fetched_url->path, request_host, request_host_port);
+	} else {
+		snprintf(str_request, GET_BUFFER_LENGTH, REQUEST_TEMPLATE,
+			fetched_url->path, request_host, request_host_port);
+	}
+
+	FREE(request_host_port);
+	
 	DBG("Processing url(%d) of [%s]:%d.",
-	    http_arg->url_it + 1
+	    http->url_it + 1
 	    , inet_sockaddrtos(&http_get_check->dst)
 	    , ntohs(inet_sockaddrport(&http_get_check->dst)));
 
@@ -707,9 +747,9 @@ http_check_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	http_t *http = HTTP_ARG(http_get_check);
 #ifdef _DEBUG_
-	request_t *req = HTTP_REQ(http_arg);
+	request_t *req = HTTP_REQ(http);
 #endif
 	int ret = 1;
 	int status;
@@ -743,8 +783,8 @@ http_check_thread(thread_t * thread)
 		break;
 
 	case connect_success:{
-			if (!http_arg->req) {
-				http_arg->req = (request_t *) MALLOC(sizeof (request_t));
+			if (!http->req) {
+				http->req = (request_t *) MALLOC(sizeof (request_t));
 				new_req = 1;
 			} else
 				new_req = 0;
@@ -761,7 +801,7 @@ http_check_thread(thread_t * thread)
 				}
 
 				if (ret == -1) {
-					switch ((ssl_err = SSL_get_error(http_arg->req->ssl,
+					switch ((ssl_err = SSL_get_error(http->req->ssl,
 									 ret))) {
 					case SSL_ERROR_WANT_READ:
 						thread_add_read(thread->master,
@@ -810,7 +850,7 @@ http_check_thread(thread_t * thread)
 					log_message(LOG_INFO, "SSL handshake/communication error"
 							 " connecting to server"
 							 " (openssl errno: %d) [%s]:%d."
-						       , SSL_get_error (http_arg->req->ssl, ret)
+						       , SSL_get_error (http->req->ssl, ret)
 						       , inet_sockaddrtos(&http_get_check->dst)
 						       , ntohs(inet_sockaddrport(&http_get_check->dst)));
 					smtp_alert(checker->rs, NULL, NULL,
@@ -836,7 +876,7 @@ http_connect_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_arg_t *http_arg = HTTP_ARG(http_get_check);
+	http_t *http = HTTP_ARG(http_get_check);
 	url_t *fetched_url;
 	enum connect_result status;
 	int fd;
@@ -869,7 +909,7 @@ http_connect_thread(thread_t * thread)
 						   , checker->vs
 						   , checker->rs);
 		}
-		http_arg->req = NULL;
+		http->req = NULL;
 		return epilog(thread, 1, 0, 0) + 1;
 	}
 

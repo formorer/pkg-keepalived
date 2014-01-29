@@ -31,8 +31,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <errno.h>
-#include <popt.h>
+#include <getopt.h>
 #include <openssl/ssl.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 /* local includes */
 #include "memory.h"
@@ -40,12 +43,13 @@
 #include "http.h"
 #include "ssl.h"
 #include "list.h"
+#include "sock.h"
 
 /* Build version */
 #define PROG    "genhash"
 
 #define VERSION_CODE 0x010000
-#define DATE_CODE    0x120b02
+#define DATE_CODE    0x15070d
 
 #define GETMETER_VERSION(version)	\
         (version >> 16) & 0xFF,		\
@@ -58,7 +62,8 @@
 
 /* HTTP/HTTPS request structure */
 typedef struct {
-	uint32_t addr_ip;
+	struct addrinfo *dst;
+	char ipaddress[INET6_ADDRSTRLEN];
 	uint16_t addr_port;
 	char *url;
 	char *vhost;
@@ -66,6 +71,7 @@ typedef struct {
 	int ssl;
 	SSL_CTX *ctx;
 	SSL_METHOD *meth;
+	enum feat_hashes hash;
 	unsigned long ref_time;
 	unsigned long response_time;
 } REQ;

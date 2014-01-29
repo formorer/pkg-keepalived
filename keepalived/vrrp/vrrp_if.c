@@ -62,10 +62,10 @@ static struct ifreq ifr;
 
 /* Helper functions */
 /* Return interface from interface index */
-interface *
+interface_t *
 if_get_by_ifindex(const int ifindex)
 {
-	interface *ifp;
+	interface_t *ifp;
 	element e;
 
 	if (LIST_ISEMPTY(if_queue))
@@ -79,24 +79,39 @@ if_get_by_ifindex(const int ifindex)
 	return NULL;
 }
 
-interface *
-if_get_by_ifname(const char *ifname)
+/* Return interface from VMAC base interface index */
+interface_t *
+if_get_by_vmac_base_ifindex(const int ifindex)
 {
-	interface *ifp;
+	interface_t *ifp;
 	element e;
 
-	if (LIST_ISEMPTY(if_queue)) {
-		log_message(LOG_ERR, "Interface queue is empty");
+	if (LIST_ISEMPTY(if_queue) || !ifindex)
 		return NULL;
+
+	for (e = LIST_HEAD(if_queue); e; ELEMENT_NEXT(e)) {
+		ifp = ELEMENT_DATA(e);
+		if (ifp->vmac && ifp->base_ifindex == ifindex)
+			return ifp;
 	}
+
+	return NULL;
+}
+
+interface_t *
+if_get_by_ifname(const char *ifname)
+{
+	interface_t *ifp;
+	element e;
+
+	if (LIST_ISEMPTY(if_queue))
+		return NULL;
 
 	for (e = LIST_HEAD(if_queue); e; ELEMENT_NEXT(e)) {
 		ifp = ELEMENT_DATA(e);
 		if (!strcmp(ifp->ifname, ifname))
 			return ifp;
 	}
-
-	log_message(LOG_ERR, "No such interface, %s", ifname);
 	return NULL;
 }
 
@@ -238,7 +253,7 @@ if_ethtool_probe(const char *ifname)
 }
 
 void
-if_ioctl_flags(interface * ifp)
+if_ioctl_flags(interface_t * ifp)
 {
 	int fd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -264,7 +279,7 @@ free_if(void *data)
 void
 dump_if(void *data)
 {
-	interface *ifp = data;
+	interface_t *ifp = data;
 	char addr_str[41];
 
 	log_message(LOG_INFO, "------< NIC >------");
@@ -319,7 +334,7 @@ init_if_queue(void)
 }
 
 void
-if_add_queue(interface * ifp)
+if_add_queue(interface_t * ifp)
 {
 	list_add(if_queue, ifp);
 }
@@ -327,7 +342,7 @@ if_add_queue(interface * ifp)
 static int
 if_linkbeat_refresh_thread(thread_t * thread)
 {
-	interface *ifp = THREAD_ARG(thread);
+	interface_t *ifp = THREAD_ARG(thread);
 
 	if (IF_MII_SUPPORTED(ifp))
 		ifp->linkbeat = (if_mii_probe(ifp->ifname)) ? 1 : 0;
@@ -350,7 +365,7 @@ if_linkbeat_refresh_thread(thread_t * thread)
 static void
 init_if_linkbeat(void)
 {
-	interface *ifp;
+	interface_t *ifp;
 	element e;
 	int status;
 
@@ -375,7 +390,7 @@ init_if_linkbeat(void)
 }
 
 int
-if_linkbeat(const interface * ifp)
+if_linkbeat(const interface_t * ifp)
 {
 	if (!global_data->linkbeat_use_polling)
 		return 1;
@@ -416,7 +431,7 @@ init_interface_linkbeat(void)
 }
 
 int
-if_join_vrrp_group(sa_family_t family, int *sd, interface *ifp, int proto)
+if_join_vrrp_group(sa_family_t family, int *sd, interface_t *ifp, int proto)
 {
 	struct ip_mreqn imr;
 	struct ipv6_mreq imr6;
@@ -433,7 +448,7 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface *ifp, int proto)
 
 	if (family == AF_INET) {
 		memset(&imr, 0, sizeof(imr));
-		imr.imr_multiaddr.s_addr = htonl(INADDR_VRRP_GROUP);
+		imr.imr_multiaddr = ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr;
 		imr.imr_address.s_addr = IF_ADDR(ifp);
 		imr.imr_ifindex = IF_INDEX(ifp);
 
@@ -444,8 +459,7 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface *ifp, int proto)
 				 (char *) &imr, sizeof(struct ip_mreqn));
 	} else {
 		memset(&imr6, 0, sizeof(imr6));
-		imr6.ipv6mr_multiaddr.s6_addr16[0] = htons(0xff02);
-		imr6.ipv6mr_multiaddr.s6_addr16[7] = htons(0x12);
+		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6 *) &global_data->vrrp_mcast_group6)->sin6_addr;
 		imr6.ipv6mr_interface = IF_INDEX(ifp);
 		ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP,
 				 (char *) &imr6, sizeof(struct ipv6_mreq));
@@ -462,7 +476,7 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface *ifp, int proto)
 }
 
 int
-if_leave_vrrp_group(sa_family_t family, int sd, interface *ifp)
+if_leave_vrrp_group(sa_family_t family, int sd, interface_t *ifp)
 {
 	struct ip_mreqn imr;
 	struct ipv6_mreq imr6;
@@ -476,18 +490,14 @@ if_leave_vrrp_group(sa_family_t family, int sd, interface *ifp)
 	if (family == AF_INET) {
 		memset(&imr, 0, sizeof(imr));
 		/* FIXME: change this to use struct ip_mreq */
-		imr.imr_multiaddr.s_addr = htonl(INADDR_VRRP_GROUP);
+		imr.imr_multiaddr = ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr;
 		imr.imr_address.s_addr = IF_ADDR(ifp);
 		imr.imr_ifindex = IF_INDEX(ifp);
 		ret = setsockopt(sd, IPPROTO_IP, IP_DROP_MEMBERSHIP,
 				 (char *) &imr, sizeof (struct ip_mreqn));
 	} else {
 		memset(&imr6, 0, sizeof(imr6));
-		/* rfc5798.5.1.2.2 : destination IPv6 mcast group is
-		 * ff02:0:0:0:0:0:0:12.
-		 */
-		imr6.ipv6mr_multiaddr.s6_addr16[0] = htons(0xff02);
-		imr6.ipv6mr_multiaddr.s6_addr16[7] = htons(0x12);
+		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6 *) &global_data->vrrp_mcast_group6)->sin6_addr;
 		imr6.ipv6mr_interface = IF_INDEX(ifp);
 		ret = setsockopt(sd, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP,
 				 (char *) &imr6, sizeof(struct ipv6_mreq));
@@ -506,7 +516,7 @@ if_leave_vrrp_group(sa_family_t family, int sd, interface *ifp)
 }
 
 int
-if_setsockopt_bindtodevice(int *sd, interface *ifp)
+if_setsockopt_bindtodevice(int *sd, interface_t *ifp)
 {
 	int ret;
 
@@ -601,7 +611,7 @@ if_setsockopt_mcast_hops(sa_family_t family, int *sd)
 }
 
 int
-if_setsockopt_mcast_if(sa_family_t family, int *sd, interface *ifp)
+if_setsockopt_mcast_if(sa_family_t family, int *sd, interface_t *ifp)
 {
 	int ret;
 	unsigned int ifindex;
@@ -622,7 +632,9 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface *ifp)
 	return *sd;
 }
 
-int if_setsockopt_priority(int *sd) {
+int
+if_setsockopt_priority(int *sd)
+{
 	int ret;
 	int priority = 6;
 
@@ -633,6 +645,44 @@ int if_setsockopt_priority(int *sd) {
 	ret = setsockopt(*sd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
 	if (ret < 0) {
 		log_message(LOG_INFO, "cant set SO_PRIORITY IP option. errno=%d (%m)", errno);
+		close(*sd);
+		*sd = -1;
+	}
+
+	return *sd;
+}
+
+int
+if_setsockopt_sndbuf(int *sd, int val)
+{
+	int ret;
+
+	if (*sd < 0)
+		return -1;
+
+	/* sndbuf option */
+        ret = setsockopt(*sd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val));
+        if (ret < 0) {
+		log_message(LOG_INFO, "cant set SO_SNDBUF IP option. errno=%d (%m)", errno);
+		close(*sd);
+		*sd = -1;
+        }
+
+        return *sd;
+}
+
+int
+if_setsockopt_rcvbuf(int *sd, int val)
+{
+	int ret;
+
+	if (*sd < 0)
+		return -1;
+
+	/* rcvbuf option */
+	ret = setsockopt(*sd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val));
+	if (ret < 0) {
+		log_message(LOG_INFO, "cant set SO_RCVBUF IP option. errno=%d (%m)", errno);
 		close(*sd);
 		*sd = -1;
 	}

@@ -31,12 +31,15 @@
   #include "check_snmp.h"
 #endif
 
+/* out-of-order functions declarations */
+static void update_quorum_state(virtual_server_t * vs);
+
 /* Returns the sum of all RS weight in a virtual server. */
 long unsigned
-weigh_live_realservers(virtual_server * vs)
+weigh_live_realservers(virtual_server_t * vs)
 {
 	element e;
-	real_server *svr;
+	real_server_t *svr;
 	long unsigned count = 0;
 
 	for (e = LIST_HEAD(vs->rs); e; ELEMENT_NEXT(e)) {
@@ -49,15 +52,21 @@ weigh_live_realservers(virtual_server * vs)
 
 /* Remove a realserver IPVS rule */
 static int
-clear_service_rs(list vs_group, virtual_server * vs, list l)
+clear_service_rs(list vs_group, virtual_server_t * vs, list l)
 {
 	element e;
-	real_server *rs;
+	real_server_t *rs;
 	char rsip[INET6_ADDRSTRLEN];
+	long unsigned weight_sum;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		rs = ELEMENT_DATA(e);
 		if (ISALIVE(rs)) {
+			log_message(LOG_INFO, "Removing service [%s]:%d from VS [%s]:%d"
+					    , inet_sockaddrtos2(&rs->addr, rsip)
+					    , ntohs(inet_sockaddrport(&rs->addr))
+					    , (vs->vsgname) ? vs->vsgname : inet_sockaddrtos(&vs->addr)
+					    , ntohs(inet_sockaddrport(&vs->addr)));
 			if (!ipvs_cmd(LVS_CMD_DEL_DEST, vs_group, vs, rs))
 				return 0;
 			UNSET_ALIVE(rs);
@@ -84,8 +93,11 @@ clear_service_rs(list vs_group, virtual_server * vs, list l)
 			 * we don't push in a sorry server then, hence the regression
 			 * is intended.
 			 */
-			if (vs->quorum_state == UP &&
-			    weigh_live_realservers(vs) < vs->quorum - vs->hysteresis) {
+			weight_sum = weigh_live_realservers(vs);
+			if (vs->quorum_state == UP && (
+				!weight_sum ||
+				weight_sum < vs->quorum - vs->hysteresis)
+			) {
 				vs->quorum_state = DOWN;
 				if (vs->quorum_down) {
 					log_message(LOG_INFO, "Executing [%s] for VS [%s]:%d"
@@ -106,7 +118,7 @@ clear_service_rs(list vs_group, virtual_server * vs, list l)
 
 /* Remove a virtualserver IPVS rule */
 static int
-clear_service_vs(list vs_group, virtual_server * vs)
+clear_service_vs(list vs_group, virtual_server_t * vs)
 {
 	/* Processing real server queue */
 	if (!LIST_ISEMPTY(vs->rs)) {
@@ -132,7 +144,7 @@ clear_services(void)
 {
 	element e;
 	list l = check_data->vs;
-	virtual_server *vs;
+	virtual_server_t *vs;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vs = ELEMENT_DATA(e);
@@ -144,10 +156,10 @@ clear_services(void)
 
 /* Set a realserver IPVS rules */
 static int
-init_service_rs(virtual_server * vs)
+init_service_rs(virtual_server_t * vs)
 {
 	element e;
-	real_server *rs;
+	real_server_t *rs;
 
 	for (e = LIST_HEAD(vs->rs); e; ELEMENT_NEXT(e)) {
 		rs = ELEMENT_DATA(e);
@@ -156,7 +168,8 @@ init_service_rs(virtual_server * vs)
 		 * later upon healthchecks recovery (if ever).
 		 */
 		if (vs->alpha) {
-			UNSET_ALIVE(rs);
+			if (! rs->reloaded)
+				UNSET_ALIVE(rs);
 			continue;
 		}
 		if (!ISALIVE(rs)) {
@@ -177,7 +190,7 @@ init_service_rs(virtual_server * vs)
 
 /* Set a virtualserver IPVS rules */
 static int
-init_service_vs(virtual_server * vs)
+init_service_vs(virtual_server_t * vs)
 {
 	/* Init the VS root */
 	if (!ISALIVE(vs) || vs->vsgname) {
@@ -189,11 +202,16 @@ init_service_vs(virtual_server * vs)
 
 	/* Processing real server queue */
 	if (!LIST_ISEMPTY(vs->rs)) {
-		if (vs->alpha)
+		if (vs->alpha && ! vs->reloaded)
 			vs->quorum_state = DOWN;
 		if (!init_service_rs(vs))
 			return 0;
 	}
+
+	/* if the service was reloaded, we may have got/lost quorum due to quorum setting changed */
+	if (vs->reloaded)
+		update_quorum_state(vs);
+
 	return 1;
 }
 
@@ -203,7 +221,7 @@ init_services(void)
 {
 	element e;
 	list l = check_data->vs;
-	virtual_server *vs;
+	virtual_server_t *vs;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vs = ELEMENT_DATA(e);
@@ -215,10 +233,10 @@ init_services(void)
 
 /* add or remove _alive_ real servers from a virtual server */
 void
-perform_quorum_state(virtual_server *vs, int add)
+perform_quorum_state(virtual_server_t *vs, int add)
 {
 	element e;
-	real_server *rs;
+	real_server_t *rs;
 
 	if (LIST_ISEMPTY(vs->rs))
 		return;
@@ -239,20 +257,21 @@ perform_quorum_state(virtual_server *vs, int add)
 }
 
 /* set quorum state depending on current weight of real servers */
-void
-update_quorum_state(virtual_server * vs)
+static void
+update_quorum_state(virtual_server_t * vs)
 {
 	char rsip[INET6_ADDRSTRLEN];
+	long unsigned weight_sum = weigh_live_realservers(vs);
 
 	/* If we have just gained quorum, it's time to consider notify_up. */
 	if (vs->quorum_state == DOWN &&
-	    weigh_live_realservers(vs) >= vs->quorum + vs->hysteresis) {
+	    weight_sum >= vs->quorum + vs->hysteresis) {
 		vs->quorum_state = UP;
 		log_message(LOG_INFO, "Gained quorum %lu+%lu=%lu <= %u for VS [%s]:%d"
 				    , vs->quorum
 				    , vs->hysteresis
 				    , vs->quorum + vs->hysteresis
-				    , weigh_live_realservers(vs)
+				    , weight_sum
 				    , (vs->vsgname) ? vs->vsgname : inet_sockaddrtos(&vs->addr)
 				    , ntohs(inet_sockaddrport(&vs->addr)));
 		if (vs->s_svr && ISALIVE(vs->s_svr)) {
@@ -284,14 +303,16 @@ update_quorum_state(virtual_server * vs)
 	/* If we have just lost quorum for the VS, we need to consider
 	 * VS notify_down and sorry_server cases
 	 */
-	if (vs->quorum_state == UP &&
-	    weigh_live_realservers(vs) < vs->quorum - vs->hysteresis) {
+	if (vs->quorum_state == UP && (
+		!weight_sum ||
+	    weight_sum < vs->quorum - vs->hysteresis)
+	) {
 		vs->quorum_state = DOWN;
 		log_message(LOG_INFO, "Lost quorum %lu-%lu=%lu > %u for VS [%s]:%d"
 				    , vs->quorum
 				    , vs->hysteresis
 				    , vs->quorum - vs->hysteresis
-				    , weigh_live_realservers(vs)
+				    , weight_sum
 				    , (vs->vsgname) ? vs->vsgname : inet_sockaddrtos(&vs->addr)
 				    , ntohs(inet_sockaddrport(&vs->addr)));
 		if (vs->quorum_down) {
@@ -324,7 +345,7 @@ update_quorum_state(virtual_server * vs)
 
 /* manipulate add/remove rs according to alive state */
 void
-perform_svr_state(int alive, virtual_server * vs, real_server * rs)
+perform_svr_state(int alive, virtual_server_t * vs, real_server_t * rs)
 {
 	char rsip[INET6_ADDRSTRLEN];
 
@@ -399,7 +420,7 @@ perform_svr_state(int alive, virtual_server * vs, real_server * rs)
 
 /* Store new weight in real_server struct and then update kernel. */
 void
-update_svr_wgt(int weight, virtual_server * vs, real_server * rs)
+update_svr_wgt(int weight, virtual_server_t * vs, real_server_t * rs)
 {
 	char rsip[INET6_ADDRSTRLEN];
 
@@ -428,7 +449,7 @@ update_svr_wgt(int weight, virtual_server * vs, real_server * rs)
 
 /* Test if realserver is marked UP for a specific checker */
 int
-svr_checker_up(checker_id_t cid, real_server *rs)
+svr_checker_up(checker_id_t cid, real_server_t *rs)
 {
 	element e;
 	list l = rs->failed_checkers;
@@ -450,7 +471,7 @@ svr_checker_up(checker_id_t cid, real_server *rs)
 
 /* Update checker's state */
 void
-update_svr_checker_state(int alive, checker_id_t cid, virtual_server *vs, real_server *rs)
+update_svr_checker_state(int alive, checker_id_t cid, virtual_server_t *vs, real_server_t *rs)
 {
 	element e;
 	list l = rs->failed_checkers;
@@ -487,10 +508,10 @@ update_svr_checker_state(int alive, checker_id_t cid, virtual_server *vs, real_s
 
 /* Check if a vsg entry is in new data */
 static int
-vsge_exist(virtual_server_group_entry *vsg_entry, list l)
+vsge_exist(virtual_server_group_entry_t *vsg_entry, list l)
 {
 	element e;
-	virtual_server_group_entry *vsge;
+	virtual_server_group_entry_t *vsge;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vsge = ELEMENT_DATA(e);
@@ -510,9 +531,9 @@ vsge_exist(virtual_server_group_entry *vsg_entry, list l)
 
 /* Clear the diff vsge of old group */
 static int
-clear_diff_vsge(list old, list new, virtual_server * old_vs)
+clear_diff_vsge(list old, list new, virtual_server_t * old_vs)
 {
-	virtual_server_group_entry *vsge;
+	virtual_server_group_entry_t *vsge;
 	element e;
 
 	for (e = LIST_HEAD(old); e; ELEMENT_NEXT(e)) {
@@ -535,10 +556,10 @@ clear_diff_vsge(list old, list new, virtual_server * old_vs)
 
 /* Clear the diff vsg of the old vs */
 static int
-clear_diff_vsg(virtual_server * old_vs)
+clear_diff_vsg(virtual_server_t * old_vs)
 {
-	virtual_server_group *old;
-	virtual_server_group *new;
+	virtual_server_group_t *old;
+	virtual_server_group_t *new;
 
 	/* Fetch group */
 	old = ipvs_get_group_by_name(old_vs->vsgname, old_check_data->vs_group);
@@ -555,17 +576,17 @@ clear_diff_vsg(virtual_server * old_vs)
 	return 1;
 }
 
-/* Check if a vs exist in new data */
-static int
-vs_exist(virtual_server * old_vs)
+/* Check if a vs exist in new data and returns pointer to it */
+static virtual_server_t*
+vs_exist(virtual_server_t * old_vs)
 {
 	element e;
 	list l = check_data->vs;
-	virtual_server *vs;
-	virtual_server_group *vsg;
+	virtual_server_t *vs;
+	virtual_server_group_t *vsg;
 
 	if (LIST_ISEMPTY(l))
-		return 0;
+		return NULL;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vs = ELEMENT_DATA(e);
@@ -575,29 +596,29 @@ vs_exist(virtual_server * old_vs)
 				vsg = ipvs_get_group_by_name(old_vs->vsgname,
 							    check_data->vs_group);
 				if (!vsg)
-					return 0;
+					return NULL;
 				else
 					if (!clear_diff_vsg(old_vs))
-						return 0;	
+						return NULL;
 			}
 
 			/*
 			 * Exist so set alive.
 			 */
 			SET_ALIVE(vs);
-			return 1;
+			return vs;
 		}
 	}
 
-	return 0;
+	return NULL;
 }
 
 /* Check if rs is in new vs data */
 static int
-rs_exist(real_server * old_rs, list l)
+rs_exist(real_server_t * old_rs, list l)
 {
 	element e;
-	real_server *rs;
+	real_server_t *rs;
 
 	if (LIST_ISEMPTY(l))
 		return 0;
@@ -622,11 +643,11 @@ rs_exist(real_server * old_rs, list l)
 
 /* get rs list for a specific vs */
 static list
-get_rs_list(virtual_server * vs)
+get_rs_list(virtual_server_t * vs)
 {
 	element e;
 	list l = check_data->vs;
-	virtual_server *vsvr;
+	virtual_server_t *vsvr;
 
 	if (LIST_ISEMPTY(l))
 		return NULL;
@@ -643,18 +664,19 @@ get_rs_list(virtual_server * vs)
 
 /* Clear the diff rs of the old vs */
 static int
-clear_diff_rs(virtual_server * old_vs)
+clear_diff_rs(list old_vs_group, virtual_server_t * old_vs)
 {
 	element e;
 	list l = old_vs->rs;
 	list new = get_rs_list(old_vs);
-	real_server *rs;
-	char rsip[INET6_ADDRSTRLEN];
+	real_server_t *rs;
 
 	/* If old vs didn't own rs then nothing return */
 	if (LIST_ISEMPTY(l))
 		return 1;
 
+	/* remove RS from old vs which are not found in new vs */
+	list rs_to_remove = alloc_list (NULL, NULL);
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		rs = ELEMENT_DATA(e);
 		if (!rs_exist(rs, new)) {
@@ -662,18 +684,14 @@ clear_diff_rs(virtual_server * old_vs)
 			log_message(LOG_INFO, "service [%s]:%d no longer exist"
 					    , inet_sockaddrtos(&rs->addr)
 					    , ntohs(inet_sockaddrport(&rs->addr)));
-			log_message(LOG_INFO, "Removing service [%s]:%d from VS [%s]:%d"
-					    , inet_sockaddrtos2(&rs->addr, rsip)
-					    , ntohs(inet_sockaddrport(&rs->addr))
-					    , (old_vs->vsgname) ? old_vs->vsgname : inet_sockaddrtos(&old_vs->addr)
-					    , ntohs(inet_sockaddrport(&old_vs->addr)));
 			rs->inhibit = 0;
-			if (!ipvs_cmd(LVS_CMD_DEL_DEST, check_data->vs_group, old_vs, rs))
-				return 0;
+			list_add (rs_to_remove, rs);
 		}
 	}
+	int ret = clear_service_rs (old_vs_group, old_vs, rs_to_remove);
+	free_list (rs_to_remove);
 
-	return 1;
+	return ret;
 }
 
 /* When reloading configuration, remove negative diff entries */
@@ -682,7 +700,7 @@ clear_diff_services(void)
 {
 	element e;
 	list l = old_check_data->vs;
-	virtual_server *vs;
+	virtual_server_t *vs;
 
 	/* If old config didn't own vs then nothing return */
 	if (LIST_ISEMPTY(l))
@@ -710,7 +728,10 @@ clear_diff_services(void)
 				return 0;
 		} else {
 			/* If vs exist, perform rs pool diff */
-			if (!clear_diff_rs(vs))
+			/* omega = 0 must not prevent the notifiers from being called,
+			   because the VS still exists in new configuration */
+			vs->omega = 1;
+			if (!clear_diff_rs(old_check_data->vs_group, vs))
 				return 0;
 			if (vs->s_svr)
 				if (ISALIVE(vs->s_svr))
@@ -723,4 +744,53 @@ clear_diff_services(void)
 	}
 
 	return 1;
+}
+
+/* When reloading configuration, copy still alive RS/VS alive/set attributes into corresponding new config items */
+int
+copy_srv_states (void)
+{
+	element e;
+	list l = old_check_data->vs;
+	virtual_server_t *old_vs, *new_vs;
+
+	/* If old config didn't own vs then nothing return */
+	if (LIST_ISEMPTY(l))
+		return 1;
+
+	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
+		old_vs = ELEMENT_DATA(e);
+		new_vs = vs_exist (old_vs);
+		if (new_vs) {
+			/* copy quorum_state field of VS */
+			new_vs->quorum_state = old_vs->quorum_state;
+			new_vs->reloaded = 1;
+
+			list old_rsl = old_vs->rs;
+			list new_rsl = new_vs->rs;
+			if (LIST_ISEMPTY(old_rsl) || LIST_ISEMPTY (new_rsl))
+				continue;
+			element oe, ne;
+			real_server_t *old_rs, *new_rs;
+			/* iterate over equal rs */
+			for (oe = LIST_HEAD(old_rsl); oe; ELEMENT_NEXT (oe)) {
+				old_rs = ELEMENT_DATA(oe);
+				for (ne = LIST_HEAD(new_rsl); ne; ELEMENT_NEXT(ne)) {
+					new_rs = ELEMENT_DATA(ne);
+					if (RS_ISEQ (old_rs, new_rs)) {
+						/* copy alive, set fields of RS */
+						new_rs->alive = old_rs->alive;
+						new_rs->set = old_rs->set;
+						new_rs->reloaded = 1;
+						if (new_rs->alive) {
+							/* clear failed_checkers list */
+							free_list_elements(new_rs->failed_checkers);
+						}
+						break;
+					}
+				}
+			}
+		}
+	}
+	return 0;
 }
