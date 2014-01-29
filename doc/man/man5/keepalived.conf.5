@@ -36,13 +36,11 @@ and
         }
  # From: from address that will be in header
  notification_email_from admin@example.com 
- smtp_server 127.0.0.1        # IP
- smtp_connect_timeout 30      # integer, seconds
- router_id my_hostname        # string identifying the machine,
-                              # (doesn't have to be hostname).
- vrrp_mcast_group4 224.0.0.18 # optional, default 224.0.0.18
- vrrp_mcast_group6 ff02::12   # optional, default ff02::12
- enable_traps                 # enable SNMP traps
+ smtp_server 127.0.0.1   # IP
+ smtp_connect_timeout 30 # integer, seconds
+ router_id my_hostname   # string identifying the machine,
+                         # (doesn't have to be hostname).
+ enable_traps            # enable SNMP traps
  }
 
 
@@ -135,10 +133,6 @@ which will transition together on any state change.
     # Use VRRP Virtual MAC.
     use_vmac <VMAC_INTERFACE>
 
-    # Send/Recv VRRP messages from base interface instead of
-    # VMAC interface
-    vmac_xmit_base
-
     # Ignore VRRP interface faults (default unset)
     dont_track_primary
 
@@ -152,23 +146,11 @@ which will transition together on any state change.
 
     # default IP for binding vrrpd is the primary IP 
     # on interface. If you want to hide location of vrrpd, 
-    # use this IP as src_addr for multicast or unicast vrrp
-    # packets. (since it's multicast, vrrpd will get the reply 
+    # use this IP as src_addr for multicast vrrp packets.
+    # (since it's multicast, vrrpd will get the reply 
     # packet no matter what src_addr is used).
     # optional
     mcast_src_ip <IPADDR> 
-    unicast_src_ip <IPADDR> 
-
-    # Do not send VRRP adverts over VRRP multicast group.
-    # Instead it sends adverts to the following list of
-    # ip addresses using unicast design fashion. It can
-    # be cool to use VRRP FSM and features in a networking
-    # environement where multicast is not supported !
-    # IP Addresses specified can IPv4 as well as IPv6
-    unicast_peer {
-      <IPADDR>
-      ...
-    }
 
     # Do not send VRRP adverts over VRRP multicast group.
     # Instead it sends adverts to the following list of
@@ -207,7 +189,6 @@ which will transition together on any state change.
         # should be the same for all machines.
         # Only the first eight (8) characters are used.
         auth_pass 1234
-    }
 
     #addresses add|del on change to MASTER, to BACKUP.
     #With the same entries on other machines,

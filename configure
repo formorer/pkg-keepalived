@@ -3808,53 +3808,6 @@ if ${ac_cv_lib_crypto_MD5_Init+:} false; then :
   $as_echo_n "(cached) " >&6
 else
   ac_check_lib_save_LIBS=$LIBS
-LIBS="-lcrypt  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char crypt ();
-int
-main ()
-{
-return crypt ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_lib_crypt_crypt=yes
-else
-  ac_cv_lib_crypt_crypt=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_crypto_MD5_Init" >&5
-$as_echo "$ac_cv_lib_crypto_MD5_Init" >&6; }
-if test "x$ac_cv_lib_crypto_MD5_Init" = xyes; then :
-  cat >>confdefs.h <<_ACEOF
-#define HAVE_LIBCRYPT 1
-_ACEOF
-
-  LIBS="-lcrypt $LIBS"
-
-else
-  as_fn_error $? "OpenSSL libraries are required" "$LINENO" 5
-fi
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for SSL_CTX_new in -lssl" >&5
-$as_echo_n "checking for SSL_CTX_new in -lssl... " >&6; }
-if ${ac_cv_lib_ssl_SSL_CTX_new+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
 LIBS="-lcrypto  $LIBS"
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
@@ -3883,9 +3836,9 @@ rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
 LIBS=$ac_check_lib_save_LIBS
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_ssl_SSL_CTX_new" >&5
-$as_echo "$ac_cv_lib_ssl_SSL_CTX_new" >&6; }
-if test "x$ac_cv_lib_ssl_SSL_CTX_new" = xyes; then :
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_crypto_MD5_Init" >&5
+$as_echo "$ac_cv_lib_crypto_MD5_Init" >&6; }
+if test "x$ac_cv_lib_crypto_MD5_Init" = xyes; then :
   cat >>confdefs.h <<_ACEOF
 #define HAVE_LIBCRYPTO 1
 _ACEOF
@@ -3896,14 +3849,13 @@ else
   as_fn_error $? "OpenSSL libraries are required" "$LINENO" 5
 fi
 
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_alloc in -lnl-3" >&5
-$as_echo_n "checking for nl_socket_alloc in -lnl-3... " >&6; }
-if ${ac_cv_lib_nl_3_nl_socket_alloc+:} false; then :
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for SSL_CTX_new in -lssl" >&5
+$as_echo_n "checking for SSL_CTX_new in -lssl... " >&6; }
+if ${ac_cv_lib_ssl_SSL_CTX_new+:} false; then :
   $as_echo_n "(cached) " >&6
 else
   ac_check_lib_save_LIBS=$LIBS
-LIBS="-lnl-3  $LIBS"
+LIBS="-lssl  $LIBS"
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
@@ -3913,80 +3865,38 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 #ifdef __cplusplus
 extern "C"
 #endif
-char nl_socket_alloc ();
+char SSL_CTX_new ();
 int
 main ()
 {
-return nl_socket_alloc ();
+return SSL_CTX_new ();
   ;
   return 0;
 }
 _ACEOF
 if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_lib_nl_3_nl_socket_alloc=yes
+  ac_cv_lib_ssl_SSL_CTX_new=yes
 else
-  ac_cv_lib_nl_3_nl_socket_alloc=no
+  ac_cv_lib_ssl_SSL_CTX_new=no
 fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
 LIBS=$ac_check_lib_save_LIBS
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nl_3_nl_socket_alloc" >&5
-$as_echo "$ac_cv_lib_nl_3_nl_socket_alloc" >&6; }
-if test "x$ac_cv_lib_nl_3_nl_socket_alloc" = xyes; then :
-
-    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for genl_connect in -lnl-genl-3" >&5
-$as_echo_n "checking for genl_connect in -lnl-genl-3... " >&6; }
-if ${ac_cv_lib_nl_genl_3_genl_connect+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lnl-genl-3  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char genl_connect ();
-int
-main ()
-{
-return genl_connect ();
-  ;
-  return 0;
-}
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_ssl_SSL_CTX_new" >&5
+$as_echo "$ac_cv_lib_ssl_SSL_CTX_new" >&6; }
+if test "x$ac_cv_lib_ssl_SSL_CTX_new" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBSSL 1
 _ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_lib_nl_genl_3_genl_connect=yes
-else
-  ac_cv_lib_nl_genl_3_genl_connect=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nl_genl_3_genl_connect" >&5
-$as_echo "$ac_cv_lib_nl_genl_3_genl_connect" >&6; }
-if test "x$ac_cv_lib_nl_genl_3_genl_connect" = xyes; then :
 
-        USE_NL="LIBIPVS_USE_NL"
-        CFLAGS="$CFLAGS $(pkg-config --cflags libnl-genl-3.0)"
-	LIBS="$LIBS $(pkg-config --libs libnl-genl-3.0)"
+  LIBS="-lssl $LIBS"
 
 else
-
-        as_fn_error $? "libnl-3 is installed but not libnl-gen-3. Please, install libnl-gen-3." "$LINENO" 5
-
+  as_fn_error $? "OpenSSL libraries are required" "$LINENO" 5
 fi
 
-
-else
-
-    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_modify_cb in -lnl" >&5
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_modify_cb in -lnl" >&5
 $as_echo_n "checking for nl_socket_modify_cb in -lnl... " >&6; }
 if ${ac_cv_lib_nl_nl_socket_modify_cb+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -4024,18 +3934,14 @@ fi
 $as_echo "$ac_cv_lib_nl_nl_socket_modify_cb" >&6; }
 if test "x$ac_cv_lib_nl_nl_socket_modify_cb" = xyes; then :
 
-        USE_NL="LIBIPVS_USE_NL"
-        CFLAGS="$CFLAGS -DFALLBACK_LIBNL1"
-        LIBS="$LIBS $(pkg-config --libs libnl-1)"
+    USE_NL="LIBIPVS_USE_NL"
+    LIBS="$LIBS -lnl"
 
 else
 
-        USE_NL="LIBIPVS_DONTUSE_NL"
-        { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: keepalived will be built without libnl support." >&5
+    USE_NL="LIBIPVS_DONTUSE_NL"
+    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: keepalived will be built without libnl support." >&5
 $as_echo "$as_me: WARNING: keepalived will be built without libnl support." >&2;}
-
-fi
-
 
 fi
 
