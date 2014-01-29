@@ -198,6 +198,16 @@ inet_stosockaddr(char *ip, char *port, struct sockaddr_storage *addr)
 	return 0;
 }
 
+/* IPv4 to sockaddr_storage */
+int
+inet_ip4tosockaddr(uint32_t addr_ip, struct sockaddr_storage *addr)
+{
+	struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
+	addr4->sin_family = AF_INET;
+	addr4->sin_addr.s_addr = addr_ip;
+	return 0;
+}
+
 /* IP network to string representation */
 char *
 inet_sockaddrtos2(struct sockaddr_storage *addr, char *addr_str)
@@ -342,4 +352,20 @@ get_local_name(void)
 		return NULL;
 
 	return host->h_name;
+}
+
+/* String compare with NULL string handling */
+int
+string_equal(const char *str1, const char *str2)
+{
+	if (!str1 && !str2)
+		return 1;
+	if ((!str1 && str2) || (str1 && !str2))
+		return 0;
+	for (; *str1 == *str2; str1++, str2++) {
+		if (*str1 == 0 || *str2 == 0)
+			break;
+	}
+
+	return (*str1 == 0 && *str2 == 0);
 }
