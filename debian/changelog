@@ -1,3 +1,9 @@
+keepalived (1:1.2.12-1) unstable; urgency=low
+
+  * Imported Upstream version 1.2.12
+
+ -- Dmitry Alenichev <d.alenichev@rambler-co.ru>  Fri, 11 Apr 2014 16:14:23 +0300
+
 keepalived (1:1.2.9-1) unstable; urgency=low
 
   * [8cd7bad] Imported Upstream version 1.2.9
