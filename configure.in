@@ -31,6 +31,8 @@ AC_ARG_WITH(kernel-dir,
 AC_ARG_WITH(kernel-version,
   [  --with-kernel-version=VER forced value for linux kernel version (VER=2.4|2.6)],
   [kernelversion="$withval"], [kernelversion=""])
+AC_ARG_ENABLE(fwmark,
+  [  --disable-fwmark        compile without SO_MARK support])
 AC_ARG_ENABLE(snmp,
   [  --enable-snmp           compile with SNMP support])
 AC_ARG_ENABLE(sha1,
@@ -55,14 +57,30 @@ dnl ----[ Checks for libraries ]----
 AC_CHECK_LIB(crypt, crypt,,AC_MSG_ERROR([crypt() function is required]))
 AC_CHECK_LIB(crypto, MD5_Init,,AC_MSG_ERROR([OpenSSL libraries are required]))
 AC_CHECK_LIB(ssl, SSL_CTX_new,,AC_MSG_ERROR([OpenSSL libraries are required]))
-AC_CHECK_LIB(nl, nl_socket_modify_cb,
+
+AC_CHECK_LIB(nl-3, nl_socket_alloc,
   [
-    USE_NL="LIBIPVS_USE_NL"
-    LIBS="$LIBS -lnl"
+    AC_CHECK_LIB(nl-genl-3, genl_connect,
+      [
+        USE_NL="LIBIPVS_USE_NL"
+        CFLAGS="$CFLAGS $(pkg-config --cflags libnl-genl-3.0)"
+	LIBS="$LIBS $(pkg-config --libs libnl-genl-3.0)"
+      ],
+      [
+        AC_MSG_ERROR([libnl-3 is installed but not libnl-gen-3. Please, install libnl-gen-3.])
+      ])
   ],
   [
-    USE_NL="LIBIPVS_DONTUSE_NL"
-    AC_MSG_WARN([keepalived will be built without libnl support.])
+    AC_CHECK_LIB(nl, nl_socket_modify_cb,
+      [
+        USE_NL="LIBIPVS_USE_NL"
+        CFLAGS="$CFLAGS -DFALLBACK_LIBNL1"
+        LIBS="$LIBS $(pkg-config --libs libnl-1)"
+      ],
+      [                                                                                           
+        USE_NL="LIBIPVS_DONTUSE_NL"
+        AC_MSG_WARN([keepalived will be built without libnl support.])
+      ])
   ])
 
 dnl ----[ Kernel version check ]----
@@ -246,6 +264,19 @@ fi
 
 AC_SUBST(SHA1_SUPPORT)
 
+dnl ----[ check for SO_MARK support ]----
+if test "${enable_fwmark}" = "no"; then
+  SO_MARK_SUPPORT="_WITHOUT_SO_MARK_"
+else
+  AC_CHECK_DECL(SO_MARK,,AC_MSG_ERROR([No SO_MARK declaration in headers]),
+    #include <sys/socket.h>
+  )
+  SO_MARK_SUPPORT="_WITH_SO_MARK_"
+fi
+
+AC_SUBST(SO_MARK_SUPPORT)
+
+
 dnl ----[ Debug or not ? ]----
 if test "${enable_debug}" = "yes"; then
   DFLAGS="-D_DEBUG_"
@@ -320,6 +351,12 @@ if test "${IPVS_SUPPORT}" = "_WITH_LVS_"; then
 else
   echo "Use IPVS Framework       : No"
   echo "IPVS sync daemon support : No"
+fi
+
+if test "${SO_MARK_SUPPORT}" = "_WITH_SO_MARK_"; then
+  echo "fwmark socket support    : Yes"
+else
+  echo "fwmark socket support    : No"
 fi
 
 if test "${VRRP_SUPPORT}" = "_WITH_VRRP_"; then

@@ -76,6 +76,7 @@ vty_out(vty_t *vty, const char *format, ...)
 	int len = 0;
 	int size = 1024;
 	char buf[1024];
+	char *tmp = NULL;
 	char *p = NULL;
 
 	if (vty_shell (vty)) {
@@ -96,9 +97,12 @@ vty_out(vty_t *vty, const char *format, ...)
 			else
 				size = size * 2;
 
-			p = REALLOC(p, size);
-			if (! p)
+			tmp = REALLOC(p, size);
+			if (! tmp) {
+				FREE(p);
 				return -1;
+			}
+			p = tmp;
 
 			va_start(args, format);
 			len = vsnprintf(p, size, format, args);
@@ -1600,7 +1604,7 @@ vty_timeout(thread_t *thread)
 }
 
 /* Read up configuration file from file_name. */
-static void
+static int
 vty_read_file(FILE *confp)
 {
 	int ret;
@@ -1617,19 +1621,20 @@ vty_read_file(FILE *confp)
 	if (!((ret == CMD_SUCCESS) || (ret == CMD_ERR_NOTHING_TODO))) {
 		switch (ret) {
 		case CMD_ERR_AMBIGUOUS:
-			fprintf(stderr, "Ambiguous command.\n");
+			log_message(LOG_ERR, "Ambiguous command.\n");
 			break;
 		case CMD_ERR_NO_MATCH:
-			fprintf(stderr, "There is no such command.\n");
+			log_message(LOG_ERR, "There is no such command.\n");
 			break;
 		}
-		fprintf(stderr, "Error occured during reading below line.\n%s\n"
-			      , vty->buf);
+		log_message(LOG_ERR, "Error occured during reading below line.\n%s\n"
+				   , vty->buf);
 		vty_close(vty);
-		exit(1);
+		return -1;
 	}
 
 	vty_close(vty);
+	return 0;
 }
 
 static FILE *
@@ -1688,7 +1693,6 @@ vty_use_backup_config(char *fullpath)
 		unlink(fullpath_tmp);
 		FREE(fullpath_sav);
 		FREE(fullpath_tmp);
-		close(sav);
 		return NULL;
 	}
   
@@ -1703,7 +1707,7 @@ vty_use_backup_config(char *fullpath)
 }
 
 /* Read up configuration file from file_name. */
-void
+int
 vty_read_config(char *config_file, char *config_default_dir)
 {
 	char cwd[MAXPATHLEN];
@@ -1717,9 +1721,9 @@ vty_read_config(char *config_file, char *config_default_dir)
 		if (!IS_DIRECTORY_SEP(config_file[0])) {
 			retpath = getcwd(cwd, MAXPATHLEN);
 			if (!retpath) {
-				fprintf(stderr, "%s: failed to get current working directory: %s\n"
-					      , __func__, strerror(errno));
-				exit(1);
+				log_message(LOG_ERR, "%s: failed to get current working directory: %s\n"
+						   , __func__, strerror(errno));
+				return -1;
 			}
 			tmp = MALLOC(strlen(cwd) + strlen(config_file) + 2);
 			sprintf(tmp, "%s/%s", cwd, config_file);
@@ -1731,32 +1735,33 @@ vty_read_config(char *config_file, char *config_default_dir)
 		confp = fopen(fullpath, "r");
 
 		if (confp == NULL) {
-			fprintf(stderr, "%s: failed to open configuration file %s: %s\n"
-				      , __func__, fullpath, strerror (errno));
+			log_message(LOG_ERR, "%s: failed to open configuration file %s: %s\n"
+					   , __func__, fullpath, strerror (errno));
           
 			confp = vty_use_backup_config(fullpath);
 			if (confp) {
-				fprintf(stderr, "WARNING: using backup configuration file!\n");
+				log_message(LOG_ERR, "WARNING: using backup configuration file!\n");
 			} else {
-				fprintf(stderr, "can't open configuration file [%s]\n"
-					      , config_file);
-				exit(1);
+				log_message(LOG_ERR, "can't open configuration file [%s]\n"
+						   , config_file);
+				FREE_PTR(tmp);
+				return -1;
 			}
 		}
 	} else {
 		confp = fopen(config_default_dir, "r");
 		if (confp == NULL) {
-			fprintf(stderr, "%s: failed to open configuration file %s: %s\n"
-				      , __func__, config_default_dir, strerror(errno));
+			log_message(LOG_ERR, "%s: failed to open configuration file %s: %s\n"
+					   , __func__, config_default_dir, strerror(errno));
           
 			confp = vty_use_backup_config(config_default_dir);
 			if (confp) {
-				fprintf(stderr, "WARNING: using backup configuration file!\n");
+				log_message(LOG_ERR, "WARNING: using backup configuration file!\n");
 				fullpath = config_default_dir;
 			} else {
-				fprintf(stderr, "can't open configuration file [%s]\n"
-					      , config_default_dir);
-				exit (1);
+				log_message(LOG_ERR, "can't open configuration file [%s]\n"
+						   , config_default_dir);
+				return -1;
 			}
 		} else {
 			fullpath = config_default_dir;
@@ -1764,12 +1769,10 @@ vty_read_config(char *config_file, char *config_default_dir)
 	}
 
 	vty_read_file(confp);
-
 	fclose(confp);
-
 	host_config_set(fullpath);
-  
 	FREE_PTR(tmp);
+	return 0;
 }
 
 int
@@ -2038,8 +2041,7 @@ vty_config_write(vty_t *vty)
 	return CMD_SUCCESS;
 }
 
-cmd_node_t vty_node =
-{
+cmd_node_t vty_node = {
 	VTY_NODE,
 	"%s(config-line)# ",
 	1,

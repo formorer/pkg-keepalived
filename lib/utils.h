@@ -52,8 +52,10 @@ extern char *inet_ntoa2(uint32_t, char *);
 extern uint8_t inet_stom(char *);
 extern uint8_t inet_stor(char *);
 extern int inet_stosockaddr(char *, char *, struct sockaddr_storage *);
+extern int inet_ip4tosockaddr(uint32_t, struct sockaddr_storage *);
 extern char *inet_sockaddrtos(struct sockaddr_storage *);
 extern char *inet_sockaddrtos2(struct sockaddr_storage *, char *);
+extern char *inet_sockaddrtopair(struct sockaddr_storage *addr);
 extern uint16_t inet_sockaddrport(struct sockaddr_storage *);
 extern uint32_t inet_sockaddrip4(struct sockaddr_storage *);
 extern int inet_sockaddrip6(struct sockaddr_storage *, struct in6_addr *);
@@ -61,5 +63,6 @@ extern int inet_ston(const char *, uint32_t *);
 uint32_t inet_broadcast(uint32_t, uint32_t);
 uint32_t inet_cidrtomask(uint8_t);
 extern char *get_local_name(void);
+extern int string_equal(const char *, const char *);
 
 #endif

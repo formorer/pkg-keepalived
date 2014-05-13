@@ -166,7 +166,7 @@ vrrp_in_chk_ipsecah(vrrp_t * vrrp, char *buffer)
 	 * then compute a ICV to compare with the one present in AH pkt.
 	 * alloc a temp memory space to stock the ip mutable fields
 	 */
-	digest = (unsigned char *) MALLOC(16 * sizeof (unsigned char *));
+	digest = (unsigned char *) MALLOC(16); /*MD5_DIGEST_LENGTH */
 
 	/* zero the ip mutable fields */
 	ip->tos = 0;
@@ -247,7 +247,7 @@ vrrp_in_chk(vrrp_t * vrrp, char *buffer)
 		vips = (unsigned char *) ((char *) hd + sizeof(vrrphdr_t));
 	
 		/* MUST verify that the IP TTL is 255 */
-		if (ip->ttl != VRRP_IP_TTL) {
+		if (LIST_ISEMPTY(vrrp->unicast_peer) && ip->ttl != VRRP_IP_TTL) {
 			log_message(LOG_INFO, "invalid ttl. %d and expect %d", ip->ttl,
 			       VRRP_IP_TTL);
 			return VRRP_PACKET_KO;
@@ -463,7 +463,7 @@ vrrp_build_ipsecah(vrrp_t * vrrp, char *buffer, int buflen)
 	   => No padding needed.
 	   -- rfc2402.3.3.3.1.1.1 & rfc2401.5
 	 */
-	digest = (unsigned char *) MALLOC(16 * sizeof (unsigned char *));
+	digest = (unsigned char *) MALLOC(16); /*MD5_DIGEST_LENGTH */
 	hmac_md5((unsigned char *) buffer, buflen, vrrp->auth_data, sizeof (vrrp->auth_data)
 		 , digest);
 	memcpy(ah->auth_data, digest, HMAC_MD5_TRUNC);
@@ -538,7 +538,8 @@ vrrp_build_pkt(vrrp_t * vrrp, int prio, struct sockaddr_storage *addr)
 
 	if (vrrp->family == AF_INET) {
 		/* build the ip header */
-		dst = (addr) ? inet_sockaddrip4(addr) : htonl(INADDR_VRRP_GROUP);
+		dst = (addr) ? inet_sockaddrip4(addr) : 
+			       ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr.s_addr;
 		vrrp_build_ip4(vrrp, bufptr, len, dst);
 
 		/* build the vrrp header */
@@ -570,10 +571,14 @@ vrrp_build_pkt(vrrp_t * vrrp, int prio, struct sockaddr_storage *addr)
 static int
 vrrp_send_pkt(vrrp_t * vrrp, struct sockaddr_storage *addr)
 {
+	struct sockaddr_storage *src = &vrrp->saddr;
 	struct sockaddr_in6 dst6;
+	struct in6_pktinfo *pkt;
 	struct sockaddr_in dst4;
 	struct msghdr msg;
+	struct cmsghdr *cmsg;
 	struct iovec iov;
+	char cbuf[256];
 
 	/* Build the message data */
 	memset(&msg, 0, sizeof(msg));
@@ -582,25 +587,36 @@ vrrp_send_pkt(vrrp_t * vrrp, struct sockaddr_storage *addr)
 	iov.iov_base = VRRP_SEND_BUFFER(vrrp);
 	iov.iov_len = VRRP_SEND_BUFFER_SIZE(vrrp);
 
-	/* Sending path */
-	if (vrrp->family == AF_INET) {
+	/* Unicast sending path */
+	if (addr && addr->ss_family == AF_INET) {
+		msg.msg_name = (struct sockaddr_in *) addr;
+		msg.msg_namelen = sizeof(struct sockaddr_in);
+	} else if (addr && addr->ss_family == AF_INET6) {
+		msg.msg_name = (struct sockaddr_in6 *) addr;
+		msg.msg_namelen = sizeof(struct sockaddr_in6);
+		if (src->ss_family == AF_INET6) {
+			msg.msg_control = cbuf;
+			msg.msg_controllen = CMSG_SPACE(sizeof(struct in6_pktinfo));
+
+			cmsg = CMSG_FIRSTHDR(&msg);
+			cmsg->cmsg_level = IPPROTO_IPV6;
+			cmsg->cmsg_type = IPV6_PKTINFO;
+			cmsg->cmsg_len = CMSG_LEN(sizeof(struct in6_pktinfo));
+
+			pkt = (struct in6_pktinfo *) CMSG_DATA(cmsg);
+			memset(pkt, 0, sizeof(struct in6_pktinfo));
+			pkt->ipi6_addr = ((struct sockaddr_in6 *) src)->sin6_addr;
+		}
+	} else if (vrrp->family == AF_INET) { /* Multicast sending path */
 		memset(&dst4, 0, sizeof(dst4));
 		dst4.sin_family = AF_INET;
-		dst4.sin_addr.s_addr = (addr) ? inet_sockaddrip4(addr) :
-						htonl(INADDR_VRRP_GROUP);
+		dst4.sin_addr = ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr;
 		msg.msg_name = &dst4;
 		msg.msg_namelen = sizeof(dst4);
 	} else if (vrrp->family == AF_INET6) {
 		memset(&dst6, 0, sizeof(dst6));
 		dst6.sin6_family = AF_INET6;
-		dst6.sin6_port = htons(IPPROTO_VRRP);
-		if (addr) {
-			inet_sockaddrip6(addr, &dst6.sin6_addr);
-		} else {
-			dst6.sin6_addr.s6_addr16[0] = htons(0xff02);
-			dst6.sin6_addr.s6_addr16[7] = htons(0x12);
-		}
-
+		dst6.sin6_addr = ((struct sockaddr_in6 *) &global_data->vrrp_mcast_group6)->sin6_addr;
 		msg.msg_name = &dst6;
 		msg.msg_namelen = sizeof(dst6);
 	}
@@ -752,6 +768,11 @@ vrrp_state_become_master(vrrp_t * vrrp)
 	/* remotes neighbour update */
 	vrrp_send_link_update(vrrp);
 
+	/* set refresh timer */
+	if (vrrp->garp_refresh) {
+		vrrp->garp_refresh_timer = timer_add_long(time_now, vrrp->garp_refresh);
+	}
+
 	/* Check if notify is needed */
 	notify_instance_exec(vrrp, VRRP_STATE_MAST);
 
@@ -766,19 +787,9 @@ vrrp_state_become_master(vrrp_t * vrrp)
 #endif
 }
 
-/* If the preempt_delay is set we cannot yet transition to master state.  We
- * must await the timeout of our preempt_delay.  The preemption delay is used
- * when starting up, or rebooting, a node which needs time to sort out its
- * routing table (e.g., BGP or OSPF) before it can assume the master role.
- */
 void
 vrrp_state_goto_master(vrrp_t * vrrp)
 {
-	if (timer_cmp(vrrp->preempt_time, timer_now()) > 0) {
-		vrrp->ms_down_timer = timer_tol(timer_sub(vrrp->preempt_time, timer_now()));
-		return;
-	}
-
 	/*
 	 * Send an advertisement. To force a new master
 	 * election.
@@ -910,6 +921,9 @@ vrrp_state_master_tx(vrrp_t * vrrp, const int prio)
 				    , vrrp->iname);
 		vrrp_state_become_master(vrrp);
 		ret = 1;
+	} else if (vrrp->garp_refresh && timer_cmp(time_now, vrrp->garp_refresh_timer) > 0) {
+		vrrp_send_link_update(vrrp);
+		vrrp->garp_refresh_timer = timer_add_long(time_now, vrrp->garp_refresh);
 	}
 
 	vrrp_send_adv(vrrp,
@@ -966,6 +980,11 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, int buflen)
 		if (hd->priority > vrrp->effective_priority ||
 		    (hd->priority == vrrp->effective_priority &&
 		     ntohl(saddr) > ntohl(VRRP_PKT_SADDR(vrrp)))) {
+			/* We send a last advert here in order to refresh remote MASTER
+			 * coming up to force link update at MASTER side.
+			 */
+			vrrp_send_adv(vrrp, vrrp->effective_priority);
+
 			log_message(LOG_INFO, "VRRP_Instance(%s) Received higher prio advert"
 					    , vrrp->iname);
 			if (proto == IPPROTO_IPSEC_AH) {
@@ -984,6 +1003,11 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, int buflen)
 	} else if (vrrp->family == AF_INET6) {
 		/* FIXME: compare v6 saddr to link local when prio are equal !!! */
 		if (hd->priority > vrrp->effective_priority) {
+			/* We send a last advert here in order to refresh remote MASTER
+			 * coming up to force link update at MASTER side.
+			 */
+			vrrp_send_adv(vrrp, vrrp->effective_priority);
+
 			log_message(LOG_INFO, "VRRP_Instance(%s) Received higher prio advert"
 					    , vrrp->iname);
 			vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
@@ -1119,7 +1143,7 @@ open_vrrp_socket(sa_family_t family, int proto, int idx, int unicast)
 void
 close_vrrp_socket(vrrp_t * vrrp)
 {
-	if (!LIST_ISEMPTY(vrrp->unicast_peer)) {
+	if (LIST_ISEMPTY(vrrp->unicast_peer)) {
 		if_leave_vrrp_group(vrrp->family, vrrp->fd_in, vrrp->ifp);
 	} else {
 		close(vrrp->fd_in);
@@ -1137,7 +1161,8 @@ new_vrrp_socket(vrrp_t * vrrp)
 	close_vrrp_socket(vrrp);
 	remove_vrrp_fd_bucket(vrrp);
 	proto = (vrrp->auth_type == VRRP_AUTH_AH) ? IPPROTO_IPSEC_AH : IPPROTO_VRRP;
-	ifindex = IF_INDEX(vrrp->ifp);
+	ifindex = (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? IF_BASE_INDEX(vrrp->ifp) :
+							       IF_INDEX(vrrp->ifp);
 	unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
 	vrrp->fd_in = open_vrrp_socket(vrrp->family, proto, ifindex, unicast);
 	vrrp->fd_out = open_vrrp_send_socket(vrrp->family, proto, ifindex, unicast);
@@ -1165,7 +1190,7 @@ shutdown_vrrp_instances(void)
 			vrrp_restore_interface(vrrp, 1);
 
 		/* Remove VMAC */
-		if (vrrp->vmac)
+		if (vrrp->vmac_flags & VRRP_VMAC_FL_SET)
 			netlink_link_del_vmac(vrrp);
 
 		/* Run stop script */
@@ -1225,6 +1250,25 @@ vrrp_complete_init(void)
 	}
 
 	return 1;
+}
+
+int
+vrrp_ipvs_needed(void)
+{
+	vrrp_t *vrrp;
+	element e;
+
+	if (!vrrp_data)
+		return 0;
+
+	for (e = LIST_HEAD(vrrp_data->vrrp); e; ELEMENT_NEXT(e)) {
+		vrrp = ELEMENT_DATA(e);
+		if (vrrp->lvs_syncd_if) {
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 /* Try to find a VRRP instance */
@@ -1327,7 +1371,7 @@ clear_diff_vrrp(void)
 			vrrp_restore_interface(vrrp, 1);
 
 			/* Remove VMAC if one was created */
-			if (vrrp->vmac) 
+			if (vrrp->vmac_flags & VRRP_VMAC_FL_SET) 
 				netlink_link_del_vmac(vrrp);
 		} else {
 			/*
@@ -1344,7 +1388,8 @@ clear_diff_vrrp(void)
 			 * Remove VMAC if it existed in old vrrp instance,
 			 * but not the new one.
 			 */
-			if (vrrp->vmac && !new_vrrp->vmac) {
+			if (vrrp->vmac_flags & VRRP_VMAC_FL_SET &&
+			    !(new_vrrp->vmac_flags & VRRP_VMAC_FL_SET)) {
 				netlink_link_del_vmac(vrrp);
 			}
 
