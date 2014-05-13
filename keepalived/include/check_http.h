@@ -64,9 +64,6 @@ typedef struct _url {
 
 typedef struct _http_checker {
 	int				proto;
-	struct sockaddr_storage		dst;
-	struct sockaddr_storage		bindto;
-	long				connection_to;
 	int				nb_get_retry;
 	long				delay_before_retry;
 	list				url;
@@ -84,9 +81,15 @@ typedef struct _http_checker {
 #define REQUEST_TEMPLATE "GET %s HTTP/1.0\r\n" \
                          "User-Agent:KeepAliveClient\r\n" \
                          "Host: %s%s\r\n\r\n"
+
+#define REQUEST_TEMPLATE_IPV6 "GET %s HTTP/1.0\r\n" \
+                         "User-Agent:KeepAliveClient\r\n" \
+                         "Host: [%s]%s\r\n\r\n"
+
 /* macro utility */
 #define HTTP_ARG(X) ((X)->arg)
 #define HTTP_REQ(X) ((X)->req)
+#define FMT_HTTP_RS(C) FMT_CHK(C)
 
 /* Define prototypes */
 extern void install_http_check_keyword(void);

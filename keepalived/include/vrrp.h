@@ -94,18 +94,20 @@ typedef struct _vrrp_t {
 	vrrp_sgroup_t		*sync;			/* Sync group we belong to */
 	interface_t		*ifp;			/* Interface we belong to */
 	int			dont_track_primary;	/* If set ignores ifp faults */
-	int			vmac;			/* If set try to set VRRP VMAC */
+	int			vmac_flags;		/* VRRP VMAC flags */
 	char			vmac_ifname[IFNAMSIZ];	/* Name of VRRP VMAC interface */
 	unsigned int		vmac_ifindex;		/* ifindex of vmac interface */
 	list			track_ifp;		/* Interface state we monitor */
 	list			track_script;		/* Script state we monitor */
-	uint32_t		mcast_saddr;		/* Src IP address to use in VRRP IP header */
+	struct sockaddr_storage	saddr;			/* Src IP address to use in VRRP IP header */
 	list			unicast_peer;		/* List of Unicast peer to send advert to */
 	char			*lvs_syncd_if;		/* handle LVS sync daemon state using this
 							 * instance FSM & running on specific interface
 							 * => eth0 for example.
 							 */
 	int			garp_delay;		/* Delay to launch gratuitous ARP */
+	int			garp_refresh;		/* Next scheduled gratuitous ARP refresh */
+	timeval_t		garp_refresh_timer;	/* Next scheduled gratuitous ARP timer */
 	int			vrid;			/* virtual id. from 1(!) to 255 */
 	int			base_priority;		/* configured priority value */
 	int			effective_priority;	/* effective priority value */
@@ -189,7 +191,7 @@ typedef struct _vrrp_t {
 #define VRRP_PACKET_NULL     3
 #define VRRP_PACKET_OTHER    4	/* Muliple VRRP on LAN, Identify "other" VRRP */
 
-/* VRRP Packet fixed lenght */
+/* VRRP Packet fixed length */
 #define VRRP_MAX_VIP		20
 #define VRRP_PACKET_TEMP_LEN	1024
 #define VRRP_AUTH_LEN		8
@@ -211,7 +213,7 @@ typedef struct _vrrp_t {
 #define VRRP_MIN(a, b)	((a) < (b)?(a):(b))
 #define VRRP_MAX(a, b)	((a) > (b)?(a):(b))
 
-#define VRRP_PKT_SADDR(V) (((V)->mcast_saddr) ? (V)->mcast_saddr : IF_ADDR((V)->ifp))
+#define VRRP_PKT_SADDR(V) (((V)->saddr.ss_family) ? ((struct sockaddr_in *) &(V)->saddr)->sin_addr.s_addr : IF_ADDR((V)->ifp))
 
 #define VRRP_IF_ISUP(V)        ((IF_ISUP((V)->ifp) || (V)->dont_track_primary) & \
                                ((!LIST_ISEMPTY((V)->track_ifp)) ? TRACK_ISUP((V)->track_ifp) : 1))
@@ -236,6 +238,7 @@ extern void vrrp_state_goto_master(vrrp_t *);
 extern void vrrp_state_leave_master(vrrp_t *);
 extern int vrrp_ipsecah_len(void);
 extern int vrrp_complete_init(void);
+extern int vrrp_ipvs_needed(void);
 extern void shutdown_vrrp_instances(void);
 extern void clear_diff_vrrp(void);
 extern void clear_diff_script(void);

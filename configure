@@ -627,6 +627,7 @@ IPVS_SUPPORT
 VERSION_DATE
 VERSION
 DFLAGS
+SO_MARK_SUPPORT
 SHA1_SUPPORT
 SNMP_SUPPORT
 NETSNMP_CONFIG
@@ -693,6 +694,7 @@ enable_lvs
 enable_vrrp
 with_kernel_dir
 with_kernel_version
+enable_fwmark
 enable_snmp
 enable_sha1
 enable_debug
@@ -1317,6 +1319,7 @@ Optional Features:
   --disable-lvs-syncd     do not use LVS synchronization daemon
   --disable-lvs           do not use the LVS framework
   --disable-vrrp          do not use the VRRP framework
+  --disable-fwmark        compile without SO_MARK support
   --enable-snmp           compile with SNMP support
   --enable-sha1           compile with SHA1 support
   --enable-debug          compile with debugging flags
@@ -3256,6 +3259,11 @@ else
   kernelversion=""
 fi
 
+# Check whether --enable-fwmark was given.
+if test "${enable_fwmark+set}" = set; then :
+  enableval=$enable_fwmark;
+fi
+
 # Check whether --enable-snmp was given.
 if test "${enable_snmp+set}" = set; then :
   enableval=$enable_snmp;
@@ -3896,7 +3904,97 @@ else
   as_fn_error $? "OpenSSL libraries are required" "$LINENO" 5
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_modify_cb in -lnl" >&5
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_alloc in -lnl-3" >&5
+$as_echo_n "checking for nl_socket_alloc in -lnl-3... " >&6; }
+if ${ac_cv_lib_nl_3_nl_socket_alloc+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lnl-3  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char nl_socket_alloc ();
+int
+main ()
+{
+return nl_socket_alloc ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_nl_3_nl_socket_alloc=yes
+else
+  ac_cv_lib_nl_3_nl_socket_alloc=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nl_3_nl_socket_alloc" >&5
+$as_echo "$ac_cv_lib_nl_3_nl_socket_alloc" >&6; }
+if test "x$ac_cv_lib_nl_3_nl_socket_alloc" = xyes; then :
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for genl_connect in -lnl-genl-3" >&5
+$as_echo_n "checking for genl_connect in -lnl-genl-3... " >&6; }
+if ${ac_cv_lib_nl_genl_3_genl_connect+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lnl-genl-3  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char genl_connect ();
+int
+main ()
+{
+return genl_connect ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_nl_genl_3_genl_connect=yes
+else
+  ac_cv_lib_nl_genl_3_genl_connect=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nl_genl_3_genl_connect" >&5
+$as_echo "$ac_cv_lib_nl_genl_3_genl_connect" >&6; }
+if test "x$ac_cv_lib_nl_genl_3_genl_connect" = xyes; then :
+
+        USE_NL="LIBIPVS_USE_NL"
+        CFLAGS="$CFLAGS $(pkg-config --cflags libnl-genl-3.0)"
+	LIBS="$LIBS $(pkg-config --libs libnl-genl-3.0)"
+
+else
+
+        as_fn_error $? "libnl-3 is installed but not libnl-gen-3. Please, install libnl-gen-3." "$LINENO" 5
+
+fi
+
+
+else
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_modify_cb in -lnl" >&5
 $as_echo_n "checking for nl_socket_modify_cb in -lnl... " >&6; }
 if ${ac_cv_lib_nl_nl_socket_modify_cb+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -3934,14 +4032,18 @@ fi
 $as_echo "$ac_cv_lib_nl_nl_socket_modify_cb" >&6; }
 if test "x$ac_cv_lib_nl_nl_socket_modify_cb" = xyes; then :
 
-    USE_NL="LIBIPVS_USE_NL"
-    LIBS="$LIBS -lnl"
+        USE_NL="LIBIPVS_USE_NL"
+        CFLAGS="$CFLAGS -DFALLBACK_LIBNL1"
+        LIBS="$LIBS $(pkg-config --libs libnl-1)"
 
 else
 
-    USE_NL="LIBIPVS_DONTUSE_NL"
-    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: keepalived will be built without libnl support." >&5
+        USE_NL="LIBIPVS_DONTUSE_NL"
+        { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: keepalived will be built without libnl support." >&5
 $as_echo "$as_me: WARNING: keepalived will be built without libnl support." >&2;}
+
+fi
+
 
 fi
 
@@ -4350,6 +4452,24 @@ fi
 
   SHA1_SUPPORT="_WITH_SHA1_"
 fi
+
+
+
+if test "${enable_fwmark}" = "no"; then
+  SO_MARK_SUPPORT="_WITHOUT_SO_MARK_"
+else
+  ac_fn_c_check_decl "$LINENO" "SO_MARK" "ac_cv_have_decl_SO_MARK" "#include <sys/socket.h>
+
+"
+if test "x$ac_cv_have_decl_SO_MARK" = xyes; then :
+
+else
+  as_fn_error $? "No SO_MARK declaration in headers" "$LINENO" 5
+fi
+
+  SO_MARK_SUPPORT="_WITH_SO_MARK_"
+fi
+
 
 
 
@@ -5851,6 +5971,12 @@ if test "${IPVS_SUPPORT}" = "_WITH_LVS_"; then
 else
   echo "Use IPVS Framework       : No"
   echo "IPVS sync daemon support : No"
+fi
+
+if test "${SO_MARK_SUPPORT}" = "_WITH_SO_MARK_"; then
+  echo "fwmark socket support    : Yes"
+else
+  echo "fwmark socket support    : No"
 fi
 
 if test "${VRRP_SUPPORT}" = "_WITH_VRRP_"; then

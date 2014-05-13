@@ -24,6 +24,7 @@
 #include "vrrp_index.h"
 #include "vrrp_sync.h"
 #include "vrrp_if.h"
+#include "vrrp_vmac.h"
 #include "vrrp.h"
 #include "memory.h"
 #include "utils.h"
@@ -140,6 +141,11 @@ free_sock(void *sock_data)
 {
 	sock_t *sock = sock_data;
 	interface_t *ifp;
+
+	/* First of all cancel pending thread */
+	thread_cancel(sock->thread);
+
+	/* Close related socket */
 	if (sock->fd_in > 0) {
 		ifp = if_get_by_ifindex(sock->ifindex);
 		if (sock->unicast) {
@@ -227,15 +233,18 @@ dump_vrrp(void *data)
 	log_message(LOG_INFO, "   Runing on device = %s", IF_NAME(vrrp->ifp));
 	if (vrrp->dont_track_primary)
 		log_message(LOG_INFO, "   VRRP interface tracking disabled");
-	if (vrrp->mcast_saddr)
-		log_message(LOG_INFO, "   Using mcast src_ip = %s",
-		       inet_ntop2(vrrp->mcast_saddr));
+	if (vrrp->saddr.ss_family)
+		log_message(LOG_INFO, "   Using src_ip = %s"
+				    , inet_sockaddrtos(&vrrp->saddr));
 	if (vrrp->lvs_syncd_if)
 		log_message(LOG_INFO, "   Runing LVS sync daemon on interface = %s",
 		       vrrp->lvs_syncd_if);
 	if (vrrp->garp_delay)
 		log_message(LOG_INFO, "   Gratuitous ARP delay = %d",
 		       vrrp->garp_delay/TIMER_HZ);
+	if (vrrp->garp_refresh)
+		log_message(LOG_INFO, "   Gratuitous ARP refresh timer = %d",
+		       vrrp->garp_refresh/TIMER_HZ);
 	log_message(LOG_INFO, "   Virtual Router ID = %d", vrrp->vrid);
 	log_message(LOG_INFO, "   Priority = %d", vrrp->base_priority);
 	log_message(LOG_INFO, "   Advert interval = %dsec",
@@ -295,6 +304,10 @@ dump_vrrp(void *data)
 		       vrrp->script);
 	if (vrrp->smtp_alert)
 		log_message(LOG_INFO, "   Using smtp notification");
+	if (vrrp->vmac_flags & VRRP_VMAC_FL_SET)
+		log_message(LOG_INFO, "   Using VRRP VMAC (flags:%s|%s)"
+				    , (vrrp->vmac_flags & VRRP_VMAC_FL_UP) ? "UP" : "DOWN"
+				    , (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? "xmit_base" : "xmit");
 }
 
 void
@@ -353,8 +366,18 @@ alloc_vrrp_unicast_peer(vector_t *strvec)
 	peer = (struct sockaddr_storage *) MALLOC(sizeof(struct sockaddr_storage));
 	ret = inet_stosockaddr(vector_slot(strvec, 0), 0, peer);
 	if (ret < 0) {
-		log_message(LOG_ERR, "Configuration error: malformed unicast peer address"
-				     " [%s]. Skipping...");
+		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] malformed unicast"
+				     " peer address[%s]. Skipping..."
+				   , vrrp->iname, vector_slot(strvec, 0));
+		FREE(peer);
+		return;
+	}
+
+	if (peer->ss_family != vrrp->family) {
+		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] and unicast peer address"
+				     "[%s] MUST be of the same family !!! Skipping..."
+				   , vrrp->iname, vector_slot(strvec, 0));
+		FREE(peer);
 		return;
 	}
 
@@ -472,14 +495,7 @@ free_vrrp_data(vrrp_data_t * data)
 	free_list(data->vrrp);
 	free_list(data->vrrp_sync_group);
 	free_list(data->vrrp_script);
-//	free_list(data->vrrp_socket_pool);
 	FREE(data);
-}
-
-void
-free_vrrp_sockpool(vrrp_data_t * data)
-{
-	free_list(data->vrrp_socket_pool);
 }
 
 void
