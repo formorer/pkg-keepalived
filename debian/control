@@ -12,7 +12,7 @@ Build-Depends: autoconf,
                linux-libc-dev,
                dh-autoreconf,
                pkg-config
-Standards-Version: 3.9.4
+Standards-Version: 3.9.5
 Vcs-Browser: https://github.com/formorer/pkg-keepalived
 Vcs-Git: git://github.com/formorer/pkg-keepalived.git
 Homepage: http://keepalived.org
