@@ -114,6 +114,8 @@ netlink_socket(nl_handle_t *nl, unsigned long groups)
 int
 netlink_close(nl_handle_t *nl)
 {
+	/* First of all release pending thread */
+	thread_cancel(nl->thread);
 	close(nl->fd);
 	return 0;
 }
@@ -240,6 +242,25 @@ netlink_scope_a2n(char *scope)
 	if (!strcmp(scope, "site"))
 		return 200;
 	return -1;
+}
+
+/*
+ * Reflect base interface flags on VMAC interface.
+ * VMAC interfaces should never update it own flags, only be reflected
+ * by the base interface flags.
+ */
+static void
+vmac_reflect_flags(struct ifinfomsg *ifi)
+{
+	interface_t *ifp;
+
+	/* find the VMAC interface (if any) */
+	ifp = if_get_by_vmac_base_ifindex(ifi->ifi_index);
+
+	/* if found, reflect base interface flags on VMAC interface */
+	if (ifp) {
+		ifp->flags = ifi->ifi_flags;
+	}
 }
 
 /* Our netlink parser */
@@ -462,7 +483,10 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	/* Skip it if already exist */
 	ifp = if_get_by_ifname(name);
 	if (ifp) {
-		ifp->flags = ifi->ifi_flags;
+		if (!ifp->vmac) {
+			vmac_reflect_flags(ifi);
+			ifp->flags = ifi->ifi_flags;
+		}
 		return 0;
 	}
 
@@ -470,10 +494,14 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	ifp = (interface_t *) MALLOC(sizeof(interface_t));
 	memcpy(ifp->ifname, name, strlen(name));
 	ifp->ifindex = ifi->ifi_index;
-	ifp->base_ifindex = ifi->ifi_index;
-	ifp->flags = ifi->ifi_flags;
 	ifp->mtu = *(int *) RTA_DATA(tb[IFLA_MTU]);
 	ifp->hw_type = ifi->ifi_type;
+
+	if (!ifp->vmac) {
+		vmac_reflect_flags(ifi);
+		ifp->flags = ifi->ifi_flags;
+		ifp->base_ifindex = ifi->ifi_index;
+	}
 
 	if (tb[IFLA_ADDRESS]) {
 		int hw_addr_len = RTA_PAYLOAD(tb[IFLA_ADDRESS]);
@@ -654,20 +682,20 @@ netlink_reflect_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	if (ifi->ifi_type == ARPHRD_LOOPBACK)
 		return 0;
 
-	/* find the VMAC interface (if any) */
-	ifp = if_get_by_vmac_base_ifindex(ifi->ifi_index);
-
-	/* if found, reflect base interface flags on VMAC interface */
-	if (ifp)
-		ifp->flags = ifi->ifi_flags;
-
 	/* find the interface_t */
 	ifp = if_get_by_ifindex(ifi->ifi_index);
 	if (!ifp)
 		return -1;
 
-	/* Update flags */
-	ifp->flags = ifi->ifi_flags;
+	/*
+	 * Update flags.
+	 * VMAC interfaces should never update it own flags, only be reflected
+	 * by the base interface flags.
+	 */
+	if (!ifp->vmac) {
+		vmac_reflect_flags(ifi);
+		ifp->flags = ifi->ifi_flags;
+	}
 
 	return 0;
 }
@@ -697,10 +725,12 @@ netlink_broadcast_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 int
 kernel_netlink(thread_t * thread)
 {
+	nl_handle_t *nl = THREAD_ARG(thread);
+
 	if (thread->type != THREAD_READ_TIMEOUT)
-		netlink_parse_info(netlink_broadcast_filter, &nl_kernel, NULL);
-	thread_add_read(master, kernel_netlink, NULL, nl_kernel.fd,
-			NETLINK_TIMER);
+		netlink_parse_info(netlink_broadcast_filter, nl, NULL);
+	nl->thread = thread_add_read(master, kernel_netlink, nl, nl->fd,
+				      NETLINK_TIMER);
 	return 0;
 }
 
@@ -722,8 +752,8 @@ kernel_netlink_init(void)
 
 	if (nl_kernel.fd > 0) {
 		log_message(LOG_INFO, "Registering Kernel netlink reflector");
-		thread_add_read(master, kernel_netlink, NULL, nl_kernel.fd,
-				NETLINK_TIMER);
+		nl_kernel.thread = thread_add_read(master, kernel_netlink, &nl_kernel, nl_kernel.fd,
+						   NETLINK_TIMER);
 	} else
 		log_message(LOG_INFO, "Error while registering Kernel netlink reflector channel");
 
