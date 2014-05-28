@@ -1,3 +1,28 @@
+keepalived (1:1.2.13-1) UNRELEASED; urgency=medium
+
+  * [1e9c32b] Imported Upstream version 1.2.11
+  * [bac64d6] Imported Upstream version 1.2.13
+    - keep retry in case of early TCP failures in checks
+      (Closes: #626466 #504069)
+    - Add To header for SMTP alerts. 
+      (Closes: #627169)
+    - handle passwords up to 8 characters
+      (Closes: #614562)
+    - modprobe handling fixed
+      (Closes: #714377)
+    - Support more than 31 interfaces
+      (Closes: #723106)
+    - Fix ipv6 realserver handling
+      (Closes: #740258)
+    - extend ip parser to support default and default6
+      (Closes: #740573)
+
+  * [65d5b11] Add pkg-config to build-deps
+  * [af497e7] Disable obsolete patches
+  * [4761254] Bump standards version (no changes)
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 06 Mar 2014 17:05:32 +0100
+
 keepalived (1:1.2.9-1) unstable; urgency=low
 
   * [8cd7bad] Imported Upstream version 1.2.9
