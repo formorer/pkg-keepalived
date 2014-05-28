@@ -1,4 +1,4 @@
-keepalived (1:1.2.13-1) UNRELEASED; urgency=medium
+keepalived (1:1.2.13-1) unstable; urgency=medium
 
   * [1e9c32b] Imported Upstream version 1.2.11
   * [bac64d6] Imported Upstream version 1.2.13
@@ -21,7 +21,7 @@ keepalived (1:1.2.13-1) UNRELEASED; urgency=medium
   * [af497e7] Disable obsolete patches
   * [4761254] Bump standards version (no changes)
 
- -- Alexander Wirt <formorer@debian.org>  Thu, 06 Mar 2014 17:05:32 +0100
+ -- Alexander Wirt <formorer@debian.org>  Wed, 28 May 2014 09:01:38 +0200
 
 keepalived (1:1.2.9-1) unstable; urgency=low
 
