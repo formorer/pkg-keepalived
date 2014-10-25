@@ -20,7 +20,8 @@ Homepage: http://keepalived.org
 Package: keepalived
 Section: admin
 Architecture: any
-Depends: iproute, ipvsadm, ${misc:Depends}, ${shlibs:Depends}
+Depends: iproute2, ${misc:Depends}, ${shlibs:Depends}
+Recommends: ipvsadm
 Description: Failover and monitoring daemon for LVS clusters
  keepalived is used for monitoring real servers within a Linux
  Virtual Server (LVS) cluster.  keepalived can be configured to
