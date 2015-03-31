@@ -96,14 +96,13 @@ vrrp_hd_len(vrrp_t * vrrp)
 
 /* VRRP header pointer from buffer */
 vrrphdr_t *
-vrrp_get_header(sa_family_t family, char *buf, int *proto, uint32_t *saddr)
+vrrp_get_header(sa_family_t family, char *buf, int *proto)
 {
 	struct iphdr *iph;
 	vrrphdr_t *hd = NULL;
 
 	if (family == AF_INET) {
 		iph = (struct iphdr *) buf;
-		*saddr = iph->saddr;
 
 		/* Fill the VRRP header */
 		switch (iph->protocol) {
@@ -119,7 +118,6 @@ vrrp_get_header(sa_family_t family, char *buf, int *proto, uint32_t *saddr)
 		}
 	} else if (family == AF_INET6) {
 		*proto = IPPROTO_VRRP;
-		*saddr = 0;
 		hd = (vrrphdr_t *) buf;
 	}
 
@@ -135,14 +133,13 @@ vrrp_in_chk_ipsecah(vrrp_t * vrrp, char *buffer)
 {
 	struct iphdr *ip = (struct iphdr *) (buffer);
 	ipsec_ah_t *ah = (ipsec_ah_t *) ((char *) ip + (ip->ihl << 2));
-	unsigned char *digest;
+	unsigned char digest[16]; /*MD5_DIGEST_LENGTH */
 	uint32_t backup_auth_data[3];
 
 	/* first verify that the SPI value is equal to src IP */
 	if (ah->spi != ip->saddr) {
-		log_message(LOG_INFO,
-		       "IPSEC AH : invalid IPSEC SPI value. %d and expect %d",
-		       ip->saddr, ah->spi);
+		log_message(LOG_INFO, "IPSEC AH : invalid IPSEC SPI value. %d and expect %d",
+			    ip->saddr, ah->spi);
 		return 1;
 	}
 
@@ -155,10 +152,10 @@ vrrp_in_chk_ipsecah(vrrp_t * vrrp, char *buffer)
 	if (ntohl(ah->seq_number) >= vrrp->ipsecah_counter->seq_number || vrrp->sync) {
 		vrrp->ipsecah_counter->seq_number = ntohl(ah->seq_number);
 	} else {
-		log_message(LOG_INFO,
-		       "VRRP_Instance(%s) IPSEC-AH : sequence number %d"
-		       " already proceeded. Packet dropped. Local(%d)", vrrp->iname
-		       , ntohl(ah->seq_number), vrrp->ipsecah_counter->seq_number);
+		log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : sequence number %d"
+				      " already proceeded. Packet dropped. Local(%d)",
+			    vrrp->iname, ntohl(ah->seq_number),
+			    vrrp->ipsecah_counter->seq_number);
 		return 1;
 	}
 
@@ -166,14 +163,16 @@ vrrp_in_chk_ipsecah(vrrp_t * vrrp, char *buffer)
 	 * then compute a ICV to compare with the one present in AH pkt.
 	 * alloc a temp memory space to stock the ip mutable fields
 	 */
-	digest = (unsigned char *) MALLOC(16); /*MD5_DIGEST_LENGTH */
 
 	/* zero the ip mutable fields */
 	ip->tos = 0;
 	ip->frag_off = 0;
 	ip->check = 0;
+	if (!LIST_ISEMPTY(vrrp->unicast_peer))
+		ip->ttl = 0;
 	memcpy(backup_auth_data, ah->auth_data, sizeof (ah->auth_data));
 	memset(ah->auth_data, 0, sizeof (ah->auth_data));
+	memset(digest, 0, 16);
 
 	/* Compute the ICV */
 	hmac_md5((unsigned char *) buffer,
@@ -183,12 +182,12 @@ vrrp_in_chk_ipsecah(vrrp_t * vrrp, char *buffer)
 
 	if (memcmp(backup_auth_data, digest, HMAC_MD5_TRUNC) != 0) {
 		log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : invalid"
-		       " IPSEC HMAC-MD5 value. Due to fields mutation"
-		       " or bad password !", vrrp->iname);
+				      " IPSEC HMAC-MD5 value. Due to fields mutation"
+				      " or bad password !",
+			    vrrp->iname);
 		return 1;
 	}
 
-	FREE(digest);
 	return 0;
 }
 
@@ -259,7 +258,7 @@ vrrp_in_chk(vrrp_t * vrrp, char *buffer)
 		 */
 		if ((ntohs(ip->tot_len) - ihl) <= sizeof(vrrphdr_t)) {
 			log_message(LOG_INFO,
-			       "ip payload too short. %d and expect at least %d",
+			       "ip payload too short. %d and expect at least %lu",
 			       ntohs(ip->tot_len) - ihl, sizeof(vrrphdr_t));
 			return VRRP_PACKET_KO;
 		}
@@ -301,7 +300,7 @@ vrrp_in_chk(vrrp_t * vrrp, char *buffer)
 
 		/* check the authenicaion if it is ipsec ah */
 		if (hd->auth_type == VRRP_AUTH_AH)
-			return (vrrp_in_chk_ipsecah(vrrp, buffer));
+			return vrrp_in_chk_ipsecah(vrrp, buffer);
 
 		/* Set expected vrrp packet lenght */
 		vrrphdr_len = sizeof(vrrphdr_t) + VRRP_AUTH_LEN + hd->naddr * sizeof(uint32_t);
@@ -418,6 +417,7 @@ vrrp_build_ipsecah(vrrp_t * vrrp, char *buffer, int buflen)
 
 	/* backup the ip mutable fields */
 	ip_mutable_fields->tos = ip->tos;
+	ip_mutable_fields->ttl = ip->ttl;
 	ip_mutable_fields->frag_off = ip->frag_off;
 	ip_mutable_fields->check = ip->check;
 
@@ -425,6 +425,8 @@ vrrp_build_ipsecah(vrrp_t * vrrp, char *buffer, int buflen)
 	ip->tos = 0;
 	ip->frag_off = 0;
 	ip->check = 0;
+	if (!LIST_ISEMPTY(vrrp->unicast_peer))
+		ip->ttl = 0;
 
 	/* fill in the Payload len field */
 	ah->payload_len = IPSEC_AH_PLEN;
@@ -472,6 +474,8 @@ vrrp_build_ipsecah(vrrp_t * vrrp, char *buffer, int buflen)
 	ip->tos = ip_mutable_fields->tos;
 	ip->frag_off = ip_mutable_fields->frag_off;
 	ip->check = ip_mutable_fields->check;
+	if (!LIST_ISEMPTY(vrrp->unicast_peer))
+		ip->ttl = ip_mutable_fields->ttl;
 
 	FREE(ip_mutable_fields);
 	FREE(digest);
@@ -569,14 +573,37 @@ vrrp_build_pkt(vrrp_t * vrrp, int prio, struct sockaddr_storage *addr)
 
 /* send VRRP packet */
 static int
+vrrp_build_ancillary_data(struct msghdr *msg, char *cbuf, struct sockaddr_storage *src)
+{
+	struct cmsghdr *cmsg;
+	struct in6_pktinfo *pkt;
+
+	if (src->ss_family != AF_INET6)
+		return -1;
+
+	msg->msg_control = cbuf;
+	msg->msg_controllen = CMSG_SPACE(sizeof(struct in6_pktinfo));
+
+	cmsg = CMSG_FIRSTHDR(msg);
+	cmsg->cmsg_level = IPPROTO_IPV6;
+	cmsg->cmsg_type = IPV6_PKTINFO;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(struct in6_pktinfo));
+
+	pkt = (struct in6_pktinfo *) CMSG_DATA(cmsg);
+	memset(pkt, 0, sizeof(struct in6_pktinfo));
+	pkt->ipi6_addr = ((struct sockaddr_in6 *) src)->sin6_addr;
+	pkt->ipi6_ifindex = ((struct sockaddr_in6 *) src)->sin6_scope_id;
+
+	return 0;
+}
+
+static int
 vrrp_send_pkt(vrrp_t * vrrp, struct sockaddr_storage *addr)
 {
 	struct sockaddr_storage *src = &vrrp->saddr;
 	struct sockaddr_in6 dst6;
-	struct in6_pktinfo *pkt;
 	struct sockaddr_in dst4;
 	struct msghdr msg;
-	struct cmsghdr *cmsg;
 	struct iovec iov;
 	char cbuf[256];
 
@@ -594,19 +621,7 @@ vrrp_send_pkt(vrrp_t * vrrp, struct sockaddr_storage *addr)
 	} else if (addr && addr->ss_family == AF_INET6) {
 		msg.msg_name = (struct sockaddr_in6 *) addr;
 		msg.msg_namelen = sizeof(struct sockaddr_in6);
-		if (src->ss_family == AF_INET6) {
-			msg.msg_control = cbuf;
-			msg.msg_controllen = CMSG_SPACE(sizeof(struct in6_pktinfo));
-
-			cmsg = CMSG_FIRSTHDR(&msg);
-			cmsg->cmsg_level = IPPROTO_IPV6;
-			cmsg->cmsg_type = IPV6_PKTINFO;
-			cmsg->cmsg_len = CMSG_LEN(sizeof(struct in6_pktinfo));
-
-			pkt = (struct in6_pktinfo *) CMSG_DATA(cmsg);
-			memset(pkt, 0, sizeof(struct in6_pktinfo));
-			pkt->ipi6_addr = ((struct sockaddr_in6 *) src)->sin6_addr;
-		}
+		vrrp_build_ancillary_data(&msg, cbuf, src);
 	} else if (vrrp->family == AF_INET) { /* Multicast sending path */
 		memset(&dst4, 0, sizeof(dst4));
 		dst4.sin_family = AF_INET;
@@ -619,6 +634,7 @@ vrrp_send_pkt(vrrp_t * vrrp, struct sockaddr_storage *addr)
 		dst6.sin6_addr = ((struct sockaddr_in6 *) &global_data->vrrp_mcast_group6)->sin6_addr;
 		msg.msg_name = &dst6;
 		msg.msg_namelen = sizeof(dst6);
+		vrrp_build_ancillary_data(&msg, cbuf, src);
 	}
 
 	/* Send the packet */
@@ -722,7 +738,7 @@ vrrp_send_update(vrrp_t * vrrp, ip_address_t * ipaddress, int idx)
 }
 
 void
-vrrp_send_link_update(vrrp_t * vrrp)
+vrrp_send_link_update(vrrp_t * vrrp, int rep)
 {
 	int j;
 	ip_address_t *ipaddress;
@@ -733,7 +749,7 @@ vrrp_send_link_update(vrrp_t * vrrp)
 		return;
 
 	/* send gratuitous arp for each virtual ip */
-	for (j = 0; j < 5; j++) {
+	for (j = 0; j < rep; j++) {
 		if (!LIST_ISEMPTY(vrrp->vip)) {
 			for (e = LIST_HEAD(vrrp->vip); e; ELEMENT_NEXT(e)) {
 				ipaddress = ELEMENT_DATA(e);
@@ -766,11 +782,11 @@ vrrp_state_become_master(vrrp_t * vrrp)
 		vrrp_handle_iproutes(vrrp, IPROUTE_ADD);
 
 	/* remotes neighbour update */
-	vrrp_send_link_update(vrrp);
+	vrrp_send_link_update(vrrp, vrrp->garp_rep);
 
 	/* set refresh timer */
-	if (vrrp->garp_refresh) {
-		vrrp->garp_refresh_timer = timer_add_long(time_now, vrrp->garp_refresh);
+	if (!timer_isnull(vrrp->garp_refresh)) {
+		vrrp->garp_refresh_timer = timer_add_now(vrrp->garp_refresh);
 	}
 
 	/* Check if notify is needed */
@@ -886,11 +902,10 @@ void
 vrrp_state_backup(vrrp_t * vrrp, char *buf, int buflen)
 {
 	vrrphdr_t *hd;
-	uint32_t saddr;
 	int ret = 0, proto;
 
 	/* Process the incoming packet */
-	hd = vrrp_get_header(vrrp->family, buf, &proto, &saddr);
+	hd = vrrp_get_header(vrrp->family, buf, &proto);
 	ret = vrrp_check_packet(vrrp, buf, buflen);
 
 	if (ret == VRRP_PACKET_KO || ret == VRRP_PACKET_NULL) {
@@ -921,9 +936,10 @@ vrrp_state_master_tx(vrrp_t * vrrp, const int prio)
 				    , vrrp->iname);
 		vrrp_state_become_master(vrrp);
 		ret = 1;
-	} else if (vrrp->garp_refresh && timer_cmp(time_now, vrrp->garp_refresh_timer) > 0) {
-		vrrp_send_link_update(vrrp);
-		vrrp->garp_refresh_timer = timer_add_long(time_now, vrrp->garp_refresh);
+	} else if (!timer_isnull(vrrp->garp_refresh) &&
+		   timer_cmp(time_now, vrrp->garp_refresh_timer) > 0) {
+		vrrp_send_link_update(vrrp, vrrp->garp_refresh_rep);
+		vrrp->garp_refresh_timer = timer_add_now(vrrp->garp_refresh);
 	}
 
 	vrrp_send_adv(vrrp,
@@ -932,12 +948,36 @@ vrrp_state_master_tx(vrrp_t * vrrp, const int prio)
 	return ret;
 }
 
+static int
+vrrp_saddr_cmp(struct sockaddr_storage *addr, vrrp_t *vrrp)
+{
+	interface_t *ifp = vrrp->ifp;
+
+	/* Simple sanity */
+	if (vrrp->saddr.ss_family && addr->ss_family != vrrp->saddr.ss_family)
+		return 0;
+
+	/* Configured source IP address */
+	if (vrrp->saddr.ss_family)
+		return inet_sockaddrcmp(addr, &vrrp->saddr);
+
+	/* Default interface source IP address */
+	if (addr->ss_family == AF_INET)
+		return inet_inaddrcmp(addr->ss_family,
+				      &((struct sockaddr_in *) addr)->sin_addr,
+				      &ifp->sin_addr);
+	if (addr->ss_family == AF_INET6)
+		return inet_inaddrcmp(addr->ss_family,
+				      &((struct sockaddr_in6 *) addr)->sin6_addr,
+				      &ifp->sin6_addr);
+	return 0;
+}
+
 int
 vrrp_state_master_rx(vrrp_t * vrrp, char *buf, int buflen)
 {
 	vrrphdr_t *hd = NULL;
 	int ret = 0, proto = 0;
-	uint32_t saddr = 0;
 	ipsec_ah_t *ah;
 
 	/* return on link failure */
@@ -949,7 +989,7 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, int buflen)
 	}
 
 	/* Process the incoming packet */
-	hd = vrrp_get_header(vrrp->family, buf, &proto, &saddr);
+	hd = vrrp_get_header(vrrp->family, buf, &proto);
 	ret = vrrp_check_packet(vrrp, buf, buflen);
 
 	if (ret == VRRP_PACKET_KO ||
@@ -971,50 +1011,34 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, int buflen)
 			vrrp->ipsecah_counter->cycle = 0;
 		}
 		vrrp_send_adv(vrrp, vrrp->effective_priority);
-		vrrp_send_link_update(vrrp);
+		vrrp_send_link_update(vrrp, vrrp->garp_rep);
 		return 0;
 	} else if (hd->priority == 0) {
 		vrrp_send_adv(vrrp, vrrp->effective_priority);
 		return 0;
-	} else if (vrrp->family == AF_INET) {
-		if (hd->priority > vrrp->effective_priority ||
-		    (hd->priority == vrrp->effective_priority &&
-		     ntohl(saddr) > ntohl(VRRP_PKT_SADDR(vrrp)))) {
-			/* We send a last advert here in order to refresh remote MASTER
-			 * coming up to force link update at MASTER side.
-			 */
-			vrrp_send_adv(vrrp, vrrp->effective_priority);
+	} else if (hd->priority > vrrp->effective_priority ||
+		   (hd->priority == vrrp->effective_priority &&
+		    vrrp_saddr_cmp(&vrrp->pkt_saddr, vrrp) > 0)) {
+		/* We send a last advert here in order to refresh remote MASTER
+		 * coming up to force link update at MASTER side.
+		 */
+		vrrp_send_adv(vrrp, vrrp->effective_priority);
 
-			log_message(LOG_INFO, "VRRP_Instance(%s) Received higher prio advert"
+		log_message(LOG_INFO, "VRRP_Instance(%s) Received higher prio advert"
+				    , vrrp->iname);
+		if (proto == IPPROTO_IPSEC_AH) {
+			ah = (ipsec_ah_t *) (buf + sizeof(struct iphdr));
+			log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : Syncing seq_num"
+					      " - Decrement seq"
 					    , vrrp->iname);
-			if (proto == IPPROTO_IPSEC_AH) {
-				ah = (ipsec_ah_t *) (buf + sizeof(struct iphdr));
-				log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : Syncing seq_num"
-						      " - Decrement seq"
-						    , vrrp->iname);
-				vrrp->ipsecah_counter->seq_number = ntohl(ah->seq_number) - 1;
-				vrrp->ipsecah_counter->cycle = 0;
-			}
-			vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
-			vrrp->wantstate = VRRP_STATE_BACK;
-			vrrp->state = VRRP_STATE_BACK;
-			return 1;
+			vrrp->ipsecah_counter->seq_number = ntohl(ah->seq_number) - 1;
+			vrrp->ipsecah_counter->cycle = 0;
 		}
-	} else if (vrrp->family == AF_INET6) {
-		/* FIXME: compare v6 saddr to link local when prio are equal !!! */
-		if (hd->priority > vrrp->effective_priority) {
-			/* We send a last advert here in order to refresh remote MASTER
-			 * coming up to force link update at MASTER side.
-			 */
-			vrrp_send_adv(vrrp, vrrp->effective_priority);
 
-			log_message(LOG_INFO, "VRRP_Instance(%s) Received higher prio advert"
-					    , vrrp->iname);
-			vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
-			vrrp->wantstate = VRRP_STATE_BACK;
-			vrrp->state = VRRP_STATE_BACK;
-			return 1;
-		}
+		vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
+		vrrp->wantstate = VRRP_STATE_BACK;
+		vrrp->state = VRRP_STATE_BACK;
+		return 1;
 	}
 
 	return 0;
@@ -1024,11 +1048,10 @@ int
 vrrp_state_fault_rx(vrrp_t * vrrp, char *buf, int buflen)
 {
 	vrrphdr_t *hd;
-	uint32_t saddr;
 	int ret = 0, proto;
 
 	/* Process the incoming packet */
-	hd = vrrp_get_header(vrrp->family, buf, &proto, &saddr);
+	hd = vrrp_get_header(vrrp->family, buf, &proto);
 	ret = vrrp_check_packet(vrrp, buf, buflen);
 
 	if (ret == VRRP_PACKET_KO || ret == VRRP_PACKET_NULL || ret == VRRP_PACKET_DROP) {

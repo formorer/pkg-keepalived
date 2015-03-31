@@ -110,9 +110,24 @@ static void
 vrrp_vmac_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	interface_t *ifp = vrrp->ifp;
+	struct sockaddr_storage *saddr = &vrrp->saddr;
+
 	vrrp->vmac_flags |= VRRP_VMAC_FL_SET;
-	if (!vrrp->saddr.ss_family && vrrp->family == AF_INET)
-		inet_ip4tosockaddr(IF_ADDR(vrrp->ifp), &vrrp->saddr);
+	if (!vrrp->saddr.ss_family) {
+		if (!ifp) {
+			log_message(LOG_INFO, "Please define interface keyword before use_vmac keyword");
+			return;
+		} else {
+			if (vrrp->family == AF_INET) {
+				inet_ip4tosockaddr(&ifp->sin_addr, saddr);
+			} else if (vrrp->family == AF_INET6) {
+				inet_ip6tosockaddr(&ifp->sin6_addr, saddr);
+				/* IPv6 use-case: Binding to link-local address requires an interface */
+				inet_ip6scopeid(IF_INDEX(ifp), saddr);
+			}
+		}
+	}
 	if (vector_size(strvec) == 2) {
 		strncpy(vrrp->vmac_ifname, vector_slot(strvec, 1),
 			IFNAMSIZ - 1);
@@ -141,6 +156,9 @@ vrrp_native_ipv6_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	vrrp->family = AF_INET6;
+
+	if (vrrp->vmac_flags & VRRP_VMAC_FL_SET)
+		log_message(LOG_INFO, "You should declare native_ipv6 before use_vmac!");
 
 	if (vrrp->auth_type != VRRP_AUTH_NONE)
 		vrrp->auth_type = VRRP_AUTH_NONE;
@@ -198,6 +216,7 @@ static void
 vrrp_srcip_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	interface_t *ifp = vrrp->ifp;
 	struct sockaddr_storage *saddr = &vrrp->saddr;
 	int ret;
 
@@ -205,15 +224,25 @@ vrrp_srcip_handler(vector_t *strvec)
 	if (ret < 0) {
 		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] malformed unicast"
 				     " src address[%s]. Skipping..."
-				   , vrrp->iname, vector_slot(strvec, 1));
+				   , vrrp->iname, FMT_STR_VSLOT(strvec, 1));
 		return;
 	}
 
 	if (saddr->ss_family != vrrp->family) {
 		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] and unicast src address"
 				     "[%s] MUST be of the same family !!! Skipping..."
-				   , vrrp->iname, vector_slot(strvec, 1));
+				   , vrrp->iname, FMT_STR_VSLOT(strvec, 1));
 		memset(saddr, 0, sizeof(struct sockaddr_storage));
+	}
+
+	/* IPv6 use-case: Binding to link-local address requires an interface.
+	 * Just specify scope_id for all address types */
+	if (saddr->ss_family == AF_INET6) {
+		if (!ifp) {
+			log_message(LOG_INFO, "Please define interface keyword before mcast_src_ip keyword");
+			return;
+		}
+		inet_ip6scopeid(IF_INDEX(ifp), saddr);
 	}
 }
 static void
@@ -363,7 +392,23 @@ static void
 vrrp_garp_refresh_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	vrrp->garp_refresh = atoi(vector_slot(strvec, 1)) * TIMER_HZ;
+	vrrp->garp_refresh.tv_sec = atoi(vector_slot(strvec, 1));
+}
+static void
+vrrp_garp_rep_handler(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp->garp_rep = atoi(vector_slot(strvec, 1));
+	if (vrrp->garp_rep < 1)
+		vrrp->garp_rep = 1;
+}
+static void
+vrrp_garp_refresh_rep_handler(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+	vrrp->garp_refresh_rep = atoi(vector_slot(strvec, 1));
+	if (vrrp->garp_refresh_rep < 1)
+		vrrp->garp_refresh_rep = 1;
 }
 static void
 vrrp_auth_type_handler(vector_t *strvec)
@@ -542,6 +587,8 @@ vrrp_init_keywords(void)
 	install_keyword("lvs_sync_daemon_interface", &vrrp_lvs_syncd_handler);
 	install_keyword("garp_master_delay", &vrrp_garp_delay_handler);
 	install_keyword("garp_master_refresh", &vrrp_garp_refresh_handler);
+	install_keyword("garp_master_repeat", &vrrp_garp_rep_handler);
+	install_keyword("garp_master_refresh_repeat", &vrrp_garp_refresh_rep_handler);
 	install_keyword("authentication", NULL);
 	install_sublevel();
 	install_keyword("auth_type", &vrrp_auth_type_handler);

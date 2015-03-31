@@ -230,8 +230,7 @@ vrrp_init_state(list l)
 					 vrrp, vrrp->adver_int);
 		}
 
-		if (vrrp->base_priority == VRRP_PRIO_OWNER ||
-		    vrrp->wantstate == VRRP_STATE_MAST) {
+		if (vrrp->wantstate == VRRP_STATE_MAST) {
 #ifdef _HAVE_IPVS_SYNCD_
 			/* Check if sync daemon handling is needed */
 			if (vrrp->lvs_syncd_if)
@@ -573,7 +572,20 @@ vrrp_backup(vrrp_t * vrrp, char *buffer, int len)
 		}
 	}
 
-	vrrp_state_backup(vrrp, buffer, len);
+	if (!VRRP_ISUP(vrrp)) {
+		vrrp_log_int_down(vrrp);
+		log_message(LOG_INFO, "VRRP_Instance(%s) Now in FAULT state",
+		       vrrp->iname);
+		if (vrrp->state != VRRP_STATE_FAULT) {
+			notify_instance_exec(vrrp, VRRP_STATE_FAULT);
+			vrrp->state = VRRP_STATE_FAULT;
+#ifdef _WITH_SNMP_
+			vrrp_snmp_instance_trap(vrrp);
+#endif
+		}
+	} else {
+		vrrp_state_backup(vrrp, buffer, len);
+	}
 }
 
 static void
@@ -709,7 +721,7 @@ vrrp_gratuitous_arp_thread(thread_t * thread)
 	vrrp_t *vrrp = THREAD_ARG(thread);
 
 	/* Simply broadcast the gratuitous ARP */
-	vrrp_send_link_update(vrrp);
+	vrrp_send_link_update(vrrp, vrrp->garp_rep);
 
 	return 0;
 }
@@ -886,14 +898,16 @@ vrrp_dispatcher_read(sock_t * sock)
 	vrrp_t *vrrp;
 	vrrphdr_t *hd;
 	int len = 0, prev_state = 0, proto = 0;
-	uint32_t saddr;
+        struct sockaddr_storage src_addr;
+        socklen_t src_addr_len = sizeof(src_addr);
 
 	/* Clean the read buffer */
 	memset(vrrp_buffer, 0, VRRP_PACKET_TEMP_LEN);
 
 	/* read & affect received buffer */
-	len = read(sock->fd_in, vrrp_buffer, VRRP_PACKET_TEMP_LEN);
-	hd = vrrp_get_header(sock->family, vrrp_buffer, &proto, &saddr);
+	len = recvfrom(sock->fd_in, vrrp_buffer, VRRP_PACKET_TEMP_LEN, 0,
+		       (struct sockaddr *) &src_addr, &src_addr_len);
+	hd = vrrp_get_header(sock->family, vrrp_buffer, &proto);
 
 	/* Searching for matching instance */
 	vrrp = vrrp_index_lookup(hd->vrid, sock->fd_in);
@@ -901,6 +915,8 @@ vrrp_dispatcher_read(sock_t * sock)
 	/* If no instance found => ignore the advert */
 	if (!vrrp)
 		return sock->fd_in;
+
+	vrrp->pkt_saddr = src_addr;
 
 	/* Run the FSM handler */
 	prev_state = vrrp->state;

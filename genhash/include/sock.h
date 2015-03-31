@@ -3,9 +3,9 @@
  *              Set a timer to compute global remote server response
  *              time.
  *
- * Part:        ssl.c include file.
+ * Part:        sock.c include file.
  *
- * Version:     $Id: ssl.h,v 1.1.16 2009/02/14 03:25:07 acassen Exp $
+ * Version:     $Id: sock.h,v 1.1.16 2009/02/14 03:25:07 acassen Exp $
  *
  * Authors:     Alexandre Cassen, <acassen@linux-vs.org>
  *
@@ -22,16 +22,35 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _SSL_H
-#define _SSL_H
+#ifndef _SOCK_H
+#define _SOCK_H
 
+/* system includes */
 #include <openssl/ssl.h>
 
+/* local includes */
+#include "hash.h"
+
+/* Engine socket pool element structure */
+typedef struct {
+	int		fd;
+	SSL		*ssl;
+	BIO		*bio;
+	const		hash_t		*hash;
+	hash_context_t	context;
+	int		status;
+	int		lock;
+	char		*buffer;
+	char		*extracted;
+	int		size;
+	int		total_size;
+} SOCK;
+
+/* global vars exported */
+extern SOCK *sock;
+
 /* Prototypes */
-extern void init_ssl(void);
-extern int ssl_connect(thread_t *);
-extern int ssl_printerr(int);
-extern int ssl_send_request(SSL *, char *, int);
-extern int ssl_read_thread(thread_t *);
+extern void free_sock(SOCK *);
+extern void init_sock(void);
 
 #endif
