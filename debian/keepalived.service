@@ -1,6 +1,6 @@
 [Unit]
 Description=Keepalive Daemon (LVS and VRRP)
-After=syslog.target network-online.target
+After=network-online.target
 Wants=network-online.target
 # Only start if there is a configuration file
 ConditionFileNotEmpty=/etc/keepalived/keepalived.conf
