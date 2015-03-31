@@ -90,7 +90,10 @@ static void
 start_check(void)
 {
 	/* Initialize sub-system */
-	ipvs_start();
+	if (ipvs_start() != IPVS_SUCCESS) {
+		stop_check();
+		return;
+	}
 	init_checkers_queue();
 #ifdef _WITH_VRRP_
 	init_interface_queue();
@@ -119,11 +122,15 @@ start_check(void)
 		return;
 	}
 
+	/* fill 'vsg' members of the virtual_server_t structure.
+	 * We must do that after parsing config, because
+	 * vs and vsg declarations may appear in any order
+	 */
+	link_vsg_to_vs();
+
 	/* Processing differential configuration parsing */
-	if (reload) {
+	if (reload)
 		clear_diff_services();
-		copy_srv_states();
-	}
 
 	/* Initialize IPVS topology */
 	if (!init_services()) {
@@ -187,6 +194,9 @@ reload_check_thread(thread_t * thread)
 	signal_handler_destroy();
 
 	/* Destroy master thread */
+#ifdef _WITH_VRRP_
+	kernel_netlink_close();
+#endif
 	thread_destroy_master(master);
 	master = thread_make_master();
 	free_global_data(global_data);

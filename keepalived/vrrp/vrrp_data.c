@@ -116,8 +116,8 @@ dump_vscript(void *data)
 
 	log_message(LOG_INFO, " VRRP Script = %s", vscript->sname);
 	log_message(LOG_INFO, "   Command = %s", vscript->script);
-	log_message(LOG_INFO, "   Interval = %d sec", vscript->interval / TIMER_HZ);
-	log_message(LOG_INFO, "   Timeout = %d sec", vscript->timeout / TIMER_HZ);
+	log_message(LOG_INFO, "   Interval = %d sec", (int)(vscript->interval / TIMER_HZ));
+	log_message(LOG_INFO, "   Timeout = %d sec", (int)(vscript->timeout / TIMER_HZ));
 	log_message(LOG_INFO, "   Weight = %d", vscript->weight);
 	log_message(LOG_INFO, "   Rise = %d", vscript->rise);
 	log_message(LOG_INFO, "   Fall = %d", vscript->fall);
@@ -141,6 +141,11 @@ free_sock(void *sock_data)
 {
 	sock_t *sock = sock_data;
 	interface_t *ifp;
+
+	/* First of all cancel pending thread */
+	thread_cancel(sock->thread);
+
+	/* Close related socket */
 	if (sock->fd_in > 0) {
 		ifp = if_get_by_ifindex(sock->ifindex);
 		if (sock->unicast) {
@@ -237,9 +242,11 @@ dump_vrrp(void *data)
 	if (vrrp->garp_delay)
 		log_message(LOG_INFO, "   Gratuitous ARP delay = %d",
 		       vrrp->garp_delay/TIMER_HZ);
-	if (vrrp->garp_refresh)
-		log_message(LOG_INFO, "   Gratuitous ARP refresh timer = %d",
-		       vrrp->garp_refresh/TIMER_HZ);
+	if (!timer_isnull(vrrp->garp_refresh))
+		log_message(LOG_INFO, "   Gratuitous ARP refresh timer = %lu",
+		       vrrp->garp_refresh.tv_sec);
+	log_message(LOG_INFO, "   Gratuitous ARP repeat = %d", vrrp->garp_rep);
+	log_message(LOG_INFO, "   Gratuitous ARP refresh repeat = %d", vrrp->garp_refresh_rep);
 	log_message(LOG_INFO, "   Virtual Router ID = %d", vrrp->vrid);
 	log_message(LOG_INFO, "   Priority = %d", vrrp->base_priority);
 	log_message(LOG_INFO, "   Advert interval = %dsec",
@@ -343,6 +350,8 @@ alloc_vrrp(char *iname)
 	new->iname = (char *) MALLOC(size + 1);
 	memcpy(new->iname, iname, size);
 	new->quick_sync = 0;
+	new->garp_rep = VRRP_GARP_REP;
+	new->garp_refresh_rep = VRRP_GARP_REFRESH_REP;
 
 	list_add(vrrp_data->vrrp, new);
 }
@@ -363,7 +372,7 @@ alloc_vrrp_unicast_peer(vector_t *strvec)
 	if (ret < 0) {
 		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] malformed unicast"
 				     " peer address[%s]. Skipping..."
-				   , vrrp->iname, vector_slot(strvec, 0));
+				   , vrrp->iname, FMT_STR_VSLOT(strvec, 0));
 		FREE(peer);
 		return;
 	}
@@ -371,7 +380,7 @@ alloc_vrrp_unicast_peer(vector_t *strvec)
 	if (peer->ss_family != vrrp->family) {
 		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] and unicast peer address"
 				     "[%s] MUST be of the same family !!! Skipping..."
-				   , vrrp->iname, vector_slot(strvec, 0));
+				   , vrrp->iname, FMT_STR_VSLOT(strvec, 0));
 		FREE(peer);
 		return;
 	}
@@ -490,14 +499,7 @@ free_vrrp_data(vrrp_data_t * data)
 	free_list(data->vrrp);
 	free_list(data->vrrp_sync_group);
 	free_list(data->vrrp_script);
-//	free_list(data->vrrp_socket_pool);
 	FREE(data);
-}
-
-void
-free_vrrp_sockpool(vrrp_data_t * data)
-{
-	free_list(data->vrrp_socket_pool);
 }
 
 void

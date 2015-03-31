@@ -101,7 +101,7 @@ dump_vsg_entry(void *data)
 	virtual_server_group_entry_t *vsg_entry = data;
 
 	if (vsg_entry->vfwmark)
-		log_message(LOG_INFO, "   FWMARK = %d", vsg_entry->vfwmark);
+		log_message(LOG_INFO, "   FWMARK = %u", vsg_entry->vfwmark);
 	else if (vsg_entry->range)
 		log_message(LOG_INFO, "   VIP Range = %s-%d, VPORT = %d"
 				    , inet_sockaddrtos(&vsg_entry->addr)
@@ -169,7 +169,7 @@ dump_vs(void *data)
 	if (vs->vsgname)
 		log_message(LOG_INFO, " VS GROUP = %s", vs->vsgname);
 	else if (vs->vfwmark)
-		log_message(LOG_INFO, " VS FWMARK = %d", vs->vfwmark);
+		log_message(LOG_INFO, " VS FWMARK = %u", vs->vfwmark);
 	else
 		log_message(LOG_INFO, " VIP = %s, VPORT = %d"
 				    , inet_sockaddrtos(&vs->addr), ntohs(inet_sockaddrport(&vs->addr)));
@@ -214,9 +214,8 @@ dump_vs(void *data)
 	}
 
 	if (vs->s_svr) {
-		log_message(LOG_INFO, "   sorry server = [%s]:%d"
-				    , inet_sockaddrtos(&vs->s_svr->addr)
-				    , ntohs(inet_sockaddrport(&vs->s_svr->addr)));
+		log_message(LOG_INFO, "   sorry server = %s"
+				    , FMT_RS(vs->s_svr));
 	}
 	if (!LIST_ISEMPTY(vs->rs))
 		dump_list(vs->rs);
@@ -355,4 +354,23 @@ dump_check_data(check_data_t *data)
 		dump_list(data->vs);
 	}
 	dump_checkers_queue();
+}
+
+char *
+format_vs (virtual_server_t *vs)
+{
+	/* alloc large buffer because of unknown length of vs->vsgname */
+	static char ret[512];
+
+	if (vs->vsgname)
+		snprintf (ret, sizeof (ret) - 1, "[%s]:%d"
+			, vs->vsgname
+			, ntohs(inet_sockaddrport(&vs->addr)));
+	else if (vs->vfwmark)
+		snprintf (ret, sizeof (ret) - 1, "FWM %u", vs->vfwmark);
+	else
+		snprintf(ret, sizeof(ret) - 1, "%s"
+			, inet_sockaddrtopair(&vs->addr));
+
+	return ret;
 }

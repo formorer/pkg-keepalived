@@ -64,6 +64,8 @@ typedef struct _vrrphdr {			/* rfc2338.5.1 */
 #define VRRP_AUTH_AH		2		/* AH(IPSec) authentification - rfc2338.5.3.6 */
 #define VRRP_ADVER_DFL		1		/* advert. interval (in sec) -- rfc2338.5.3.7 */
 #define VRRP_GARP_DELAY 	(5 * TIMER_HZ)	/* Default delay to launch gratuitous arp */
+#define VRRP_GARP_REP		5		/* Default repeat value for MASTER state gratuitous arp */
+#define VRRP_GARP_REFRESH_REP	1		/* Default repeat value for refresh gratuitous arp */
 
 /*
  * parameters per vrrp sync group. A vrrp_sync_group is a set
@@ -100,14 +102,17 @@ typedef struct _vrrp_t {
 	list			track_ifp;		/* Interface state we monitor */
 	list			track_script;		/* Script state we monitor */
 	struct sockaddr_storage	saddr;			/* Src IP address to use in VRRP IP header */
+	struct sockaddr_storage	pkt_saddr;		/* Src IP address received in VRRP IP header */
 	list			unicast_peer;		/* List of Unicast peer to send advert to */
 	char			*lvs_syncd_if;		/* handle LVS sync daemon state using this
 							 * instance FSM & running on specific interface
 							 * => eth0 for example.
 							 */
 	int			garp_delay;		/* Delay to launch gratuitous ARP */
-	int			garp_refresh;		/* Next scheduled gratuitous ARP refresh */
+	timeval_t		garp_refresh;		/* Next scheduled gratuitous ARP refresh */
 	timeval_t		garp_refresh_timer;	/* Next scheduled gratuitous ARP timer */
+	int			garp_rep;		/* gratuitous ARP repeat value */
+	int			garp_refresh_rep;	/* refresh gratuitous ARP repeat value */
 	int			vrid;			/* virtual id. from 1(!) to 255 */
 	int			base_priority;		/* configured priority value */
 	int			effective_priority;	/* effective priority value */
@@ -223,12 +228,12 @@ typedef struct _vrrp_t {
 #define VRRP_ISUP(V)           (VRRP_IF_ISUP(V) && VRRP_SCRIPT_ISUP(V))
 
 /* prototypes */
-extern vrrphdr_t *vrrp_get_header(sa_family_t, char *, int *, uint32_t *);
+extern vrrphdr_t *vrrp_get_header(sa_family_t, char *, int *);
 extern int open_vrrp_send_socket(sa_family_t, int, int, int);
 extern int open_vrrp_socket(sa_family_t, int, int, int);
 extern int new_vrrp_socket(vrrp_t *);
 extern void close_vrrp_socket(vrrp_t *);
-extern void vrrp_send_link_update(vrrp_t *);
+extern void vrrp_send_link_update(vrrp_t *, int);
 extern int vrrp_send_adv(vrrp_t *, int);
 extern int vrrp_state_fault_rx(vrrp_t *, char *, int);
 extern int vrrp_state_master_rx(vrrp_t *, char *, int);

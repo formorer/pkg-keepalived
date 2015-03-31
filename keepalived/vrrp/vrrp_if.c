@@ -23,11 +23,11 @@
 /* global include */
 #include <unistd.h>
 #include <string.h>
-#include <sys/types.h>
-typedef __uint64_t u64;
-typedef __uint32_t u32;
-typedef __uint16_t u16;
-typedef __uint8_t u8;
+#include <stdint.h>
+typedef uint64_t u64;
+typedef uint32_t u32;
+typedef uint16_t u16;
+typedef uint8_t u8;
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
@@ -408,15 +408,14 @@ free_interface_queue(void)
 	if (!LIST_ISEMPTY(if_queue))
 		free_list(if_queue);
 	if_queue = NULL;
-	kernel_netlink_close();
 }
 
 void
 init_interface_queue(void)
 {
 	init_if_queue();
-//	dump_list(if_queue);
 	netlink_interface_lookup();
+//	dump_list(if_queue);
 }
 
 void
@@ -478,7 +477,7 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface_t *ifp, int proto)
 int
 if_leave_vrrp_group(sa_family_t family, int sd, interface_t *ifp)
 {
-	struct ip_mreqn imr;
+	struct ip_mreq imr;
 	struct ipv6_mreq imr6;
 	int ret = 0;
 
@@ -489,12 +488,10 @@ if_leave_vrrp_group(sa_family_t family, int sd, interface_t *ifp)
 	/* Leaving the VRRP multicast group */
 	if (family == AF_INET) {
 		memset(&imr, 0, sizeof(imr));
-		/* FIXME: change this to use struct ip_mreq */
 		imr.imr_multiaddr = ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr;
-		imr.imr_address.s_addr = IF_ADDR(ifp);
-		imr.imr_ifindex = IF_INDEX(ifp);
+		imr.imr_interface.s_addr = IF_ADDR(ifp);
 		ret = setsockopt(sd, IPPROTO_IP, IP_DROP_MEMBERSHIP,
-				 (char *) &imr, sizeof (struct ip_mreqn));
+				 (char *) &imr, sizeof(struct ip_mreq));
 	} else {
 		memset(&imr6, 0, sizeof(imr6));
 		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6 *) &global_data->vrrp_mcast_group6)->sin6_addr;
@@ -573,7 +570,7 @@ if_setsockopt_mcast_loop(sa_family_t family, int *sd)
 	if (*sd < 0)
 		return -1;
 
-	/* Include IP header into RAW protocol packet */
+	/* Set Multicast loop */
 	if (family == AF_INET)
 		ret = setsockopt(*sd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
 	else
@@ -599,7 +596,7 @@ if_setsockopt_mcast_hops(sa_family_t family, int *sd)
 	if (*sd < 0 || family == AF_INET)
 		return -1;
 
-	/* Include IP header into RAW protocol packet */
+	/* Set HOP limit */
 	ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &hops, sizeof(hops));
 	if (ret < 0) {
 		log_message(LOG_INFO, "cant set IPV6_MULTICAST_HOPS IP option. errno=%d (%m)", errno);
@@ -620,7 +617,7 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface_t *ifp)
 	if (*sd < 0 || family == AF_INET)
 		return -1;
 
-	/* Include IP header into RAW protocol packet */
+	/* Set interface for sending outbound datagrams */
 	ifindex = IF_INDEX(ifp);
 	ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex));
 	if (ret < 0) {
