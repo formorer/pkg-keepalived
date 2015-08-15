@@ -29,6 +29,7 @@
 #include "memory.h"
 #include "utils.h"
 #include "logger.h"
+#include "bitops.h"
 
 /* global vars */
 vrrp_data_t *vrrp_data = NULL;
@@ -199,6 +200,7 @@ free_vrrp(void *data)
 	FREE_PTR(vrrp->script_fault);
 	FREE_PTR(vrrp->script_stop);
 	FREE_PTR(vrrp->script);
+	FREE_PTR(vrrp->stats);
 	FREE(vrrp->ipsecah_counter);
 
 	if (!LIST_ISEMPTY(vrrp->track_ifp))
@@ -224,6 +226,7 @@ dump_vrrp(void *data)
 	char auth_data[sizeof(vrrp->auth_data) + 1];
 
 	log_message(LOG_INFO, " VRRP Instance = %s", vrrp->iname);
+	log_message(LOG_INFO, "   Using VRRPv%d", vrrp->version);
 	if (vrrp->family == AF_INET6)
 		log_message(LOG_INFO, "   Using Native IPv6");
 	if (vrrp->init_state == VRRP_STATE_BACK)
@@ -249,21 +252,28 @@ dump_vrrp(void *data)
 	log_message(LOG_INFO, "   Gratuitous ARP refresh repeat = %d", vrrp->garp_refresh_rep);
 	log_message(LOG_INFO, "   Virtual Router ID = %d", vrrp->vrid);
 	log_message(LOG_INFO, "   Priority = %d", vrrp->base_priority);
-	log_message(LOG_INFO, "   Advert interval = %dsec",
-	       vrrp->adver_int / TIMER_HZ);
+	log_message(LOG_INFO, "   Advert interval = %d %s\n",
+		(vrrp->version == VRRP_VERSION_2) ? (vrrp->adver_int / TIMER_HZ) :
+		(vrrp->adver_int * 1000 / TIMER_HZ),
+		(vrrp->version == VRRP_VERSION_2) ? "sec" : "milli-sec");
+	log_message(LOG_INFO, "   Accept %s", ((vrrp->accept) ? "enabled" : "disabled"));
 	if (vrrp->nopreempt)
 		log_message(LOG_INFO, "   Preempt disabled");
 	if (vrrp->preempt_delay)
 		log_message(LOG_INFO, "   Preempt delay = %ld secs",
 		       vrrp->preempt_delay / TIMER_HZ);
-	if (vrrp->auth_type) {
-		log_message(LOG_INFO, "   Authentication type = %s",
-		       (vrrp->auth_type ==
-			VRRP_AUTH_AH) ? "IPSEC_AH" : "SIMPLE_PASSWORD");
-		/* vrrp->auth_data is not \0 terminated */
-		memcpy(auth_data, vrrp->auth_data, sizeof(vrrp->auth_data));
-		auth_data[sizeof(vrrp->auth_data)] = '\0';
-		log_message(LOG_INFO, "   Password = %s", auth_data);
+	if (vrrp->version == VRRP_VERSION_2) {
+		if (vrrp->auth_type) {
+			log_message(LOG_INFO, "   Authentication type = %s",
+				    (vrrp->auth_type ==
+				     VRRP_AUTH_AH) ? "IPSEC_AH" : "SIMPLE_PASSWORD");
+			if (vrrp->auth_type != VRRP_AUTH_AH) {
+				/* vrrp->auth_data is not \0 terminated */
+				memcpy(auth_data, vrrp->auth_data, sizeof(vrrp->auth_data));
+				auth_data[sizeof(vrrp->auth_data)] = '\0';
+				log_message(LOG_INFO, "   Password = %s", auth_data);
+			}
+		}
 	}
 	if (!LIST_ISEMPTY(vrrp->track_ifp)) {
 		log_message(LOG_INFO, "   Tracked interfaces = %d", LIST_SIZE(vrrp->track_ifp));
@@ -290,26 +300,21 @@ dump_vrrp(void *data)
 		dump_list(vrrp->vroutes);
 	}
 	if (vrrp->script_backup)
-		log_message(LOG_INFO, "   Backup state transition script = %s",
-		       vrrp->script_backup);
+		log_message(LOG_INFO, "   Backup state transition script = %s", vrrp->script_backup);
 	if (vrrp->script_master)
-		log_message(LOG_INFO, "   Master state transition script = %s",
-		       vrrp->script_master);
+		log_message(LOG_INFO, "   Master state transition script = %s", vrrp->script_master);
 	if (vrrp->script_fault)
-		log_message(LOG_INFO, "   Fault state transition script = %s",
-		       vrrp->script_fault);
+		log_message(LOG_INFO, "   Fault state transition script = %s", vrrp->script_fault);
 	if (vrrp->script_stop)
-		log_message(LOG_INFO, "   Stop state transition script = %s",
-		       vrrp->script_stop);
+		log_message(LOG_INFO, "   Stop state transition script = %s", vrrp->script_stop);
 	if (vrrp->script)
-		log_message(LOG_INFO, "   Generic state transition script = '%s'",
-		       vrrp->script);
+		log_message(LOG_INFO, "   Generic state transition script = '%s'", vrrp->script);
 	if (vrrp->smtp_alert)
 		log_message(LOG_INFO, "   Using smtp notification");
-	if (vrrp->vmac_flags & VRRP_VMAC_FL_SET)
+	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
 		log_message(LOG_INFO, "   Using VRRP VMAC (flags:%s|%s)"
-				    , (vrrp->vmac_flags & VRRP_VMAC_FL_UP) ? "UP" : "DOWN"
-				    , (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? "xmit_base" : "xmit");
+				    , (__test_bit(VRRP_VMAC_UP_BIT, &vrrp->vmac_flags)) ? "UP" : "DOWN"
+				    , (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? "xmit_base" : "xmit");
 }
 
 void
@@ -346,8 +351,12 @@ alloc_vrrp(char *iname)
 	new->family = AF_INET;
 	new->wantstate = VRRP_STATE_BACK;
 	new->init_state = VRRP_STATE_BACK;
+	new->version = VRRP_VERSION_2;
+	new->master_priority = 0;
+	new->last_transition = timer_now();
 	new->adver_int = TIMER_HZ;
 	new->iname = (char *) MALLOC(size + 1);
+	new->stats = alloc_vrrp_stats();
 	memcpy(new->iname, iname, size);
 	new->quick_sync = 0;
 	new->garp_rep = VRRP_GARP_REP;
@@ -355,6 +364,29 @@ alloc_vrrp(char *iname)
 
 	list_add(vrrp_data->vrrp, new);
 }
+
+vrrp_stats *
+alloc_vrrp_stats(void)
+{
+    vrrp_stats *new;
+    new = (vrrp_stats *) MALLOC(sizeof (vrrp_stats));
+    new->become_master = 0;
+    new->release_master = 0;
+    new->invalid_authtype = 0;
+    new->authtype_mismatch = 0;
+    new->packet_len_err = 0;
+    new->advert_rcvd = 0;
+    new->advert_sent = 0;
+    new->advert_interval_err = 0;
+    new->auth_failure = 0;
+    new->ip_ttl_err = 0;
+    new->pri_zero_rcvd = 0;
+    new->pri_zero_sent = 0;
+    new->invalid_type_rcvd = 0;
+    new->addr_list_err = 0;
+    return new;
+}
+
 
 void
 alloc_vrrp_unicast_peer(vector_t *strvec)

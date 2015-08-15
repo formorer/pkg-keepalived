@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
 #include <sys/param.h>
+#include <sys/types.h>
 #include <sys/utsname.h>
 #include <netdb.h>
 
@@ -44,11 +45,11 @@
 #define STR(x)  #x
 
 /* global vars exported */
-extern int debug;
+extern unsigned long debug;
 
 /* Prototypes defs */
 extern void dump_buffer(char *, int);
-extern u_short in_csum(u_short *, int, u_short);
+extern u_short in_csum(u_short *, int, int, int *);
 extern char *inet_ntop2(uint32_t);
 extern char *inet_ntoa2(uint32_t, char *);
 extern uint8_t inet_stom(char *);
@@ -70,5 +71,6 @@ uint32_t inet_broadcast(uint32_t, uint32_t);
 uint32_t inet_cidrtomask(uint8_t);
 extern char *get_local_name(void);
 extern int string_equal(const char *, const char *);
+extern int fork_exec(char **argv);
 
 #endif

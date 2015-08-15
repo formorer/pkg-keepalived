@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "parser.h"
 #include "memory.h"
+#include "bitops.h"
 
 /* Static addresses handler */
 static void
@@ -113,7 +114,7 @@ vrrp_vmac_handler(vector_t *strvec)
 	interface_t *ifp = vrrp->ifp;
 	struct sockaddr_storage *saddr = &vrrp->saddr;
 
-	vrrp->vmac_flags |= VRRP_VMAC_FL_SET;
+	__set_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags);
 	if (!vrrp->saddr.ss_family) {
 		if (!ifp) {
 			log_message(LOG_INFO, "Please define interface keyword before use_vmac keyword");
@@ -143,8 +144,8 @@ static void
 vrrp_vmac_xmit_base_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	if (vrrp->vmac_flags & VRRP_VMAC_FL_SET)
-		vrrp->vmac_flags |= VRRP_VMAC_FL_XMITBASE;
+	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
+		__set_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags);
 }
 static void
 vrrp_unicast_peer_handler(vector_t *strvec)
@@ -157,7 +158,7 @@ vrrp_native_ipv6_handler(vector_t *strvec)
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	vrrp->family = AF_INET6;
 
-	if (vrrp->vmac_flags & VRRP_VMAC_FL_SET)
+	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
 		log_message(LOG_INFO, "You should declare native_ipv6 before use_vmac!");
 
 	if (vrrp->auth_type != VRRP_AUTH_NONE)
@@ -192,9 +193,8 @@ vrrp_int_handler(vector_t *strvec)
 		return;
 	}
 
-	if (vrrp->vmac_flags & VRRP_VMAC_FL_SET) {
+	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
 		netlink_link_add_vmac(vrrp);
-	}
 }
 static void
 vrrp_track_int_handler(vector_t *strvec)
@@ -257,7 +257,7 @@ vrrp_vrid_handler(vector_t *strvec)
 		       "             must be between 1 & 255. reconfigure !");
 	} else {
 		alloc_vrrp_bucket(vrrp);
-		if (vrrp->vmac_flags & VRRP_VMAC_FL_SET) {
+		if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags)) {
 			if (strlen(vrrp->vmac_ifname) == 0)
 				snprintf(vrrp->vmac_ifname, IFNAMSIZ, "vrrp.%d", vrrp->vrid);
 			netlink_link_add_vmac(vrrp);
@@ -283,16 +283,16 @@ static void
 vrrp_adv_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	vrrp->adver_int = atoi(vector_slot(strvec, 1));
+	vrrp->adver_int = atof(vector_slot(strvec, 1)) * 100; /* multiply with 100 to get decimal value */
 
+	/* Simple check. Note that using VRRPv2 with 0.01s advert interval will not report an error */
 	if (VRRP_IS_BAD_ADVERT_INT(vrrp->adver_int)) {
 		log_message(LOG_INFO, "VRRP Error : Advert interval not valid !");
-		log_message(LOG_INFO,
-		       "             must be between less than 1sec.");
+		log_message(LOG_INFO, "             must be >=1sec for VRRPv2 or >=0.01sec for VRRPv3.\n");
 		log_message(LOG_INFO, "             Using default value : 1sec");
-		vrrp->adver_int = 1;
+		vrrp->adver_int = 100;
 	}
-	vrrp->adver_int *= TIMER_HZ;
+	vrrp->adver_int *= TIMER_HZ / 100.0;
 }
 static void
 vrrp_debug_handler(vector_t *strvec)
@@ -537,6 +537,28 @@ vrrp_vscript_fall_handler(vector_t *strvec)
 		vscript->fall = 1;
 }
 
+static void
+vrrp_version_handler(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+
+	uint8_t version = atoi(vector_slot(strvec, 1));
+	if (VRRP_IS_BAD_VERSION(version)) {
+		log_message(LOG_INFO, "VRRP Error : Version not valid !\n");
+		log_message(LOG_INFO, "             must be between either 2 or 3. reconfigure !\n");
+		return;
+	}
+	vrrp->version = version;
+}
+
+static void
+vrrp_accept_handler(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+
+	vrrp->accept = true;
+}
+
 vector_t *
 vrrp_init_keywords(void)
 {
@@ -569,11 +591,13 @@ vrrp_init_keywords(void)
 	install_keyword("mcast_src_ip", &vrrp_srcip_handler);
 	install_keyword("unicast_src_ip", &vrrp_srcip_handler);
 	install_keyword("virtual_router_id", &vrrp_vrid_handler);
+	install_keyword("version", &vrrp_version_handler);
 	install_keyword("priority", &vrrp_prio_handler);
 	install_keyword("advert_int", &vrrp_adv_handler);
 	install_keyword("virtual_ipaddress", &vrrp_vip_handler);
 	install_keyword("virtual_ipaddress_excluded", &vrrp_evip_handler);
 	install_keyword("virtual_routes", &vrrp_vroutes_handler);
+	install_keyword("accept", &vrrp_accept_handler);
 	install_keyword("preempt", &vrrp_preempt_handler);
 	install_keyword("nopreempt", &vrrp_nopreempt_handler);
 	install_keyword("preempt_delay", &vrrp_preempt_delay_handler);

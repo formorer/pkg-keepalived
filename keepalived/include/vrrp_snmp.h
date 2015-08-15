@@ -28,6 +28,8 @@
 
 /* VRRP SNMP defines */
 #define VRRP_OID KEEPALIVED_OID, 2
+#define VRRP_RFC_OID 1, 3, 6, 1, 2, 1, 68
+#define VRRP_RFC_TRAP_OID VRRP_RFC_OID, 0
 
 #define VRRP_SNMP_SCRIPT_NAME 3
 #define VRRP_SNMP_SCRIPT_COMMAND 4
@@ -94,10 +96,12 @@
 #define VRRP_SNMP_INSTANCE_SCRIPTFAULT 67
 #define VRRP_SNMP_INSTANCE_SCRIPTSTOP 68
 #define VRRP_SNMP_INSTANCE_SCRIPT 69
-#define VRRP_SNMP_TRACKEDINTERFACE_NAME 70
-#define VRRP_SNMP_TRACKEDINTERFACE_WEIGHT 71
-#define VRRP_SNMP_TRACKEDSCRIPT_NAME 73
-#define VRRP_SNMP_TRACKEDSCRIPT_WEIGHT 74
+#define VRRP_SNMP_INSTANCE_ACCEPT 70
+#define VRRP_SNMP_TRACKEDINTERFACE_NAME 71
+#define VRRP_SNMP_TRACKEDINTERFACE_WEIGHT 72
+#define VRRP_SNMP_TRACKEDSCRIPT_NAME 74
+#define VRRP_SNMP_TRACKEDSCRIPT_WEIGHT 75
+
 
 #define HEADER_STATE_STATIC_ADDRESS 1
 #define HEADER_STATE_VIRTUAL_ADDRESS 2
@@ -108,9 +112,9 @@
 
 
 /* Prototypes */
-extern void vrrp_snmp_agent_init(void);
+extern void vrrp_snmp_agent_init(const char *);
 extern void vrrp_snmp_agent_close(void);
 extern void vrrp_snmp_instance_trap(vrrp_t *);
 extern void vrrp_snmp_group_trap(vrrp_sgroup_t *);
-
+extern void vrrp_rfc_snmp_new_master_trap(vrrp_t *);
 #endif
