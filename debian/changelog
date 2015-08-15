@@ -1,3 +1,9 @@
+keepalived (1:1.2.19-1) unstable; urgency=medium
+
+  * [3594525] Imported Upstream version 1.2.19
+
+ -- Alexander Wirt <formorer@debian.org>  Sat, 15 Aug 2015 15:18:41 +0200
+
 keepalived (1:1.2.16-1) experimental; urgency=medium
 
   * [3cc1f17] Depend on ipvsadm2 instead of ipvsadm
