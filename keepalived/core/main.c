@@ -24,6 +24,7 @@
 #include "config.h"
 #include "signals.h"
 #include "pidfile.h"
+#include "bitops.h"
 #include "logger.h"
 
 /* global var */
@@ -38,6 +39,7 @@ char *checkers_pidfile = CHECKERS_PID_FILE;	/* overrule default pidfile */
 char *vrrp_pidfile = VRRP_PID_FILE;	/* overrule default pidfile */
 #ifdef _WITH_SNMP_
 int snmp = 0;			/* Enable SNMP support */
+const char *snmp_socket = NULL;	/* Socket to use for SNMP agent */
 #endif
 
 /* Log facility table */
@@ -138,6 +140,7 @@ usage(const char *prog)
 	fprintf(stderr, "  -l, --log-console            Log messages to local console\n");
 	fprintf(stderr, "  -D, --log-detail             Detailed log messages\n");
 	fprintf(stderr, "  -S, --log-facility=[0-7]     Set syslog facility to LOG_LOCAL[0-7]\n");
+	fprintf(stderr, "  -X, --release-vips           Drop VIP on transition from signal.\n");
 	fprintf(stderr, "  -V, --dont-release-vrrp      Don't remove VRRP VIPs and VROUTEs on daemon stop\n");
 	fprintf(stderr, "  -I, --dont-release-ipvs      Don't remove IPVS topology on daemon stop\n");
 	fprintf(stderr, "  -R, --dont-respawn           Don't respawn child processes\n");
@@ -148,6 +151,7 @@ usage(const char *prog)
 	fprintf(stderr, "  -c, --checkers_pid=FILE      Use specified pidfile for checkers child process\n");
 #ifdef _WITH_SNMP_
 	fprintf(stderr, "  -x, --snmp                   Enable SNMP subsystem\n");
+	fprintf(stderr, "  -A, --snmp-agent-socket=FILE Use the specified socket for master agent\n");
 #endif
 	fprintf(stderr, "  -v, --version                Display the version number\n");
 	fprintf(stderr, "  -h, --help                   Display this help message\n");
@@ -166,6 +170,7 @@ parse_cmdline(int argc, char **argv)
 		{"log-console",       no_argument,       0, 'l'},
 		{"log-detail",        no_argument,       0, 'D'},
 		{"log-facility",      required_argument, 0, 'S'},
+		{"release-vips",      no_argument,       0, 'X'},
 		{"dont-release-vrrp", no_argument,       0, 'V'},
 		{"dont-release-ipvs", no_argument,       0, 'I'},
 		{"dont-respawn",      no_argument,       0, 'R'},
@@ -176,6 +181,7 @@ parse_cmdline(int argc, char **argv)
 		{"checkers_pid",      required_argument, 0, 'c'},
  #ifdef _WITH_SNMP_
 		{"snmp",              no_argument,       0, 'x'},
+		{"snmp-agent-socket", required_argument, 0, 'A'},
  #endif
 		{"version",           no_argument,       0, 'v'},
 		{"help",              no_argument,       0, 'h'},
@@ -183,7 +189,7 @@ parse_cmdline(int argc, char **argv)
 	};
 
 #ifdef _WITH_SNMP_
-	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:x", long_options, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:xA:", long_options, NULL)) != EOF) {
 #else
 	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:", long_options, NULL)) != EOF) {
 #endif
@@ -197,25 +203,28 @@ parse_cmdline(int argc, char **argv)
 			exit(0);
 			break;
 		case 'l':
-			debug |= 1;
+			__set_bit(LOG_CONSOLE_BIT, &debug);
 			break;
 		case 'n':
-			debug |= 2;
+			__set_bit(DONT_FORK_BIT, &debug);
 			break;
 		case 'd':
-			debug |= 4;
+			__set_bit(DUMP_CONF_BIT, &debug);
 			break;
 		case 'V':
-			debug |= 8;
+			__set_bit(DONT_RELEASE_VRRP_BIT, &debug);
 			break;
 		case 'I':
-			debug |= 16;
+			__set_bit(DONT_RELEASE_IPVS_BIT, &debug);
 			break;
 		case 'D':
-			debug |= 32;
+			__set_bit(LOG_DETAIL_BIT, &debug);
 			break;
 		case 'R':
-			debug |= 64;
+			__set_bit(DONT_RESPAWN_BIT, &debug);
+			break;
+		case 'X':
+			__set_bit(RELEASE_VIPS_BIT, &debug);
 			break;
 		case 'S':
 			log_facility = LOG_FACILITY[atoi(optarg)].facility;
@@ -241,6 +250,9 @@ parse_cmdline(int argc, char **argv)
 #ifdef _WITH_SNMP_
 		case 'x':
 			snmp = 1;
+			break;
+		case 'A':
+			snmp_socket = optarg;
 			break;
 #endif
 		default:
@@ -271,7 +283,8 @@ main(int argc, char **argv)
 	 */
 	parse_cmdline(argc, argv);
 
-	openlog(PROG, LOG_PID | ((debug & 1) ? LOG_CONS : 0), log_facility);
+	openlog(PROG, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
+		    , log_facility);
 	log_message(LOG_INFO, "Starting " VERSION_STRING);
 
 	/* Check if keepalived is already running */
@@ -280,11 +293,11 @@ main(int argc, char **argv)
 		goto end;
 	}
 
-	if (debug & 1)
+	if (__test_bit(LOG_CONSOLE_BIT, &debug))
 		enable_console_log();
 
 	/* daemonize process */
-	if (!(debug & 2))
+	if (!__test_bit(DONT_FORK_BIT, &debug))
 		xdaemon(0, 0, 0);
 
 	/* write the father's pidfile */

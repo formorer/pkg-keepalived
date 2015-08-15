@@ -102,6 +102,22 @@ install_keyword(char *string, void (*handler) (vector_t *))
 }
 
 void
+install_sublevel_end_handler(void (*handler) (void))
+{
+	int i = 0;
+	keyword_t *keyword;
+
+	/* fetch last keyword */
+	keyword = vector_slot(keywords, vector_size(keywords) - 1);
+
+	/* position to last sub level */
+	for (i = 0; i < sublevel; i++)
+		keyword =
+		    vector_slot(keyword->sub, vector_size(keyword->sub) - 1);
+	keyword->sub_close_handler = handler;
+}
+
+void
 dump_keywords(vector_t *keydump, int level)
 {
 	int i, j;
@@ -223,6 +239,7 @@ void read_conf_file(char *conf_file)
 			log_message(LOG_INFO, "chdir(%s) error (%s)"
 					    , confpath, strerror(errno));
 		}
+		free(confpath);
 		process_stream(current_keywords);
 		fclose(stream);
 
@@ -290,7 +307,7 @@ read_line(char *buf, int size)
 
 	do {
 		int count = 0;
-		memset(buf, 0, MAXBUF);
+		memset(buf, 0, size);
 		while ((ch = fgetc(current_stream)) != EOF && (int) ch != '\n'
 			   && (int) ch != '\r') {
 			if (count < size)
@@ -440,6 +457,8 @@ process_stream(vector_t *keywords_vec)
 					kw_level++;
 					process_stream(keyword_vec->sub);
 					kw_level--;
+					if (keyword_vec->sub_close_handler)
+						(*keyword_vec->sub_close_handler) ();
 				}
 				break;
 			}

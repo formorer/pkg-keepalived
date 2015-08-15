@@ -33,6 +33,50 @@
 #include "global_data.h"
 
 
+/* Magic for RFC MIB functions */
+#define VRRP_RFC_SNMP_NODE_VER            2
+#define VRRP_RFC_SNMP_NOTIF_CNTL          3
+#define VRRP_RFC_SNMP_OPER_IF_IDX         4
+#define VRRP_RFC_SNMP_OPER_VRID           5
+#define VRRP_RFC_SNMP_OPER_AUTH_KEY       6
+#define VRRP_RFC_SNMP_OPER_ADVERT_INT     7
+#define VRRP_RFC_SNMP_OPER_PREEMPT        8
+#define VRRP_RFC_SNMP_OPER_VR_UPTIME      9
+#define VRRP_RFC_SNMP_OPER_PROTO          10
+#define VRRP_RFC_SNMP_OPER_ROW_STAT       11
+#define VRRP_RFC_SNMP_OPER_VMAC           12
+#define VRRP_RFC_SNMP_OPER_STATE          13
+#define VRRP_RFC_SNMP_OPER_ADM_STATE      14
+#define VRRP_RFC_SNMP_OPER_PRI            15
+#define VRRP_RFC_SNMP_OPER_ADDR_CNT       16
+#define VRRP_RFC_SNMP_OPER_MIP            17
+#define VRRP_RFC_SNMP_OPER_PIP            18
+#define VRRP_RFC_SNMP_OPER_AUTH_TYPE      19
+#define VRRP_RFC_SNMP_OPER_TRAP_SRC       20
+#define VRRP_RFC_SNMP_OPER_TRAP_AUTH_ERR  21
+#define VRRP_RFC_SNMP_ASSOC_IP_ADDR       22
+#define VRRP_RFC_SNMP_ASSOC_IP_ADDR_ROW   23
+#define VRRP_RFC_SNMP_STATS_CHK_ERR       24
+#define VRRP_RFC_SNMP_STATS_VER_ERR       26
+#define VRRP_RFC_SNMP_STATS_VRID_ERR      27
+#define VRRP_RFC_SNMP_STATS_MASTER        28
+#define VRRP_RFC_SNMP_STATS_AUTH_INV      29
+#define VRRP_RFC_SNMP_STATS_AUTH_MIS      30
+#define VRRP_RFC_SNMP_STATS_PL_ERR        31
+#define VRRP_RFC_SNMP_STATS_ADV_RCVD      32
+#define VRRP_RFC_SNMP_STATS_ADV_INT_ERR   33
+#define VRRP_RFC_SNMP_STATS_AUTH_FAIL     35
+#define VRRP_RFC_SNMP_STATS_TTL_ERR       36
+#define VRRP_RFC_SNMP_STATS_PRI_0_RCVD    37
+#define VRRP_RFC_SNMP_STATS_PRI_0_SENT    38
+#define VRRP_RFC_SNMP_STATS_INV_TYPE_RCVD 39
+#define VRRP_RFC_SNMP_STATS_ADDR_LIST_ERR 40
+#define VRRP_RFC_SNMP_CNFRM_MIB           41
+#define VRRP_RFC_SNMP_GRP_OPER            42
+#define VRRP_RFC_SNMP_GRP_STATS           43
+#define VRRP_RFC_SNMP_GRP_TRAP            44
+#define VRRP_RFC_SNMP_GRP_NOTIF           45
+
 /* Convert VRRP state to SNMP state */
 static unsigned long
 vrrp_snmp_state(int state)
@@ -515,6 +559,57 @@ _get_instance(oid *name, size_t name_len)
 }
 
 static int
+vrrp_snmp_instance_accept(int action,
+			  u_char *var_val, u_char var_val_type,
+			  size_t var_val_len, u_char *statP,
+			  oid *name, size_t name_len)
+{
+	vrrp_t *vrrp = NULL;
+
+	switch (action) {
+	case RESERVE1:
+		/* Check that the proposed value is acceptable */
+		if (var_val_type != ASN_INTEGER)
+			return SNMP_ERR_WRONGTYPE;
+		if (var_val_len > sizeof(long))
+			return SNMP_ERR_WRONGLENGTH;
+		switch ((long)(*var_val)) {
+		case 1:		/* enable accept */
+		case 2:         /* disable accept */
+			break;
+		default:
+			return SNMP_ERR_WRONGVALUE;
+		}
+		break;
+	case RESERVE2:	/* Check that we can find the instance.*/
+	case COMMIT:
+		/* Find the instance */
+		vrrp = _get_instance(name, name_len);
+		if (!vrrp)
+			return SNMP_ERR_NOSUCHNAME;
+		if (action == RESERVE2)
+			break;
+		/* Commit: change values. There is no way to fail. */
+		switch ((long)(*var_val)) {
+		case 1:
+			log_message(LOG_INFO,
+				    "VRRP_Instance(%s) accept mode enabled with SNMP",
+				     vrrp->iname);
+			vrrp->accept = 0;
+			break;
+		case 2:
+			log_message(LOG_INFO,
+				    "VRRP_Instance(%s) accept mode disabled with SNMP",
+				    vrrp->iname);
+			vrrp->accept = 1;
+			break;
+			}
+		break;
+		}
+	return SNMP_ERR_NOERROR;
+}
+
+static int
 vrrp_snmp_instance_priority(int action,
 			    u_char *var_val, u_char var_val_type, size_t var_val_len,
 			    u_char *statP, oid *name, size_t name_len)
@@ -648,7 +743,9 @@ vrrp_snmp_instance(struct variable *vp, oid *name, size_t *length,
 		long_ret = rt->track_ifp?1:2;
 		return (u_char *)&long_ret;
 	case VRRP_SNMP_INSTANCE_ADVERTISEMENTSINT:
-		long_ret = rt->adver_int / TIMER_HZ;
+		long_ret = (rt->version == VRRP_VERSION_2) ?
+			    rt->adver_int / TIMER_HZ :
+			    (rt->adver_int * 100) / TIMER_HZ;
 		return (u_char *)&long_ret;
 	case VRRP_SNMP_INSTANCE_PREEMPT:
 		long_ret = rt->nopreempt?2:1;
@@ -658,8 +755,11 @@ vrrp_snmp_instance(struct variable *vp, oid *name, size_t *length,
 		long_ret = rt->preempt_delay / TIMER_HZ;
 		return (u_char *)&long_ret;
 	case VRRP_SNMP_INSTANCE_AUTHTYPE:
-		long_ret = rt->auth_type;
+		long_ret = 0;
+		if (rt->version == VRRP_VERSION_2)
+			long_ret = rt->auth_type;
 		return (u_char *)&long_ret;
+
 	case VRRP_SNMP_INSTANCE_USELVSSYNCDAEMON:
 		long_ret = (rt->lvs_syncd_if)?1:2;
 		return (u_char *)&long_ret;
@@ -714,6 +814,13 @@ vrrp_snmp_instance(struct variable *vp, oid *name, size_t *length,
 			return (u_char *)rt->script;
 		}
 		break;
+	case VRRP_SNMP_INSTANCE_ACCEPT:
+		long_ret = 0;
+		if (rt->version == VRRP_VERSION_3) {
+			long_ret = rt->accept ? 1:2;
+			*write_method = vrrp_snmp_instance_accept;
+		}
+		return (u_char *)&long_ret;
 	default:
 		return NULL;
         }
@@ -897,6 +1004,112 @@ vrrp_snmp_trackedscript(struct variable *vp, oid *name, size_t *length,
 	return NULL;
 }
 
+static u_char*
+vrrp_rfc_snmp_node_info(struct variable *vp, oid *name, size_t *length,
+			int exact, size_t *var_len, WriteMethod **write_method)
+{
+         return NULL;
+}
+
+static u_char*
+vrrp_rfc_snmp_opertable(struct variable *vp, oid *name, size_t *length,
+			int exact, size_t *var_len, WriteMethod **write_method)
+{
+         return NULL;
+}
+
+static u_char*
+vrrp_rfc_snmp_assoiptable(struct variable *vp, oid *name, size_t *length,
+			int exact, size_t *var_len, WriteMethod **write_method)
+{
+         return NULL;
+}
+
+static u_char*
+vrrp_rfc_snmp_statstable(struct variable *vp, oid *name, size_t *length,
+			int exact, size_t *var_len, WriteMethod **write_method)
+{
+         return NULL;
+}
+
+
+static oid vrrp_rfc_oid[] = {VRRP_RFC_OID};
+static struct variable8 vrrp_rfc_vars[] = {
+        { VRRP_RFC_SNMP_NODE_VER, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_node_info, 2, {1, 1}},
+        { VRRP_RFC_SNMP_NOTIF_CNTL, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_node_info, 2, {1, 2}},
+	/* vrrpOperTable */
+	{ VRRP_RFC_SNMP_OPER_IF_IDX, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 3, {1, 3, 1}},
+        { VRRP_RFC_SNMP_OPER_VRID, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 1}},
+        { VRRP_RFC_SNMP_OPER_VMAC, ASN_OCTET_STR, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 2}},
+        { VRRP_RFC_SNMP_OPER_STATE, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 3}},
+        { VRRP_RFC_SNMP_OPER_ADM_STATE, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 4}},
+        { VRRP_RFC_SNMP_OPER_PRI, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 5}},
+        { VRRP_RFC_SNMP_OPER_ADDR_CNT, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 6}},
+        { VRRP_RFC_SNMP_OPER_MIP, ASN_IPADDRESS, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 7}},
+        { VRRP_RFC_SNMP_OPER_PIP, ASN_IPADDRESS, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 8}},
+        { VRRP_RFC_SNMP_OPER_AUTH_TYPE, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 9}},
+        { VRRP_RFC_SNMP_OPER_AUTH_KEY, ASN_OCTET_STR, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 10}},
+        { VRRP_RFC_SNMP_OPER_ADVERT_INT, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 11}},
+        { VRRP_RFC_SNMP_OPER_PREEMPT, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 12}},
+        { VRRP_RFC_SNMP_OPER_VR_UPTIME, ASN_TIMETICKS, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 13}},
+        { VRRP_RFC_SNMP_OPER_PROTO, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 14}},
+        { VRRP_RFC_SNMP_OPER_ROW_STAT, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_opertable, 4, {1, 3, 1, 15}},
+	/* vrrpAssoIpAddrTable */
+        { VRRP_RFC_SNMP_ASSOC_IP_ADDR, ASN_IPADDRESS, RONLY,
+	  vrrp_rfc_snmp_assoiptable, 4, {1, 4, 1, 1}},
+        { VRRP_RFC_SNMP_ASSOC_IP_ADDR_ROW, ASN_INTEGER, RONLY,
+	  vrrp_rfc_snmp_assoiptable, 4, {1, 4, 1, 2}},
+	/* vrrpRouterStatsTable */
+        { VRRP_RFC_SNMP_STATS_CHK_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 1}},
+        { VRRP_RFC_SNMP_STATS_VER_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 2, {2, 2}},
+        { VRRP_RFC_SNMP_STATS_VRID_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 2, {2, 3}},
+        { VRRP_RFC_SNMP_STATS_MASTER, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 1}},
+        { VRRP_RFC_SNMP_STATS_ADV_RCVD, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 2}},
+        { VRRP_RFC_SNMP_STATS_ADV_INT_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 3}},
+        { VRRP_RFC_SNMP_STATS_AUTH_FAIL, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 4}},
+        { VRRP_RFC_SNMP_STATS_TTL_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 5}},
+        { VRRP_RFC_SNMP_STATS_PRI_0_RCVD, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 6}},
+        { VRRP_RFC_SNMP_STATS_PRI_0_SENT, ASN_COUNTER , RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 7}},
+        { VRRP_RFC_SNMP_STATS_INV_TYPE_RCVD, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 8}},
+        { VRRP_RFC_SNMP_STATS_ADDR_LIST_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 9}},
+        { VRRP_RFC_SNMP_STATS_AUTH_INV, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 10}},
+        { VRRP_RFC_SNMP_STATS_AUTH_MIS, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 11}},
+        { VRRP_RFC_SNMP_STATS_PL_ERR, ASN_COUNTER, RONLY,
+	  vrrp_rfc_snmp_statstable, 4, {2, 4, 1, 12}}
+};
+
 static oid vrrp_oid[] = {VRRP_OID};
 static struct variable8 vrrp_vars[] = {
 	/* vrrpSyncGroupTable */
@@ -970,6 +1183,8 @@ static struct variable8 vrrp_vars[] = {
 	 vrrp_snmp_instance, 3, {3, 1, 25}},
 	{VRRP_SNMP_INSTANCE_SCRIPT, ASN_OCTET_STR, RONLY,
 	 vrrp_snmp_instance, 3, {3, 1, 26}},
+	{VRRP_SNMP_INSTANCE_ACCEPT, ASN_INTEGER, RWRITE,
+	 vrrp_snmp_instance, 3, {3, 1, 27} },
 	/* vrrpTrackedInterfaceTable */
 	{VRRP_SNMP_TRACKEDINTERFACE_NAME, ASN_OCTET_STR, RONLY,
 	 vrrp_snmp_trackedinterface, 3, {4, 1, 1}},
@@ -1039,18 +1254,61 @@ static struct variable8 vrrp_vars[] = {
 };
 
 void
-vrrp_snmp_agent_init()
+vrrp_snmp_agent_init(const char *snmp_socket)
 {
-	snmp_agent_init(vrrp_oid, OID_LENGTH(vrrp_oid), "VRRP",
-			(struct variable *)vrrp_vars,
-			sizeof(struct variable8),
-			sizeof(vrrp_vars)/sizeof(struct variable8));
+	snmp_agent_init(snmp_socket);
+	snmp_register_mib(vrrp_oid, OID_LENGTH(vrrp_oid), "KEEPALIVED-VRRP",
+			  (struct variable *)vrrp_vars,
+			  sizeof(struct variable8),
+			  sizeof(vrrp_vars)/sizeof(struct variable8));
+	snmp_register_mib(vrrp_rfc_oid, OID_LENGTH(vrrp_rfc_oid), "VRRP",
+			  (struct variable *)vrrp_rfc_vars,
+			  sizeof(struct variable8),
+			  sizeof(vrrp_rfc_vars)/sizeof(struct variable8));
 }
 
 void
-vrrp_snmp_agent_close()
+vrrp_snmp_agent_close(void)
 {
-	snmp_agent_close(vrrp_oid, OID_LENGTH(vrrp_oid), "VRRP");
+	snmp_agent_close(vrrp_oid, OID_LENGTH(vrrp_oid), "KEEPALIVED-VRRP");
+	snmp_agent_close(vrrp_rfc_oid, OID_LENGTH(vrrp_rfc_oid), "VRRP");
+}
+
+void
+vrrp_rfc_snmp_new_master_trap(vrrp_t *vrrp)
+{
+
+	/* OID of the notification vrrpTrapNewMaster */
+	oid notification_oid[] = { VRRP_RFC_TRAP_OID, 1 };
+	size_t notification_oid_len = OID_LENGTH(notification_oid);
+	/* OID for snmpTrapOID.0 */
+	oid objid_snmptrap[] = { SNMPTRAP_OID };
+	size_t objid_snmptrap_len = OID_LENGTH(objid_snmptrap);
+	/* OID for trap data vrrpOperMasterIPAddr */
+	oid masterip_oid[] = { VRRP_RFC_OID, 1, 3, 1, 7, IF_INDEX(vrrp->ifp), vrrp->vrid };
+	size_t masterip_oid_len = OID_LENGTH(masterip_oid);
+
+	netsnmp_variable_list *notification_vars = NULL;
+
+	if (!global_data->enable_traps) return;
+
+	/* snmpTrapOID */
+	snmp_varlist_add_variable(&notification_vars,
+				  objid_snmptrap, objid_snmptrap_len,
+				  ASN_OBJECT_ID,
+				  (u_char *) notification_oid,
+				  notification_oid_len * sizeof(oid));
+	/* vrrpInstanceName */
+	snmp_varlist_add_variable(&notification_vars,
+				  masterip_oid, masterip_oid_len,
+				  ASN_IPADDRESS,
+				  (u_char *)&vrrp->saddr,
+				  sizeof(vrrp->saddr));
+	log_message(LOG_INFO, "VRRP_Instance(%s): Sending SNMP notification"
+			      " vrrpTrapNewMaster"
+			    , vrrp->iname);
+	send_v2trap(notification_vars);
+	snmp_free_varbind(notification_vars);
 }
 
 void

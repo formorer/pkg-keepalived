@@ -27,6 +27,7 @@
 #include "logger.h"
 #include "memory.h"
 #include "utils.h"
+#include "bitops.h"
 
 /* Add/Delete IP address to a specific interface_t */
 static int
@@ -85,6 +86,9 @@ netlink_ipaddress(ip_address_t *ipaddress, int cmd)
 	} else {
 		addattr_l(&req.n, sizeof(req), IFA_LOCAL,
 			  &ipaddress->u.sin.sin_addr, sizeof(ipaddress->u.sin.sin_addr));
+		if (cmd == IPADDRESS_DEL)
+			addattr_l(&req.n, sizeof(req), IFA_ADDRESS,
+			  &ipaddress->u.sin.sin_addr, sizeof(ipaddress->u.sin.sin_addr));
 		if (ipaddress->u.sin.sin_brd.s_addr)
 			addattr_l(&req.n, sizeof(req), IFA_BROADCAST,
 				  &ipaddress->u.sin.sin_brd, sizeof(ipaddress->u.sin.sin_brd));
@@ -112,17 +116,97 @@ netlink_iplist(list ip_list, int cmd)
 		return;
 
 	/*
-	 * If "--dont-release-vrrp" (debug & 8) is set then try to release
-	 * addresses that may be there, even if we didn't set them.
+	 * If "--dont-release-vrrp" is set then try to release addresses
+	 * that may be there, even if we didn't set them.
 	 */
 	for (e = LIST_HEAD(ip_list); e; ELEMENT_NEXT(e)) {
 		ipaddr = ELEMENT_DATA(e);
 		if ((cmd && !ipaddr->set) ||
-		    (!cmd && (ipaddr->set || debug & 8))) {
+		    (!cmd &&
+		     (ipaddr->set || __test_bit(DONT_RELEASE_VRRP_BIT, &debug)))) {
 			if (netlink_ipaddress(ipaddr, cmd) > 0)
 				ipaddr->set = (cmd) ? 1 : 0;
 			else
 				ipaddr->set = 0;
+		}
+	}
+}
+
+static void
+handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname)
+{
+	char  *argv[14];
+	unsigned int i = 0;
+
+	argv[i++] = "ip6tables";
+	argv[i++] = cmd ? "-A" : "-D";
+	argv[i++] = "INPUT";
+	argv[i++] = "-i";
+	argv[i++] = ifname;
+	argv[i++] = "-d";
+	argv[i++] = ipaddresstos(ipaddress);
+	argv[i++] = "-p";
+	argv[i++] = "icmpv6";
+	argv[i++] = "--icmpv6-type";
+	argv[i++] = "136";
+	argv[i++] = "-j";
+	argv[i++] = "ACCEPT";
+	argv[i] = '\0';
+
+	if (fork_exec(argv) < 0)
+		log_message(LOG_ERR, "Failed to %s ip6table rule to accept NAs sent"
+				     "to vip %s\n", (cmd) ? "set" : "remove",
+				     ipaddresstos(ipaddress));
+}
+
+/* add/remove iptable drop rule to VIP */
+static void
+handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname)
+{
+	char  *argv[10];
+	unsigned int i = 0;
+
+	if (IP_IS6(ipaddress)) {
+		handle_iptable_rule_to_NA(ipaddress, cmd, ifname);
+		argv[i++] = "ip6tables";
+	} else {
+		argv[i++] = "iptables";
+	}
+
+	argv[i++] = cmd ? "-A" : "-D";
+	argv[i++] = "INPUT";
+	argv[i++] = "-i";
+	argv[i++] = ifname;
+	argv[i++] = "-d";
+	argv[i++] = ipaddresstos(ipaddress);
+	argv[i++] = "-j";
+	argv[i++] = "DROP";
+	argv[i] = '\0';
+
+	if (fork_exec(argv) < 0)
+		log_message(LOG_ERR, "Failed to %s iptable drop rule"
+				     " to vip %s\n", (cmd) ? "set" : "remove",
+				     ipaddresstos(ipaddress));
+	else
+		ipaddress->iptable_rule_set = (cmd) ? true : false;
+}
+
+/* add/remove iptable drop rules to iplist */
+void
+handle_iptable_rule_to_iplist(list ip_list, int cmd, char *ifname)
+{
+	ip_address_t *ipaddr;
+	element e;
+
+	/* No addresses in this list */
+	if (LIST_ISEMPTY(ip_list))
+		return;
+
+	for (e = LIST_HEAD(ip_list); e; ELEMENT_NEXT(e)) {
+		ipaddr = ELEMENT_DATA(e);
+		if ((cmd && !ipaddr->iptable_rule_set) ||
+		    (!cmd && ipaddr->iptable_rule_set)) {
+			handle_iptable_rule_to_vip(ipaddr, cmd, ifname);
 		}
 	}
 }
@@ -302,6 +386,7 @@ address_exist(list l, ip_address_t *ipaddress)
 		ipaddr = ELEMENT_DATA(e);
 		if (IP_ISEQ(ipaddr, ipaddress)) {
 			ipaddr->set = ipaddress->set;
+			ipaddr->iptable_rule_set = ipaddress->iptable_rule_set;
 			return 1;
 		}
 	}
@@ -317,15 +402,19 @@ clear_diff_address(list l, list n)
 	element e;
 	char *addr_str;
 	void *addr;
+	char *iface_name;
 
 	/* No addresses in previous conf */
 	if (LIST_ISEMPTY(l))
 		return;
 
+	ipaddr = ELEMENT_DATA(LIST_HEAD(l));
+	iface_name = IF_NAME(base_if_get_by_ifindex(ipaddr->ifa.ifa_index));
 	/* All addresses removed */
 	if (LIST_ISEMPTY(n)) {
 		log_message(LOG_INFO, "Removing a VIP|E-VIP block");
 		netlink_iplist(l, IPADDRESS_DEL);
+		handle_iptable_rule_to_iplist(l, IPADDRESS_DEL, iface_name);
 		return;
 	}
 
@@ -343,6 +432,8 @@ clear_diff_address(list l, list n)
 					    , ipaddr->ifa.ifa_prefixlen
 					    , IF_NAME(if_get_by_ifindex(ipaddr->ifa.ifa_index)));
 			netlink_ipaddress(ipaddr, IPADDRESS_DEL);
+			if (ipaddr->iptable_rule_set)
+				handle_iptable_rule_to_vip(ipaddr, IPADDRESS_DEL, iface_name);
 		}
 	}
 	FREE(addr_str);

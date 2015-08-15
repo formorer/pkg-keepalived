@@ -79,23 +79,13 @@ if_get_by_ifindex(const int ifindex)
 	return NULL;
 }
 
-/* Return interface from VMAC base interface index */
+/* Return base interface from interface index incase of VMAC */
 interface_t *
-if_get_by_vmac_base_ifindex(const int ifindex)
+base_if_get_by_ifindex(const int ifindex)
 {
-	interface_t *ifp;
-	element e;
+	interface_t *ifp = if_get_by_ifindex(ifindex);
 
-	if (LIST_ISEMPTY(if_queue) || !ifindex)
-		return NULL;
-
-	for (e = LIST_HEAD(if_queue); e; ELEMENT_NEXT(e)) {
-		ifp = ELEMENT_DATA(e);
-		if (ifp->vmac && ifp->base_ifindex == ifindex)
-			return ifp;
-	}
-
-	return NULL;
+	return (ifp && ifp->vmac) ? if_get_by_ifindex(ifp->base_ifindex) : ifp;
 }
 
 interface_t *
@@ -113,6 +103,27 @@ if_get_by_ifname(const char *ifname)
 			return ifp;
 	}
 	return NULL;
+}
+
+/*
+ * Reflect base interface flags on VMAC interfaces.
+ * VMAC interfaces should never update it own flags, only be reflected
+ * by the base interface flags.
+ */
+void
+if_vmac_reflect_flags(const int ifindex, const unsigned long flags)
+{
+	interface_t *ifp;
+	element e;
+
+	if (LIST_ISEMPTY(if_queue) || !ifindex)
+		return;
+
+	for (e = LIST_HEAD(if_queue); e; ELEMENT_NEXT(e)) {
+		ifp = ELEMENT_DATA(e);
+		if (ifp->vmac && ifp->base_ifindex == ifindex)
+			ifp->flags = flags;
+	}
 }
 
 /* MII Transceiver Registers poller functions */
@@ -559,6 +570,26 @@ if_setsockopt_hdrincl(int *sd)
 
 	return *sd;
 }
+
+int
+if_setsockopt_ipv6_checksum(int *sd)
+{
+	int ret;
+	int offset = 6;
+
+	if (!sd && *sd < 0)
+		return -1;
+
+	ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_CHECKSUM, &offset, sizeof(offset));
+	if (ret < 0) {
+		log_message(LOG_INFO, "cant set IPV6_CHECKSUM IP option. errno=%d (%m)", errno);
+		close(*sd);
+		*sd = -1;
+	}
+
+	return *sd;
+}
+
 
 int
 if_setsockopt_mcast_loop(sa_family_t family, int *sd)

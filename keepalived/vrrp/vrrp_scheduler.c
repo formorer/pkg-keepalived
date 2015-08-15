@@ -38,6 +38,7 @@
 #include "main.h"
 #include "smtp.h"
 #include "signals.h"
+#include "bitops.h"
 #ifdef _WITH_SNMP_
 #include "vrrp_snmp.h"
 #endif
@@ -260,6 +261,7 @@ vrrp_init_state(list l)
 #ifdef _WITH_SNMP_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
+			vrrp->last_transition = timer_now();
 
 			/* Init group if needed  */
 			if ((vgroup = vrrp->sync)) {
@@ -448,10 +450,10 @@ vrrp_create_sockpool(list l)
 
 	for (e = LIST_HEAD(p); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);
-		ifindex = (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? IF_BASE_INDEX(vrrp->ifp) :
-								       IF_INDEX(vrrp->ifp);
+		ifindex = (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
+										    IF_INDEX(vrrp->ifp);
 		unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
-		if (vrrp->auth_type == VRRP_AUTH_AH)
+		if (vrrp->version == VRRP_VERSION_2 && vrrp->auth_type == VRRP_AUTH_AH)
 			proto = IPPROTO_IPSEC_AH;
 		else
 			proto = IPPROTO_VRRP;
@@ -494,15 +496,16 @@ vrrp_set_fds(list l)
 		sock = ELEMENT_DATA(e_sock);
 		for (e_vrrp = LIST_HEAD(p); e_vrrp; ELEMENT_NEXT(e_vrrp)) {
 			vrrp = ELEMENT_DATA(e_vrrp);
-			ifindex = (vrrp->vmac_flags & VRRP_VMAC_FL_XMITBASE) ? IF_BASE_INDEX(vrrp->ifp) :
-									       IF_INDEX(vrrp->ifp);
+			ifindex = (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
+											    IF_INDEX(vrrp->ifp);
 			unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
-			if (vrrp->auth_type == VRRP_AUTH_AH)
+			if (vrrp->version == VRRP_VERSION_2 && vrrp->auth_type == VRRP_AUTH_AH)
 				proto = IPPROTO_IPSEC_AH;
 			else
 				proto = IPPROTO_VRRP;
 
 			if ((sock->ifindex == ifindex)	&&
+                (sock->family == vrrp->family) &&
 			    (sock->proto == proto)	&&
 			    (sock->unicast == unicast)) {
 				vrrp->fd_in = sock->fd_in;
@@ -545,7 +548,7 @@ vrrp_dispatcher_init(thread_t * thread)
 	vrrp_register_workers(vrrp_data->vrrp_socket_pool);
 
 	/* Dump socket pool */
-	if (debug & 32)
+	if (__test_bit(LOG_DETAIL_BIT, &debug))
 		dump_list(vrrp_data->vrrp_socket_pool);
 	return 1;
 }
@@ -601,7 +604,7 @@ vrrp_become_master(vrrp_t * vrrp, char *buffer, int len)
 		 * If we are in IPSEC AH mode, we must be sync
 		 * with the remote IPSEC AH VRRP instance counter.
 		 */
-		if (iph->protocol == IPPROTO_IPSEC_AH) {
+		if (vrrp->version == VRRP_VERSION_2 && iph->protocol == IPPROTO_IPSEC_AH) {
 			log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : seq_num sync",
 			       vrrp->iname);
 			ah = (ipsec_ah_t *) (buffer + sizeof (struct iphdr));
@@ -672,6 +675,7 @@ vrrp_leave_fault(vrrp_t * vrrp, char *buffer, int len)
 #ifdef _WITH_SNMP_
 				vrrp_snmp_instance_trap(vrrp);
 #endif
+				vrrp->last_transition = timer_now();
 			}
 		} else {
 			log_message(LOG_INFO, "VRRP_Instance(%s) Entering BACKUP STATE",
@@ -682,6 +686,7 @@ vrrp_leave_fault(vrrp_t * vrrp, char *buffer, int len)
 #ifdef _WITH_SNMP_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
+			vrrp->last_transition = timer_now();
 		}
 	}
 }
@@ -701,9 +706,10 @@ vrrp_goto_master(vrrp_t * vrrp)
 #ifdef _WITH_SNMP_
 		vrrp_snmp_instance_trap(vrrp);
 #endif
+		vrrp->last_transition = timer_now();
 	} else {
 		/* If becoming MASTER in IPSEC AH AUTH, we reset the anti-replay */
-		if (vrrp->ipsecah_counter->cycle) {
+		if (vrrp->version == VRRP_VERSION_2 && vrrp->ipsecah_counter->cycle) {
 			vrrp->ipsecah_counter->cycle = 0;
 			vrrp->ipsecah_counter->seq_number = 0;
 		}
@@ -779,7 +785,7 @@ vrrp_master(vrrp_t * vrrp)
 	/* Then perform the state transition */
 	if (vrrp->wantstate == VRRP_STATE_GOTO_FAULT ||
 	    vrrp->wantstate == VRRP_STATE_BACK ||
-	    vrrp->ipsecah_counter->cycle) {
+	    (vrrp->version == VRRP_VERSION_2 && vrrp->ipsecah_counter->cycle)) {
 		vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
 
 		/* handle backup state transition */
@@ -832,7 +838,7 @@ vrrp_fault(vrrp_t * vrrp)
 	 * VRRP MASTER send its advert for the concerned
 	 * instance.
 	 */
-	if (vrrp->auth_type == VRRP_AUTH_AH) {
+	if (vrrp->version == VRRP_VERSION_2 && vrrp->auth_type == VRRP_AUTH_AH) {
 		vrrp_ah_sync(vrrp);
 	} else {
 		/* Otherwise, we transit to init state */
@@ -842,6 +848,7 @@ vrrp_fault(vrrp_t * vrrp)
 #ifdef _WITH_SNMP_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
+			vrrp->last_transition = timer_now();
 		} else {
 			vrrp_goto_master(vrrp);
 		}

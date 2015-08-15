@@ -40,11 +40,16 @@ vrrp_init_instance_sands(vrrp_t * vrrp)
 	    vrrp->state == VRRP_STATE_GOTO_MASTER ||
 	    vrrp->state == VRRP_STATE_GOTO_FAULT  ||
 	    vrrp->wantstate == VRRP_STATE_GOTO_MASTER) {
-		vrrp->sands.tv_sec = time_now.tv_sec + vrrp->adver_int / TIMER_HZ;
- 		vrrp->sands.tv_usec = time_now.tv_usec;
+		vrrp->sands = timer_add_long(time_now, vrrp->adver_int);
 		return;
 	}
 
+	/*
+	 * When in the BACKUP state the expiry timer should be updated to
+	 * time_now plus the Master Down Timer, when a non-preemptable packet is
+	 * received. (When a preemptable packet is received, the wantstate is
+	 * moved to GOTO_MASTER and this condition is caught above).
+	 */
 	if (vrrp->state == VRRP_STATE_BACK || vrrp->state == VRRP_STATE_FAULT)
 		vrrp->sands = timer_add_long(time_now, vrrp->ms_down_timer);
 }

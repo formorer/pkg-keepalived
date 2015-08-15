@@ -44,12 +44,6 @@ get_iscript(vrrp_t * vrrp, int state)
 }
 
 static char *
-get_igscript(vrrp_t * vrrp)
-{
-	return vrrp->script;
-}
-
-static char *
 get_gscript(vrrp_sgroup_t * vgroup, int state)
 {
 	if (!vgroup->notify_exec)
@@ -61,6 +55,12 @@ get_gscript(vrrp_sgroup_t * vgroup, int state)
 	if (state == VRRP_STATE_FAULT)
 		return vgroup->script_fault;
 	return NULL;
+}
+
+static char *
+get_igscript(vrrp_t *vrrp)
+{
+	return vrrp->script;
 }
 
 static char *
