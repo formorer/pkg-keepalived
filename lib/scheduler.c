@@ -4,14 +4,14 @@
  *              a loadbalanced server pool using multi-layer checks.
  *
  * Part:        Scheduling framework. This code is highly inspired from
- *              the thread management routine (thread.c) present in the 
+ *              the thread management routine (thread.c) present in the
  *              very nice zebra project (http://www.zebra.org).
  *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
  *
- *              This program is distributed in the hope that it will be useful, 
- *              but WITHOUT ANY WARRANTY; without even the implied warranty of 
- *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  
+ *              This program is distributed in the hope that it will be useful,
+ *              but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  *              See the GNU General Public License for more details.
  *
  *              This program is free software; you can redistribute it and/or
@@ -31,6 +31,10 @@
 #undef FREE
 #endif
 
+#ifndef _DEBUG_
+#define NDEBUG
+#endif
+#include <assert.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/select.h>
@@ -40,9 +44,43 @@
 #include "utils.h"
 #include "signals.h"
 #include "logger.h"
+#include "bitops.h"
+
 
 /* global vars */
 thread_master_t *master = NULL;
+
+void
+report_child_status(int status, pid_t pid, const char *prog_name)
+{
+	const char *prog_id;
+	char pid_buf[10];	/* "pid 32767" + '\0' */
+
+	if (prog_name)
+		prog_id = prog_name;
+	else {
+		snprintf(pid_buf, sizeof(pid_buf), "pid %d", pid);
+		prog_id = pid_buf;
+	}
+
+	if (WIFEXITED(status)) {
+		if (WEXITSTATUS(status) != 0)
+			log_message(LOG_INFO, "%s exited with status %d", prog_id, WEXITSTATUS(status));
+		return;
+	}
+	if (WIFSIGNALED(status)) {
+		if (WTERMSIG(status) == SIGSEGV) {
+			log_message(LOG_INFO, "%s exited due to segmentation fault (SIGSEGV).", prog_id);
+			log_message(LOG_INFO, "  Please report a bug at %s", "https://github.com/acassen/keepalived/issues");
+			log_message(LOG_INFO, "  %s", "and include this log from when keepalived started, what happened");
+			log_message(LOG_INFO, "  %s", "immediately before the crash, and your configuration file.");
+		}
+		else
+			log_message(LOG_INFO, "%s exited due to signal %d", prog_id, WTERMSIG(status));
+
+		return;
+	}
+}
 
 /* Make thread master. */
 thread_master_t *
@@ -618,7 +656,8 @@ retry:	/* When thread can't fetch try to find next thread again. */
 			thread_list_delete(&m->child, t);
 			thread_list_add(&m->ready, t);
 			t->type = THREAD_CHILD_TIMEOUT;
-		}
+		} else
+			break;
 	}
 
 	/* Read thead. */
@@ -683,7 +722,8 @@ retry:	/* When thread can't fetch try to find next thread again. */
 			thread_list_delete(&m->timer, t);
 			thread_list_add(&m->ready, t);
 			t->type = THREAD_READY;
-		}
+		} else
+			break;
 	}
 
 	/* Return one event. */
@@ -717,7 +757,7 @@ thread_child_handler(void * v, int sig)
 	 */
 	thread_t *thread;
 	pid_t pid;
-	int status = 77;
+	int status;
 	while ((pid = waitpid(-1, &status, WNOHANG))) {
 		if (pid == -1) {
 			if (errno == ECHILD)
@@ -725,6 +765,8 @@ thread_child_handler(void * v, int sig)
 			DBG("waitpid error: %s", strerror(errno));
 			assert(0);
 		} else {
+			report_child_status(status, pid, NULL);
+
 			thread = m->child.head;
 			while (thread) {
 				thread_t *t;
@@ -732,9 +774,9 @@ thread_child_handler(void * v, int sig)
 				thread = t->next;
 				if (pid == t->u.c.pid) {
 					thread_list_delete(&m->child, t);
-					thread_list_add(&m->ready, t);
 					t->u.c.status = status;
 					t->type = THREAD_READY;
+					thread_list_add(&m->ready, t);
 					break;
 				}
 			}
@@ -774,8 +816,10 @@ launch_scheduler(void)
 	while (thread_fetch(master, &thread)) {
 		/* Run until error, used for debuging only */
 #ifdef _DEBUG_
-		if ((debug & 520) == 520) {
-			debug &= ~520;
+		if (__test_bit(MEM_ERR_DETECT_BIT, &debug) &&
+		    __test_bit(DONT_RELEASE_VRRP_BIT, &debug)) {
+			__clear_bit(MEM_ERR_DETECT_BIT, &debug);
+			__clear_bit(DONT_RELEASE_VRRP_BIT, &debug);
 			thread_add_terminate_event(master);
 		}
 #endif

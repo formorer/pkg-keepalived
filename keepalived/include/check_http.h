@@ -79,12 +79,12 @@ typedef struct _http_checker {
 
 /* GET processing command */
 #define REQUEST_TEMPLATE "GET %s HTTP/1.0\r\n" \
-                         "User-Agent: KeepAliveClient\r\n" \
-                         "Host: %s%s\r\n\r\n"
+			 "User-Agent: KeepAliveClient\r\n" \
+			 "Host: %s%s\r\n\r\n"
 
 #define REQUEST_TEMPLATE_IPV6 "GET %s HTTP/1.0\r\n" \
-                         "User-Agent: KeepAliveClient\r\n" \
-                         "Host: [%s]%s\r\n\r\n"
+			 "User-Agent: KeepAliveClient\r\n" \
+			 "Host: [%s]%s\r\n\r\n"
 
 /* macro utility */
 #define HTTP_ARG(X) ((X)->arg)
@@ -94,9 +94,9 @@ typedef struct _http_checker {
 /* Define prototypes */
 extern void install_http_check_keyword(void);
 extern int epilog(thread_t *, int, int, int);
-extern int timeout_epilog(thread_t *, char *, char *);
+extern int timeout_epilog(thread_t *, char *);
 extern url_t *fetch_next_url(http_checker_t *);
-extern int http_process_response(request_t *, int);
+extern int http_process_response(request_t *, int, int);
 extern int http_handle_response(thread_t *, unsigned char digest[16]
 				, int);
 #endif

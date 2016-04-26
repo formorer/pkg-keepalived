@@ -621,19 +621,34 @@ ac_includes_default="\
 
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+BUILD_OPTS
+APP_DEFS
 VRRP_SUPPORT
 USE_NL
 IPVS_SUPPORT
+VERSION_YEAR
 VERSION_DATE
 VERSION
+VRRP_AUTH_SUPPORT
 DFLAGS
 SO_MARK_SUPPORT
 SHA1_SUPPORT
+SNMP_RFCV3_SUPPORT
+SNMP_RFCV2_SUPPORT
+SNMP_RFC_SUPPORT
+SNMP_CHECKER_SUPPORT
+SNMP_KEEPALIVED_SUPPORT
 SNMP_SUPPORT
 NETSNMP_CONFIG
+ADDR_GEN_MODE
 VRRP_VMAC
 IPVS_SYNCD
 KERN
+USE_LIBIPSET
+USE_LIBIPTC
+IPV4_DEVCONF
+IF_H_LINK_H_COLLISION
+USE_NL3
 EGREP
 GREP
 CPP
@@ -696,7 +711,15 @@ with_kernel_dir
 with_kernel_version
 enable_fwmark
 enable_snmp
+enable_snmp_keepalived
+enable_snmp_checker
+enable_snmp_rfc
+enable_snmp_rfcv2
+enable_snmp_rfcv3
 enable_sha1
+enable_vrrp_auth
+enable_libiptc
+enable_libipset
 enable_debug
 enable_profile
 '
@@ -1321,7 +1344,15 @@ Optional Features:
   --disable-vrrp          do not use the VRRP framework
   --disable-fwmark        compile without SO_MARK support
   --enable-snmp           compile with SNMP support
+  --enable-snmp-keepalived compile with SNMP keepalived support
+  --enable-snmp-checker   compile with SNMP checker support
+  --enable-snmp-rfc       compile with SNMP RFC2787 (VRRPv2) and SNMP RFC6527 (VRRPv3) support
+  --enable-snmp-rfcv2     compile with SNMP RFC2787 (VRRPv2) support
+  --enable-snmp-rfcv3     compile with SNMP RFC6257 (VRRPv3) support
   --enable-sha1           compile with SHA1 support
+  --disable-vrrp-auth     compile without VRRP authentication
+  --disable-libiptc       compile without libiptc
+  --disable-libipset      compile without libipset
   --enable-debug          compile with debugging flags
   --enable-profile        compile with profiling flags
 
@@ -2221,7 +2252,8 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
 VERSION=`cat VERSION`
-VERSION_DATE=`date +%m/%d,20%y`
+VERSION_DATE=`date +%m/%d,%Y`
+VERSION_YEAR=`date +%Y`
 OUTPUT_TARGET="Makefile genhash/Makefile keepalived/core/Makefile lib/config.h keepalived.spec"
 
 ac_ext=c
@@ -3269,9 +3301,49 @@ if test "${enable_snmp+set}" = set; then :
   enableval=$enable_snmp;
 fi
 
+# Check whether --enable-snmp-keepalived was given.
+if test "${enable_snmp_keepalived+set}" = set; then :
+  enableval=$enable_snmp_keepalived;
+fi
+
+# Check whether --enable-snmp-checker was given.
+if test "${enable_snmp_checker+set}" = set; then :
+  enableval=$enable_snmp_checker;
+fi
+
+# Check whether --enable-snmp-rfc was given.
+if test "${enable_snmp_rfc+set}" = set; then :
+  enableval=$enable_snmp_rfc;
+fi
+
+# Check whether --enable-snmp-rfcv2 was given.
+if test "${enable_snmp_rfcv2+set}" = set; then :
+  enableval=$enable_snmp_rfcv2;
+fi
+
+# Check whether --enable-snmp-rfcv3 was given.
+if test "${enable_snmp_rfcv3+set}" = set; then :
+  enableval=$enable_snmp_rfcv3;
+fi
+
 # Check whether --enable-sha1 was given.
 if test "${enable_sha1+set}" = set; then :
   enableval=$enable_sha1;
+fi
+
+# Check whether --enable-vrrp-auth was given.
+if test "${enable_vrrp_auth+set}" = set; then :
+  enableval=$enable_vrrp_auth;
+fi
+
+# Check whether --enable-libiptc was given.
+if test "${enable_libiptc+set}" = set; then :
+  enableval=$enable_libiptc;
+fi
+
+# Check whether --enable-libipset was given.
+if test "${enable_libipset+set}" = set; then :
+  enableval=$enable_libipset;
 fi
 
 # Check whether --enable-debug was given.
@@ -3724,7 +3796,7 @@ fi
 done
 
 
-for ac_header in fcntl.h syslog.h unistd.h sys/ioctl.h sys/time.h
+for ac_header in fcntl.h syslog.h unistd.h sys/ioctl.h sys/time.h linux/netfilter/x_tables.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -3905,6 +3977,7 @@ else
 fi
 
 
+USE_NL3="_WITHOUT_LIBNL_"
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_socket_alloc in -lnl-3" >&5
 $as_echo_n "checking for nl_socket_alloc in -lnl-3... " >&6; }
 if ${ac_cv_lib_nl_3_nl_socket_alloc+:} false; then :
@@ -3983,11 +4056,55 @@ if test "x$ac_cv_lib_nl_genl_3_genl_connect" = xyes; then :
 
         USE_NL="LIBIPVS_USE_NL"
         CFLAGS="$CFLAGS $(pkg-config --cflags libnl-genl-3.0)"
-	LIBS="$LIBS $(pkg-config --libs libnl-genl-3.0)"
+        LIBS="$LIBS $(pkg-config --libs libnl-genl-3.0)"
 
 else
 
         as_fn_error $? "libnl-3 is installed but not libnl-gen-3. Please, install libnl-gen-3." "$LINENO" 5
+
+fi
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for nl_rtgen_request in -lnl-route-3" >&5
+$as_echo_n "checking for nl_rtgen_request in -lnl-route-3... " >&6; }
+if ${ac_cv_lib_nl_route_3_nl_rtgen_request+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lnl-route-3  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char nl_rtgen_request ();
+int
+main ()
+{
+return nl_rtgen_request ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_nl_route_3_nl_rtgen_request=yes
+else
+  ac_cv_lib_nl_route_3_nl_rtgen_request=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nl_route_3_nl_rtgen_request" >&5
+$as_echo "$ac_cv_lib_nl_route_3_nl_rtgen_request" >&6; }
+if test "x$ac_cv_lib_nl_route_3_nl_rtgen_request" = xyes; then :
+
+        USE_NL3="_HAVE_LIBNL3_"
+        CFLAGS="$CFLAGS $(pkg-config --cflags libnl-route-3.0)"
+        LIBS="$LIBS $(pkg-config --libs libnl-route-3.0)"
 
 fi
 
@@ -4033,6 +4150,7 @@ $as_echo "$ac_cv_lib_nl_nl_socket_modify_cb" >&6; }
 if test "x$ac_cv_lib_nl_nl_socket_modify_cb" = xyes; then :
 
         USE_NL="LIBIPVS_USE_NL"
+        USE_NL3="_HAVE_LIBNL1_"
         CFLAGS="$CFLAGS -DFALLBACK_LIBNL1"
         LIBS="$LIBS $(pkg-config --libs libnl-1)"
 
@@ -4046,6 +4164,211 @@ fi
 
 
 fi
+
+
+
+
+if test "$USE_NL3" != "_WITHOUT_LIBNL_"; then
+  for ac_header in libnfnetlink/libnfnetlink.h
+do :
+  ac_fn_c_check_header_mongrel "$LINENO" "libnfnetlink/libnfnetlink.h" "ac_cv_header_libnfnetlink_libnfnetlink_h" "$ac_includes_default"
+if test "x$ac_cv_header_libnfnetlink_libnfnetlink_h" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBNFNETLINK_LIBNFNETLINK_H 1
+_ACEOF
+
+else
+  as_fn_error $? "
+    !!! Please install libnfnetlink headers.              !!!" "$LINENO" 5
+fi
+
+done
+
+fi
+
+IF_H_LINK_H_COLLISION="_WITHOUT_IF_H_LINK_H_COLLISION_"
+if test "${USE_NL3}" = "_HAVE_LIBNL3_"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for linux/if.h and netlink/route/link.h namespace collision" >&5
+$as_echo_n "checking for linux/if.h and netlink/route/link.h namespace collision... " >&6; }
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+      #include <net/if.h>
+      #include <netlink/route/link.h>
+
+int
+main ()
+{
+
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+
+else
+
+      IF_H_LINK_H_COLLISION=_HAVE_IF_H_LINK_H_COLLISION_
+
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext;
+  if test "$IF_H_LINK_H_COLLISION" = "_HAVE_IF_H_LINK_H_COLLISION_"; then
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+  else
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+  fi
+fi
+
+
+
+IPV4_DEVCONF="_WITHOUT_IPV4_DEVCONF_"
+if test "${USE_NL3}" = "_HAVE_LIBNL3_"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for IPV4_DEVCONF defines" >&5
+$as_echo_n "checking for IPV4_DEVCONF defines... " >&6; }
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+      #include <linux/ip.h>
+      int devconf;
+
+int
+main ()
+{
+
+      devconf = IPV4_DEVCONF_ARP_IGNORE;
+      devconf = IPV4_DEVCONF_ACCEPT_LOCAL;
+      devconf = IPV4_DEVCONF_RP_FILTER;
+      devconf = IPV4_DEVCONF_ARPFILTER;
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+
+      IPV4_DEVCONF_SUPPORT=yes
+
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext;
+  if test "$IPV4_DEVCONF_SUPPORT" = "yes"; then
+    IPV4_DEVCONF="_HAVE_IPV4_DEVCONF_"
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+  else
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+  fi
+fi
+
+
+
+USE_LIBIPTC=_WITHOUT_LIBIPTC_
+if test "${enable_libiptc}" != "no"; then
+  SAV_LIBS=$LIBS
+  LIBS="$LIBS $(pkg-config --libs --static libiptc)"
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for iptc_init in -liptc" >&5
+$as_echo_n "checking for iptc_init in -liptc... " >&6; }
+if ${ac_cv_lib_iptc_iptc_init+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-liptc  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char iptc_init ();
+int
+main ()
+{
+return iptc_init ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_iptc_iptc_init=yes
+else
+  ac_cv_lib_iptc_iptc_init=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_iptc_iptc_init" >&5
+$as_echo "$ac_cv_lib_iptc_iptc_init" >&6; }
+if test "x$ac_cv_lib_iptc_iptc_init" = xyes; then :
+
+      USE_LIBIPTC="_HAVE_LIBIPTC_"
+      SAV_LIBS=$LIBS
+
+fi
+
+  LIBS=$SAV_LIBS
+fi
+
+
+
+USE_LIBIPSET=_WITHOUT_LIBIPSET_
+if test "${USE_LIBIPTC}" = "_HAVE_LIBIPTC_"; then
+  if test "${enable_libipset}" != "no"; then
+    SAV_LIBS=$LIBS
+    LIBS="$LIBS -lipset -lxtables"
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for ipset_session_init in -lipset" >&5
+$as_echo_n "checking for ipset_session_init in -lipset... " >&6; }
+if ${ac_cv_lib_ipset_ipset_session_init+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lipset  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char ipset_session_init ();
+int
+main ()
+{
+return ipset_session_init ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_ipset_ipset_session_init=yes
+else
+  ac_cv_lib_ipset_ipset_session_init=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_ipset_ipset_session_init" >&5
+$as_echo "$ac_cv_lib_ipset_ipset_session_init" >&6; }
+if test "x$ac_cv_lib_ipset_ipset_session_init" = xyes; then :
+
+        USE_LIBIPSET="_HAVE_LIBIPSET_"
+        SAV_LIBS=$LIBS
+
+fi
+
+    LIBS=$SAV_LIBS
+  fi
+fi
+
 
 
 CPPFLAGS="$CPPFLAGS -I$kernelinc"
@@ -4075,7 +4398,7 @@ else
     #elif defined(LINUX_VERSION_CODE)
       fprintf (fp, "%d.%d.%d\n", LINUX_VERSION_CODE >> 16, (LINUX_VERSION_CODE >> 8) & 0xFF, LINUX_VERSION_CODE & 0xFF);
     #else
-      fprintf (fp, "0.0.0\n"); /* Let's fail gently */
+      fprintf (fp, "0.0.0\n"); /* Let''s fail gently */
     #endif
       fclose (fp);
       return 0;
@@ -4223,9 +4546,62 @@ $as_echo "no" >&6; }
 
 
 
-SNMP_SUPPORT="_WITHOUT_SNMP_"
-if test "$enable_snmp" = "yes"; then
+if test "${VRRP_VMAC}" = "_HAVE_VRRP_VMAC_"; then
+    CPPFLAGS="$CPPFLAGS -I$kernelinc"
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for kernel inet6_addr_gen_mode support" >&5
+$as_echo_n "checking for kernel inet6_addr_gen_mode support... " >&6; }
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
 
+      #include <linux/if_link.h>
+      int gen_mode;
+
+int
+main ()
+{
+
+      gen_mode = IFLA_INET6_ADDR_GEN_MODE;
+      gen_mode++;
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+
+      GEN_MODE_SUPPORT=yes
+
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext;
+
+    if test "$GEN_MODE_SUPPORT" = "yes"; then
+      ADDR_GEN_MODE="_HAVE_ADDR_GEN_MODE_"
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+    else
+      ADDR_GEN_MODE="_WITHOUT_ADDR_GEN_MODE_"
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+    fi
+else
+  ADDR_GEN_MODE="_WITHOUT_ADDR_GEN_MODE_"
+fi
+
+
+
+SNMP_SUPPORT="_WITHOUT_SNMP_"
+SNMP_KEEPALIVED_SUPPORT="_WITHOUT_SNMP_KEEPALIVED_"
+SNMP_RFC_SUPPORT="_WITHOUT_SNMP_RFC_"
+SNMP_RFCV2_SUPPORT="_WITHOUT_SNMP_RFCV2_"
+SNMP_RFCV3_SUPPORT="_WITHOUT_SNMP_RFCV3_"
+SNMP_CHECKER_SUPPORT="_WITHOUT_SNMP_CHECKER_"
+
+if test "$enable_snmp" = "yes" -o \
+	"$enable_snmp_rfc" = "yes" -o \
+	"$enable_snmp_rfcv2" = "yes" -o \
+	"$enable_snmp_rfcv3" = "yes" -o \
+	"$enable_snmp_keepalived" = "yes" -o \
+	"$enable_snmp_checker" = "yes" ; then
   if test -n "$ac_tool_prefix"; then
   # Extract the first word of "${ac_tool_prefix}net-snmp-config", so it can be a program name with args.
 set dummy ${ac_tool_prefix}net-snmp-config; ac_word=$2
@@ -4401,7 +4777,39 @@ done
 
 
   SNMP_SUPPORT="_WITH_SNMP_"
+  if test "$enable_snmp_rfc" = "yes"; then
+    SNMP_RFCV2_SUPPORT="_WITH_SNMP_RFCV2_"
+    SNMP_RFCV3_SUPPORT="_WITH_SNMP_RFCV3_"
+  else
+    if test "$enable_snmp_rfcv2" = "yes"; then
+      SNMP_RFCV2_SUPPORT="_WITH_SNMP_RFCV2_"
+    fi
+    if test "$enable_snmp_rfcv3" = "yes"; then
+      SNMP_RFCV3_SUPPORT="_WITH_SNMP_RFCV3_"
+    fi
+  fi
+  if test "${SNMP_RFCV2_SUPPORT}" = "_WITH_SNMP_RFCV2_" -o \
+          "${SNMP_RFCV3_SUPPORT}" = "_WITH_SNMP_RFCV3_"; then
+      SNMP_RFC_SUPPORT="_WITH_SNMP_RFC_"
+  fi
+
+  if test "$enable_snmp" = "yes"; then
+    SNMP_KEEPALIVED_SUPPORT="_WITH_SNMP_KEEPALIVED_"
+    SNMP_CHECKER_SUPPORT="_WITH_SNMP_CHECKER_"
+  else
+    if test "$enable_snmp_keepalived" = "yes"; then
+      SNMP_KEEPALIVED_SUPPORT="_WITH_SNMP_KEEPALIVED_"
+    fi
+    if test "$enable_snmp_checker" = "yes"; then
+      SNMP_CHECKER_SUPPORT="_WITH_SNMP_CHECKER_"
+    fi
+  fi
 fi
+
+
+
+
+
 
 
 
@@ -4497,6 +4905,16 @@ if test "${enable_debug}" = "yes"; then
 
 fi
 
+VRRP_AUTH_SUPPORT="_WITHOUT_VRRP_AUTH_"
+if test "$enable_vrrp" != "no"; then
+  if test "${enable_vrrp_auth}" != "no"; then
+    VRRP_AUTH_SUPPORT="_WITH_VRRP_AUTH_"
+  fi
+fi
+
+
+
+
 if test "${enable_profile}" = "yes"; then
   CFLAGS="$CFLAGS -pg"
 fi
@@ -4504,6 +4922,12 @@ fi
 
 
 
+
+
+
+
+APP_DEFS="-D${KERN} -D${IPVS_SUPPORT} -D${IPVS_SYNCD} -D${VRRP_SUPPORT} -D${VRRP_VMAC} -D${ADDR_GEN_MODE} -D${SNMP_SUPPORT} -D${SNMP_KEEPALIVED_SUPPORT} -D${SNMP_CHECKER_SUPPORT} -D${SNMP_RFC_SUPPORT} -D${SNMP_RFCV2_SUPPORT} -D${SNMP_RFCV3_SUPPORT} -D${USE_NL3} -D${VRRP_AUTH_SUPPORT} -D${SO_MARK_SUPPORT} -D${USE_LIBIPTC} -D${USE_LIBIPSET} -D${IPV4_DEVCONF} -D${IF_H_LINK_H_COLLISION} ${DFLAGS}"
+BUILD_OPTS=`echo ${APP_DEFS} | sed -e 's/ "$//' -e 's/.*"//' -e 's/-D//g' -e 's/_ / /g' -e 's/ _/ /g' -e 's/^_//' -e 's/_$//'`
 
 
 
@@ -4772,7 +5196,7 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
-for ac_func in gettimeofday select socket strerror strtol uname
+for ac_func in gettimeofday select socket strerror strtol uname pipe2
 do :
   as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
 ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
@@ -6005,13 +6429,33 @@ if test "${VRRP_SUPPORT}" = "_WITH_VRRP_"; then
   else
     echo "Use VRRP VMAC            : No"
   fi
+  if test "${VRRP_AUTH_SUPPORT}" = "_WITH_VRRP_AUTH_"; then
+    echo "Use VRRP authentication  : Yes"
+  else
+    echo "Use VRRP authentication  : No"
+  fi
 else
   echo "Use VRRP Framework       : No"
 fi
-if test "${SNMP_SUPPORT}" = "_WITH_SNMP_"; then
-  echo "SNMP support             : Yes"
+if test "${SNMP_KEEPALIVED_SUPPORT}" = "_WITH_SNMP_KEEPALIVED_"; then
+  echo "SNMP keepalived support  : Yes"
 else
-  echo "SNMP support             : No"
+  echo "SNMP keepalived support  : No"
+fi
+if test "${SNMP_CHECKER_SUPPORT}" = "_WITH_SNMP_CHECKER_"; then
+  echo "SNMP checker support     : Yes"
+else
+  echo "SNMP checker support     : No"
+fi
+if test "${SNMP_RFCV2_SUPPORT}" = "_WITH_SNMP_RFCV2_"; then
+  echo "SNMP RFCv2 support       : Yes"
+else
+  echo "SNMP RFCv2 support       : No"
+fi
+if test "${SNMP_RFCV3_SUPPORT}" = "_WITH_SNMP_RFCV3_"; then
+  echo "SNMP RFCv3 support       : Yes"
+else
+  echo "SNMP RFCv3 support       : No"
 fi
 if test "${SHA1_SUPPORT}" = "_WITH_SHA1_"; then
   echo "SHA1 support             : Yes"
@@ -6022,4 +6466,26 @@ if test "${DFLAGS}" = "-D_DEBUG_"; then
   echo "Use Debug flags          : Yes"
 else
   echo "Use Debug flags          : No"
+fi
+if test "${USE_NL3}" = "_HAVE_LIBNL3_"; then
+  echo "libnl version            : 3"
+elif test "${USE_NL3}" = "_HAVE_LIBNL1_"; then
+  echo "libnl version            : 1"
+else
+  echo "libnl version            : None"
+fi
+if test "${IPV4_DEVCONF}" = "_HAVE_IPV4_DEVCONF_"; then
+  echo "Use IPv4 devconf         : Yes"
+else
+  echo "Use IPv4 devconf         : No"
+fi
+if test "${USE_LIBIPTC}" = "_HAVE_LIBIPTC_"; then
+  echo "Use libiptc              : Yes"
+else
+  echo "Use libiptc              : No"
+fi
+if test "${USE_LIBIPSET}" = "_HAVE_LIBIPSET_"; then
+  echo "Use libipset             : Yes"
+else
+  echo "Use libipset             : No"
 fi

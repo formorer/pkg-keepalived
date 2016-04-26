@@ -60,7 +60,7 @@ alloc_track(list track_list, vector_t *strvec)
 		}
 	}
 
-	tip         = (tracked_if_t *) MALLOC(sizeof(tracked_if_t));
+	tip	    = (tracked_if_t *) MALLOC(sizeof(tracked_if_t));
 	tip->ifp    = ifp;
 	tip->weight = weight;
 
@@ -101,7 +101,7 @@ alloc_track_script(list track_list, vector_t *strvec)
 
 	vsc = find_script_by_name(tracked);
 
-	/* Ignoring if no interface found */
+	/* Ignoring if no script found */
 	if (!vsc) {
 		log_message(LOG_INFO, "     %s no match, ignoring...", tracked);
 		return;
@@ -116,12 +116,12 @@ alloc_track_script(list track_list, vector_t *strvec)
 		if (weight < -254 || weight > 254) {
 			weight = vsc->weight;
 			log_message(LOG_INFO, "     %s: weight must be between [-254..254]"
-				         " inclusive, ignoring...",
+					 " inclusive, ignoring...",
 			       tracked);
 		}
 	}
 
-	tsc         = (tracked_sc_t *) MALLOC(sizeof(tracked_sc_t));
+	tsc	    = (tracked_sc_t *) MALLOC(sizeof(tracked_sc_t));
 	tsc->scr    = vsc;
 	tsc->weight = weight;
 	vsc->inuse++;

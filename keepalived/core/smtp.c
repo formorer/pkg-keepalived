@@ -307,16 +307,13 @@ static int
 helo_cmd(thread_t * thread)
 {
 	smtp_t *smtp = THREAD_ARG(thread);
-	char *name;
 	char *buffer;
 
 	buffer = (char *) MALLOC(SMTP_BUFFER_MAX);
-	name = get_local_name();
-	snprintf(buffer, SMTP_BUFFER_MAX, SMTP_HELO_CMD, (name) ? name : "localhost");
+	snprintf(buffer, SMTP_BUFFER_MAX, SMTP_HELO_CMD, (global_data->smtp_helo_name) ? global_data->smtp_helo_name : "localhost");
 	if (send(thread->u.fd, buffer, strlen(buffer), 0) == -1)
 		smtp->stage = ERROR;
 	FREE(buffer);
-	FREE_PTR(name);
 
 	return 0;
 }
@@ -444,7 +441,7 @@ data_code(thread_t * thread, int status)
 	return 0;
 }
 
-/* 
+/*
  * Build a comma separated string of smtp recipient email addresses
  * for the email message To-header.
  */
@@ -464,7 +461,7 @@ build_to_header_rcpt_addrs(smtp_t *smtp)
 
 	while (1) {
 		fetched_email = fetch_next_email(smtp);
-		if (fetched_email != NULL)
+		if (fetched_email == NULL)
 			break;
 
 		bytes_not_written = 0;
@@ -477,18 +474,19 @@ build_to_header_rcpt_addrs(smtp_t *smtp)
 				break;
 
 			/* Prepend with a comma and space to all non-first email addresses */
-			strcat(email_to_addrs, ", ");
-			email_to_addrs += 2;
+			*email_to_addrs++ = ',';
+			*email_to_addrs++ = ' ';
 			bytes_available -= 2;
 		}
 
-		bytes_not_written = snprintf(email_to_addrs, bytes_to_write, "%s", fetched_email);
+		bytes_not_written = snprintf(email_to_addrs, bytes_to_write + 1, "%s", fetched_email) - bytes_to_write;;
 		if (bytes_not_written > 0) {
 			/* Inconsistent state, no choice but to break here and do nothing */
 			break;
 		}
 
 		email_to_addrs += bytes_to_write;
+		bytes_available -= bytes_to_write;
 		smtp->email_it++;
 	}
 
@@ -583,7 +581,7 @@ smtp_connect(smtp_t * smtp)
 {
 	enum connect_result status;
 
-	if ((smtp->fd = socket(global_data->smtp_server.ss_family, SOCK_STREAM, IPPROTO_TCP)) == -1) {
+	if ((smtp->fd = socket(global_data->smtp_server.ss_family, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP)) == -1) {
 		DBG("SMTP connect fail to create socket.");
 		free_smtp_all(smtp);
 		return;

@@ -8,24 +8,52 @@ CC	 = @CC@
 INCLUDES = -I.
 CFLAGS	 = $(INCLUDES) @CFLAGS@ @CPPFLAGS@ \
 	   -Wall -Wunused -Wstrict-prototypes
-DEFS	 = @DFLAGS@ -D@SNMP_SUPPORT@
-COMPILE	 = $(CC) $(CFLAGS) $(DEFS)
+COMPILE	 = $(CC) $(CFLAGS) @APP_DEFS@
 
-OBJS = 	memory.o utils.o notify.o timer.o scheduler.o \
-	vector.o list.o html.o parser.o signals.o logger.o
+OBJS =	memory.o utils.o notify.o timer.o scheduler.o \
+	vector.o list.o html.o parser.o signals.o logger.o \
+	rttables.o
 HEADERS = $(OBJS:.o=.h)
+
+GIT_COMMIT_FILE = git-commit.h
 
 .c.o:
 	$(COMPILE) -c $<
 
-all:	$(OBJS)
+all:	$(OBJS) $(GIT_COMMIT_FILE)
+
+$(GIT_COMMIT_FILE):
+	@if [ ! -f $(GIT_COMMIT_FILE) ]; then \
+		>$(GIT_COMMIT_FILE); \
+	fi; \
+	if [ -x `type -p git` ]; then \
+		git rev-parse --is-inside-work-tree >/dev/null; \
+		if [ $$? -eq 0 ]; then \
+			GIT_REV=`git describe --tags`; \
+			echo $${GIT_REV} | grep -qE -- "-[1-9][0-9]*-g[0-9a-f]{7}$$"; \
+			if [ $$? -eq 0 ]; then \
+				echo "#define GIT_COMMIT \"$${GIT_REV}\"" >$(GIT_COMMIT_FILE).new; \
+				diff -q $(GIT_COMMIT_FILE) $(GIT_COMMIT_FILE).new 2>/dev/null >/dev/null; \
+				if [ $$? -eq 0 ]; then \
+					rm $(GIT_COMMIT_FILE).new; \
+				else \
+					mv $(GIT_COMMIT_FILE).new $(GIT_COMMIT_FILE); \
+				fi; \
+			fi; \
+		fi; \
+	fi
 
 clean:
-	rm -f *.a *.o *~
+	rm -f *.[ao] *~ *.orig *.rej core
 
 distclean: clean
 	rm -f config.h
 	rm -f Makefile
+
+tarclean: distclean
+
+mrproper: tarclean
+	rm -f $(GIT_COMMIT_FILE) $(GIT_COMMIT_FILE).new
 
 memory.o: memory.c memory.h utils.h bitops.h
 utils.o: utils.c utils.h memory.h
@@ -35,6 +63,7 @@ scheduler.o: scheduler.c scheduler.h memory.h utils.h
 vector.o: vector.c vector.h memory.h
 list.o: list.c list.h memory.h
 html.o: html.c html.h memory.h
-parser.o: parser.c parser.h memory.h
+parser.o: parser.c parser.h memory.h rttables.h
 signals.o: signals.c signals.h
 logger.o: logger.c logger.h
+rttables.o: rttables.c rttables.h

@@ -33,6 +33,7 @@
 #include "pidfile.h"
 #include "daemon.h"
 #include "signals.h"
+#include "process.h"
 #include "logger.h"
 #include "list.h"
 #include "main.h"
@@ -41,11 +42,9 @@
 #include "bitops.h"
 #include "vrrp_netlink.h"
 #include "vrrp_if.h"
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_CHECKER_
   #include "check_snmp.h"
 #endif
-
-extern char *checkers_pidfile;
 
 /* Daemon stop sequence */
 static void
@@ -59,8 +58,8 @@ stop_check(void)
 	if (!__test_bit(DONT_RELEASE_IPVS_BIT, &debug))
 		clear_services();
 	ipvs_stop();
-#ifdef _WITH_SNMP_
-	if (snmp)
+#ifdef _WITH_SNMP_CHECKER_
+	if (global_data->enable_snmp_checker)
 		check_snmp_agent_close();
 #endif
 
@@ -82,6 +81,8 @@ stop_check(void)
 	 * Reached when terminate signal catched.
 	 * finally return to parent process.
 	 */
+	log_message(LOG_INFO, "Stopped");
+
 	closelog();
 	exit(0);
 }
@@ -95,14 +96,15 @@ start_check(void)
 		stop_check();
 		return;
 	}
+
+	/* Remove any entries left over from previous invocation */
+	if (!reload)
+		ipvs_flush_cmd();
+
 	init_checkers_queue();
 #ifdef _WITH_VRRP_
 	init_interface_queue();
 	kernel_netlink_init();
-#endif
-#ifdef _WITH_SNMP_
-	if (!reload && snmp)
-		check_snmp_agent_init(snmp_socket);
 #endif
 
 	/* Parse configuration file */
@@ -116,7 +118,14 @@ start_check(void)
 	init_global_data(global_data);
 
 	/* Post initializations */
+#ifdef _DEBUG_
 	log_message(LOG_INFO, "Configuration is using : %lu Bytes", mem_allocated);
+#endif
+
+#ifdef _WITH_SNMP_CHECKER_
+	if (!reload && global_data->enable_snmp_checker)
+		check_snmp_agent_init(global_data->snmp_socket);
+#endif
 
 	/* SSL load static data & initialize common ctx context */
 	if (!init_ssl_ctx()) {
@@ -129,6 +138,13 @@ start_check(void)
 	 * vs and vsg declarations may appear in any order
 	 */
 	link_vsg_to_vs();
+
+	/* Set the process priority and non swappable if configured */
+	if (global_data->checker_process_priority)
+		set_process_priority(global_data->checker_process_priority);
+
+	if (global_data->checker_no_swap)
+		set_process_dont_swap(4096);	/* guess a stack size to reserve */
 
 	/* Processing differential configuration parsing */
 	if (reload)
@@ -191,10 +207,6 @@ reload_check_thread(thread_t * thread)
 
 	log_message(LOG_INFO, "Got SIGHUP, reloading checker configuration");
 
-	/* Signals handling */
-	signal_reset();
-	signal_handler_destroy();
-
 	/* Destroy master thread */
 #ifdef _WITH_VRRP_
 	kernel_netlink_close();
@@ -214,9 +226,9 @@ reload_check_thread(thread_t * thread)
 	check_data = NULL;
 
 	/* Reload the conf */
+#ifdef _DEBUG_
 	mem_allocated = 0;
-	check_signal_init();
-	signal_set(SIGCHLD, thread_child_handler, master);
+#endif
 	start_check();
 
 	/* free backup data */

@@ -23,6 +23,7 @@
 #include <netdb.h>
 #include "check_data.h"
 #include "check_api.h"
+#include "check_ssl.h"
 #include "logger.h"
 #include "memory.h"
 #include "utils.h"
@@ -46,6 +47,7 @@ free_ssl(void)
 
 	if (!ssl)
 		return;
+	clear_ssl(ssl);
 	FREE_PTR(ssl->password);
 	FREE_PTR(ssl->cafile);
 	FREE_PTR(ssl->certfile);
@@ -175,18 +177,27 @@ dump_vs(void *data)
 				    , inet_sockaddrtos(&vs->addr), ntohs(inet_sockaddrport(&vs->addr)));
 	if (vs->virtualhost)
 		log_message(LOG_INFO, "   VirtualHost = %s", vs->virtualhost);
+	if (vs->af != AF_UNSPEC)
+		log_message(LOG_INFO, "   Address family = inet%s", vs->af == AF_INET ? "" : "6");
 	log_message(LOG_INFO, "   delay_loop = %lu, lb_algo = %s",
 	       (vs->delay_loop >= TIMER_MAX_SEC) ? vs->delay_loop/TIMER_HZ :
 						   vs->delay_loop,
 	       vs->sched);
+	log_message(LOG_INFO, "   One packet scheduling = %sabled%s", vs->ops ? "en" : "dis", (vs->ops && vs->service_type != IPPROTO_UDP) ? " (inactive due to not UDP)" : "");
 	if (atoi(vs->timeout_persistence) > 0)
 		log_message(LOG_INFO, "   persistence timeout = %s",
 		       vs->timeout_persistence);
 	if (vs->granularity_persistence)
 		log_message(LOG_INFO, "   persistence granularity = %s",
 		       inet_ntop2(vs->granularity_persistence));
-	log_message(LOG_INFO, "   protocol = %s",
-	       (vs->service_type == IPPROTO_TCP) ? "TCP" : "UDP");
+	if (vs->service_type == IPPROTO_TCP)
+		log_message(LOG_INFO, "   protocol = TCP");
+	else if (vs->service_type == IPPROTO_UDP)
+		log_message(LOG_INFO, "   protocol = UDP");
+	else if (vs->service_type == IPPROTO_SCTP)
+		log_message(LOG_INFO, "   protocol = SCTP");
+	else
+		log_message(LOG_INFO, "   protocol = %d", vs->service_type);
 	log_message(LOG_INFO, "   alpha is %s, omega is %s",
 		    vs->alpha ? "ON" : "OFF", vs->omega ? "ON" : "OFF");
 	log_message(LOG_INFO, "   quorum = %lu, hysteresis = %lu", vs->quorum, vs->hysteresis);
@@ -199,8 +210,8 @@ dump_vs(void *data)
 	if (vs->ha_suspend)
 		log_message(LOG_INFO, "   Using HA suspend");
 
-	switch (vs->loadbalancing_kind) {
 #ifdef _WITH_LVS_
+	switch (vs->loadbalancing_kind) {
 	case IP_VS_CONN_F_MASQ:
 		log_message(LOG_INFO, "   lb_kind = NAT");
 		break;
@@ -210,8 +221,8 @@ dump_vs(void *data)
 	case IP_VS_CONN_F_TUNNEL:
 		log_message(LOG_INFO, "   lb_kind = TUN");
 		break;
-#endif
 	}
+#endif
 
 	if (vs->s_svr) {
 		log_message(LOG_INFO, "   sorry server = %s"
@@ -236,6 +247,7 @@ alloc_vs(char *ip, char *port)
 		new->vfwmark = atoi(port);
 	} else {
 		inet_stosockaddr(ip, port, &new->addr);
+		new->af = new->addr.ss_family;
 	}
 
 	new->delay_loop = KEEPALIVED_DEFAULT_DELAY;
@@ -262,6 +274,9 @@ alloc_ssvr(char *ip, char *port)
 	vs->s_svr->weight = 1;
 	vs->s_svr->iweight = 1;
 	inet_stosockaddr(ip, port, &vs->s_svr->addr);
+
+	if (! vs->af)
+		vs->af = vs->s_svr->addr.ss_family;
 }
 
 /* Real server facility functions */
@@ -312,9 +327,12 @@ alloc_rs(char *ip, char *port)
 	new->iweight = 1;
 	new->failed_checkers = alloc_list(free_failed_checkers, NULL);
 
-	if (LIST_ISEMPTY(vs->rs))
+	if (!LIST_EXISTS(vs->rs))
 		vs->rs = alloc_list(free_rs, dump_rs);
 	list_add(vs->rs, new);
+
+	if (! vs->af)
+		vs->af = new->addr.ss_family;
 }
 
 /* data facility functions */

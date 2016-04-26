@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
@@ -54,10 +55,11 @@ extern char *inet_ntop2(uint32_t);
 extern char *inet_ntoa2(uint32_t, char *);
 extern uint8_t inet_stom(char *);
 extern uint8_t inet_stor(char *);
+extern int domain_stosockaddr(char *, char *, struct sockaddr_storage *);
 extern int inet_stosockaddr(char *, char *, struct sockaddr_storage *);
-extern int inet_ip4tosockaddr(struct in_addr *, struct sockaddr_storage *);
-extern int inet_ip6tosockaddr(struct in6_addr *, struct sockaddr_storage *);
-extern int inet_ip6scopeid(uint32_t, struct sockaddr_storage *);
+extern void inet_ip4tosockaddr(struct in_addr *, struct sockaddr_storage *);
+extern void inet_ip6tosockaddr(struct in6_addr *, struct sockaddr_storage *);
+extern void inet_ip6scopeid(uint32_t, struct sockaddr_storage *);
 extern char *inet_sockaddrtos(struct sockaddr_storage *);
 extern char *inet_sockaddrtos2(struct sockaddr_storage *, char *);
 extern char *inet_sockaddrtopair(struct sockaddr_storage *addr);
@@ -71,6 +73,9 @@ uint32_t inet_broadcast(uint32_t, uint32_t);
 uint32_t inet_cidrtomask(uint8_t);
 extern char *get_local_name(void);
 extern int string_equal(const char *, const char *);
+extern void set_std_fd(int);
+#ifndef _HAVE_LIBIPTC_
 extern int fork_exec(char **argv);
+#endif
 
 #endif

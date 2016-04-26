@@ -10,6 +10,10 @@ file is compounded by three configurations parts :
 There is 2 valid comment valid string : # or ! If you want to add comment
 in you configuration file use this char.
 
+0.1. Parameter syntax
+
+<BOOL> is one of on|off|true|false|yes|no
+
 1. Globals configurations
 
 This block is divided in 2 sub-block :
@@ -28,12 +32,67 @@ global_defs {				# Block identification
        ...
     }
     notification_email_from <EMAIL ADDRESS> # Email From dealing with SMTP proto
-    smtp_server <IP ADDRESS>		   # SMTP server IP address
+					   #   defaults to keepalived@<local host name>
+    smtp_server <ADDRESS>|<DOMAIN_NAME>	   # SMTP server IP address or domain name
+    smtp_helo_name <HOST_NAME>		   # name to use in HELO messages
+					   #  defaults to local host name
     smtp_connect_timeout <INTEGER>	   # Number of seconds timeout connect
  					   #  remote SMTP server
     router_id <STRING>			   # String identifying router
     vrrp_mcast_group4 <IPv4 ADDRESS>	   # optional, default 224.0.0.18
     vrrp_mcast_group6 <IPv6 ADDRESS>	   # optional, default ff02::12
+    lvs_sync_daemon <INTERFACE> <VRRP_INSTANCE>	[<SYNC_ID>]
+					   # Binding interface, vrrp instance and optional
+					   #  syncid (0 to 255) for lvs syncd
+    vrrp_garp_master_delay <INTEGER>	   # delay in seconds for second set of gratuitous ARP
+					   #  messages after MASTER state transition, default 5
+    vrrp_garp_master_repeat <INTEGER>	   # how many gratuitous ARP messages after MASTER
+					   #  state transition should be sent, default 5
+    vrrp_garp_lower_prio_delay <INTEGER>   # delay for second set of gratuitous ARPs after lower
+					   #  priority advert received when MASTER
+    vrrp_garp_lower_prio_repeat <INTEGER>  # number of gratuitous ARP messages to send at a time
+					   #  after lower priority advert received when MASTER
+    vrrp_garp_master_refresh <INTEGER>	   # Periodic delay in seconds sending
+					   #  gratuitous ARP while in MASTER state
+					   #  Default: 0 (no refreshing)
+    vrrp_garp_master_refresh_repeat <INTEGER> # how many gratuitous ARP messages shoule be sent
+					   #  at each periodic repeat
+					   #  Default: once (per period)
+    vrrp_lower_prio_no_advert [<BOOL>]     # If a lower priority advert is received, just discard
+					   # it and don't send another advert. This causes adherence
+					   # to the RFCs.
+    vrrp_version <INTEGER:2..3>            # Default VRRP version (default 2)
+    vrrp_iptables [keepalived_in [keepalived_out]]     # default INPUT
+					   # Specifies the iptables chains to add entries to
+					   # If no table names are specied, no entries are added
+    vrrp_check_unicast_src		   # Check source address of a unicast packet is a
+					   # unicast peer
+    vrrp_strict				   # Enforce strict VRRP protocol compliance. This will prohibit:
+					   #   0 VIPs
+					   #   unicast peers
+					   #   IPv6 addresses in VRRP version 2
+					   # Sets:
+					   #   vrrp_lower_priority_dont_send_advert
+					   # The following 4 options can be used if vrrp or checker processes
+					   #   are timing out. This can be seen by a backup vrrp instance becoming
+					   #   master even when the master is still running, due to the master or
+					   #   backup systems being busy, they are not processing the vrrp packets.
+    vrrp_priority <INTEGER:-20..19>	   # Set the vrrp child process priority (negative values increase priority)
+    checker_priority <INTEGER:-20..19>	   # Set the checker child process priority
+    vrrp_no_swap			   # Set the vrrp child process non swappable
+    checker_no_swap			   # Set the checker child process non swappable
+					   #
+					   # If keepalived has been build with SNMP support,
+					   #   the following keywords are available
+					   # Note: keepalived, checker and rfc support can be
+					   #   individually enabled/disabled
+    snmp_socket <ADDRESS>:<PORT>	   # specify socket to use for connecting to SNMP master agent (default 127.0.0.1:161)
+    enable_snmp_keepalived		   # enable SNMP handling of vrrp element of KEEPALIVED MIB
+    enable_snmp_checker			   # enable SNMP handling of checker element of KEEPALIVED MIB
+    enable_snmp_rfc			   # enable SNMP handling of RFC2787 and RFC6527 VRRP MIBs
+    enable_snmp_rfcv2			   # enable SNMP handling of RFC2787 VRRPv2 MIB
+    enable_snmp_rfcv3			   # enable SNMP handling of RFC6527 VRRPv3 MIB
+    enable_traps			   # enable SNMP trap generation
 }
 
 linkbeat_use_polling	# Use media link failure detection polling fashion
@@ -89,6 +148,7 @@ This block is divided in 3 sub-block :
 vrrp_script <STRING> {          # VRRP script declaration
     script <QUOTED_STRING>      # script to run periodically
     interval <INTEGER>          # run the script this every seconds
+    timeout <INTEGER>           # script considered failed after 'timeout' seconds
     weight <INTEGER:-254..254>  # adjust priority by this weight
     fall <INTEGER>              # required number of failures for KO switch
     rise <INTEGER>              # required number of successes for OK switch
@@ -148,6 +208,7 @@ Important: for a SYNC group to run reliably, it is vital that all instances in
 
 vrrp_instance <STRING> {		# VRRP instance declaration
     use_vmac				# Use VRRP Virtual MAC
+    version <INTEGER:2..3>              # VRRP version to use
     vmac_xmit_base			# Send/Recv VRRP messages from base
 					#  interface instead of VMAC interface
     native_ipv6				# Force instance to use IPv6
@@ -173,19 +234,28 @@ vrrp_instance <STRING> {		# VRRP instance declaration
       <IP ADDRESS>			#  adverts to following list of ip address
       ...				#  in unicast design fashion
     }
-    lvs_sync_daemon_interface <STRING>	# Binding interface for lvs syncd
-    garp_master_delay <INTEGER>		# delay for gratuitous ARP after MASTER
-					#  state transition
-    garp_master_repeat <INTEGER>        # how often the gratuitous ARP after MASTER
-                                        #  state transition should be repeated?
-    garp_master_refresh <INTEGER>	# Periodic delay in seconds sending
-					#  gratuitous ARP while in MASTER state
-    garp_master_refresh_repeat <INTEGER># how often the periodically repeated gratuitous ARP
-                                        #  should be repeated?
-                                        #  Default: once (per period)
+
+    # The following garp parameters take their defaults from the global config for vrrp_garp_...
+    # See their descriptions for the meaning of the parameters.
+    garp_master_delay <INTEGER>
+    garp_master_repeat <INTEGER>
+    garp_lower_priority_delay <INTEGER>
+    garp_lower_priority_repeat <INTEGER>
+    garp_master_refresh <INTEGER>
+    garp_master_refresh_repeat <INTEGER>
+
     virtual_router_id <INTEGER-0..255>	# VRRP VRID
     priority <INTEGER-0..255>		# VRRP PRIO
     advert_int <INTEGER>		# VRRP Advert interval (use default)
+
+    lower_prio_no_advert		# If a lower priority advert is received, don't
+					# don't send another advert. This causes adherence
+					# to the RFCs (defaults to global
+					# vrrp_lower_priority_dont_send_advert).
+
+    # Note: authentication was removed from the VRRPv2 specification by RFC3768 in 2004.
+    #   Use of this option is non-compliant and can cause problems; avoid using if possible,
+    #   except when using unicast, when it can be helpful.
     authentication {			# Authentication block
         auth_type PASS|AH		# Simple password or IPSEC AH
         auth_pass <STRING>		# Password string (up to 8 characters)
@@ -207,9 +277,16 @@ vrrp_instance <STRING> {		# VRRP instance declaration
         ...
 	blackhole <IP ADDRESS>[/<MASK>]
     }
+    virtual_rules {			# VRRP virtual rules
+	from|to <IP ADDRESS>/<MASK> table <TABLE-ID>
+    }
+
     nopreempt					# Override VRRP RFC preemption default
     preempt_delay				# Seconds after startup until
 						#  preemption. 0 (default) to 1,000
+    strict_mode [<BOOL>]			# See description of global vrrp_strict
+						# If vrrp_strict is not specified, it takes the value of vrrp_strict
+						# If strict_mode without a parameter is specified, it defaults to on
     debug					# Debug level
     notify_master <STRING>|<QUOTED-STRING>	# Same as vrrp_sync_group
     notify_backup <STRING>|<QUOTED-STRING>	# Same as vrrp_sync_group
@@ -288,13 +365,15 @@ Note:	<IP ADDRESS RANGE> has the form of : XXX.YYY.ZZZ.WWW-VVV, define
 virtual_server <IP ADDRESS> <PORT> {	# VS IP/PORT declaration
 virtual_server fwmark <INTEGER>    {	# VS fwmark declaration
 virtual_server group <STRING>      {	# VS group declaration
+    ip_family inet|inet6		# Address family
     delay_loop <INTEGER>		# delay timer for service polling
     lvs_sched rr|wrr|lc|wlc|lblc|sh|dh	# LVS scheduler used
     ops					# Apply One-Packet-Scheduling (only for UDP)
     lvs_method NAT|DR|TUN		# LVS method used
+    persistence_engine <STRING>	        # LVS persistence engine name
     persistence_timeout <INTEGER>	# LVS persistence timeout
     persistence_granularity <NETMASK>	# LVS granularity mask
-    protocol TCP			# Only TCP is implemented
+    protocol TCP|UDP|SCTP               # L4 protocol
     ha_suspend				# If VS IP address is not set, suspend
 					#  healthcheckers activity
     virtualhost <STRING>		# VirtualHost string to use for
@@ -447,4 +526,3 @@ virtual_server group <STRING>      {	# VS group declaration
         }
     }
 }
-

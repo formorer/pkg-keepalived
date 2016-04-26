@@ -1,14 +1,14 @@
-/* 
+/*
  * Soft:        Keepalived is a failover program for the LVS project
  *              <www.linuxvirtualserver.org>. It monitor & manipulate
  *              a loadbalanced server pool using multi-layer checks.
- * 
+ *
  * Part:        Configuration file parser/reader. Place into the dynamic
  *              data structure representation the conf file representing
  *              the loadbalanced server pool.
- *  
+ *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
- *              
+ *
  *              This program is distributed in the hope that it will be useful,
  *              but WITHOUT ANY WARRANTY; without even the implied warranty of
  *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -29,6 +29,9 @@
 #include "parser.h"
 #include "memory.h"
 #include "logger.h"
+#include "rttables.h"
+
+#define DUMP_KEYWORDS	0
 
 /* global vars */
 vector_t *keywords;
@@ -39,9 +42,13 @@ int reload = 0;
 
 /* local vars */
 static int sublevel = 0;
+static int skip_sublevel = 0;
 
-void
-keyword_alloc(vector_t *keywords_vec, char *string, void (*handler) (vector_t *))
+/* Forward references */
+static void process_stream(vector_t *, int);
+
+static void
+keyword_alloc(vector_t *keywords_vec, char *string, void (*handler) (vector_t *), bool active)
 {
 	keyword_t *keyword;
 
@@ -49,12 +56,13 @@ keyword_alloc(vector_t *keywords_vec, char *string, void (*handler) (vector_t *)
 
 	keyword = (keyword_t *) MALLOC(sizeof(keyword_t));
 	keyword->string = string;
-	keyword->handler = handler;
+	keyword->handler = (active) ? handler : NULL;
+	keyword->active = active;
 
 	vector_set_slot(keywords_vec, keyword);
 }
 
-void
+static void
 keyword_alloc_sub(vector_t *keywords_vec, char *string, void (*handler) (vector_t *))
 {
 	int i = 0;
@@ -73,7 +81,7 @@ keyword_alloc_sub(vector_t *keywords_vec, char *string, void (*handler) (vector_
 		keyword->sub = vector_alloc();
 
 	/* add new sub keyword */
-	keyword_alloc(keyword->sub, string, handler);
+	keyword_alloc(keyword->sub, string, handler, true);
 }
 
 /* Exported helpers */
@@ -90,9 +98,9 @@ install_sublevel_end(void)
 }
 
 void
-install_keyword_root(char *string, void (*handler) (vector_t *))
+install_keyword_root(char *string, void (*handler) (vector_t *), bool active)
 {
-	keyword_alloc(keywords, string, handler);
+	keyword_alloc(keywords, string, handler, active);
 }
 
 void
@@ -117,21 +125,30 @@ install_sublevel_end_handler(void (*handler) (void))
 	keyword->sub_close_handler = handler;
 }
 
-void
-dump_keywords(vector_t *keydump, int level)
+#if DUMP_KEYWORDS
+static void
+dump_keywords(vector_t *keydump, int level, FILE *fp)
 {
-	int i, j;
+	int i;
 	keyword_t *keyword_vec;
+	char file_name[21];
+
+	if (!level) {
+		sprintf(file_name, "/tmp/keywords.%d", getpid());
+		fp = fopen(file_name, "w");
+	}
 
 	for (i = 0; i < vector_size(keydump); i++) {
 		keyword_vec = vector_slot(keydump, i);
-		for (j = 0; j < level; j++)
-			printf("  ");
-		printf("Keyword : %s\n", keyword_vec->string);
+		fprintf(fp, "%*sKeyword : %s (%s)\n", level * 2, "", keyword_vec->string, keyword_vec->active ? "active": "disabled");
 		if (keyword_vec->sub)
-			dump_keywords(keyword_vec->sub, level + 1);
+			dump_keywords(keyword_vec->sub, level + 1, fp);
 	}
+
+	if (!level)
+		fclose(fp);
 }
+#endif
 
 void
 free_keywords(vector_t *keywords_vec)
@@ -177,19 +194,25 @@ alloc_strvec(char *string)
 
 	while (1) {
 		start = cp;
+
+		/* Save a quoted string without the "s as a single string */
 		if (*cp == '"') {
+			start++;
+			if (!(cp = strchr(start, '"'))) {
+				log_message(LOG_INFO, "Unmatched quote: '%s'", string);
+				return strvec;
+			}
+			str_len = cp - start;
 			cp++;
-			token = MALLOC(2);
-			*(token) = '"';
-			*(token + 1) = '\0';
 		} else {
-			while (!isspace((int) *cp) && *cp != '\0' && *cp != '"')
+			while (!isspace((int) *cp) && *cp != '\0' && *cp != '"'
+						   && *cp != '!' && *cp != '#')
 				cp++;
 			str_len = cp - start;
-			token = MALLOC(str_len + 1);
-			memcpy(token, start, str_len);
-			*(token + str_len) = '\0';
 		}
+		token = MALLOC(str_len + 1);
+		memcpy(token, start, str_len);
+		token[str_len] = '\0';
 
 		/* Alloc & set the slot */
 		vector_alloc_slot(strvec);
@@ -207,7 +230,6 @@ void read_conf_file(char *conf_file)
 	FILE *stream;
 	char *path;
 	int ret;
-
 	glob_t globbuf;
 
 	globbuf.gl_offs = 0;
@@ -224,7 +246,7 @@ void read_conf_file(char *conf_file)
 		}
 		current_stream = stream;
 		current_conf_file = globbuf.gl_pathv[i];
-		
+
 		char prev_path[MAXBUF];
 		path = getcwd(prev_path, MAXBUF);
 		if (!path) {
@@ -240,7 +262,7 @@ void read_conf_file(char *conf_file)
 					    , confpath, strerror(errno));
 		}
 		free(confpath);
-		process_stream(current_keywords);
+		process_stream(current_keywords, 0);
 		fclose(stream);
 
 		ret = chdir(prev_path);
@@ -267,7 +289,7 @@ check_include(char *buf)
 		return 0;
 	}
 	str = vector_slot(strvec, 0);
-	
+
 	if (!strcmp(str, EOB)) {
 		free_strvec(strvec);
 		return 0;
@@ -281,7 +303,7 @@ check_include(char *buf)
 		char prev_path[MAXBUF];
 		path = getcwd(prev_path, MAXBUF);
 		if (!path) {
-			log_message(LOG_INFO, "getcwd(%s) error (%s)\n"
+			log_message(LOG_INFO, "getcwd(%s) error (%s)"
 					    , prev_path, strerror(errno));
 		}
 
@@ -290,7 +312,7 @@ check_include(char *buf)
 		current_conf_file = prev_conf_file;
 		ret = chdir(prev_path);
 		if (ret < 0) {
-			log_message(LOG_INFO, "chdir(%s) error (%s)\n"
+			log_message(LOG_INFO, "chdir(%s) error (%s)"
 					    , prev_path, strerror(errno));
 		}
 		free_strvec(strvec);
@@ -321,36 +343,58 @@ read_line(char *buf, int size)
 }
 
 vector_t *
-read_value_block(void)
+read_value_block(vector_t *strvec)
 {
 	char *buf;
-	int i;
+	int word;
 	char *str = NULL;
 	char *dup;
 	vector_t *vec = NULL;
 	vector_t *elements = vector_alloc();
+	int first = 1;
+	int need_bob = 1;
+	int got_eob = 0;
 
 	buf = (char *) MALLOC(MAXBUF);
-	while (read_line(buf, MAXBUF)) {
-		vec = alloc_strvec(buf);
+	while (first || read_line(buf, MAXBUF)) {
+		if (first && vector_size(strvec) > 1) {
+			vec = strvec;
+			word = 1;
+		}
+		else {
+			vec = alloc_strvec(buf);
+			word = 0;
+		}
 		if (vec) {
-			str = vector_slot(vec, 0);
-			if (!strcmp(str, EOB)) {
-				free_strvec(vec);
-				break;
+			str = vector_slot(vec, word);
+			if (need_bob) {
+				if (!strcmp(str, BOB))
+					word++;
+				else
+					log_message(LOG_INFO, "'{' missing at beginning of block %s", FMT_STR_VSLOT(strvec,0));
+				need_bob = 0;
 			}
 
-			if (vector_size(vec))
-				for (i = 0; i < vector_size(vec); i++) {
-					str = vector_slot(vec, i);
-					dup = (char *) MALLOC(strlen(str) + 1);
-					memcpy(dup, str, strlen(str));
-					vector_alloc_slot(elements);
-					vector_set_slot(elements, dup);
+			for (; word < vector_size(vec); word++) {
+				str = vector_slot(vec, word);
+				if (!strcmp(str, EOB)) {
+					if (word != vector_size(vec) - 1)
+						log_message(LOG_INFO, "Extra characters after '}' - \"%s\"", buf);
+					got_eob = 1;
+					break;
 				}
-			free_strvec(vec);
+				dup = (char *) MALLOC(strlen(str) + 1);
+				memcpy(dup, str, strlen(str));
+				vector_alloc_slot(elements);
+				vector_set_slot(elements, dup);
+			}
+			if (vec != strvec)
+				free_strvec(vec);
+			if (got_eob)
+				break;
 		}
 		memset(buf, 0, MAXBUF);
+		first = 0;
 	}
 
 	FREE(buf);
@@ -390,38 +434,39 @@ set_value(vector_t *strvec)
 {
 	char *str = vector_slot(strvec, 1);
 	int size = strlen(str);
-	int i = 0;
-	int len = 0;
-	char *alloc = NULL;
-	char *tmp;
+	char *alloc;
 
-	if (*str == '"') {
-		for (i = 2; i < vector_size(strvec); i++) {
-			str = vector_slot(strvec, i);
-			len += strlen(str);
-			if (!alloc)
-				alloc = (char *) MALLOC(len + 1);
-			else {
-				alloc = (char *) REALLOC(alloc, 2 * (len + 1));
-				tmp = vector_slot(strvec, i-1);
-				if (*str != '"' && *tmp != '"')
-					strncat(alloc, " ", 1);
-			}
+	alloc = (char *) MALLOC(size + 1);
+	if (!alloc)
+		return NULL;
 
-			if (i != vector_size(strvec)-1)
-				strncat(alloc, str, strlen(str));
-		}
-	} else {
-		alloc = (char *) MALLOC(size + 1);
-		memcpy(alloc, str, size);
-	}
+	memcpy(alloc, str, size);
+
 	return alloc;
+}
+
+/* Checks for on/true/yes or off/false/no */
+int
+check_true_false(char *str)
+{
+	if (!strcmp(str, "true") || !strcmp(str, "on") || !strcmp(str, "yes"))
+		return true;
+	if (!strcmp(str, "false") || !strcmp(str, "off") || !strcmp(str, "no"))
+		return false;
+
+	return -1;	/* error */
+}
+
+void skip_block(void)
+{
+	/* Don't process the rest of the configuration block */
+	skip_sublevel = 1;
 }
 
 /* recursive configuration stream handler */
 static int kw_level = 0;
-void
-process_stream(vector_t *keywords_vec)
+static void
+process_stream(vector_t *keywords_vec, int need_bob)
 {
 	int i;
 	keyword_t *keyword_vec;
@@ -430,6 +475,7 @@ process_stream(vector_t *keywords_vec)
 	vector_t *strvec;
 	vector_t *prev_keywords = current_keywords;
 	current_keywords = keywords_vec;
+	int bob_needed = 0;
 
 	buf = zalloc(MAXBUF);
 	while (read_line(buf, MAXBUF)) {
@@ -441,6 +487,36 @@ process_stream(vector_t *keywords_vec)
 
 		str = vector_slot(strvec, 0);
 
+		if (need_bob) {
+			need_bob = 0;
+			if (!strcmp(str, BOB) && kw_level > 0)
+				str[0] = 0;
+			else
+				log_message(LOG_INFO, "Missing '{' at beginning of configuration block");
+		}
+		else if (!skip_sublevel && !strcmp(str, BOB)) {
+			log_message(LOG_INFO, "Unexpected '{' - ignoring");
+			free_strvec(strvec);
+			continue;
+		}
+
+		if (skip_sublevel) {
+			for (i = 0; i < vector_size(strvec); i++) {
+				str = vector_slot(strvec,i);
+				if (!strcmp(str,BOB))
+					skip_sublevel++;
+				else if (!strcmp(str,EOB)) {
+					if (--skip_sublevel == 0)
+						break;
+				}
+			}
+			free_strvec(strvec);
+
+			if (!skip_sublevel)
+				break;
+			continue;
+		}
+
 		if (!strcmp(str, EOB) && kw_level > 0) {
 			free_strvec(strvec);
 			break;
@@ -450,19 +526,37 @@ process_stream(vector_t *keywords_vec)
 			keyword_vec = vector_slot(keywords_vec, i);
 
 			if (!strcmp(keyword_vec->string, str)) {
-				if (keyword_vec->handler)
+				if (keyword_vec->sub) {
+					/* Remove a trailing '{' */
+					char *bob = vector_slot(strvec, vector_size(strvec)-1) ;
+					if (!strcmp(bob, BOB)) {
+						vector_unset(strvec, vector_size(strvec)-1);
+						FREE(bob);
+						bob_needed = 0;
+					}
+					else
+						bob_needed = 1;
+				}
+
+				if (keyword_vec->active && keyword_vec->handler)
 					(*keyword_vec->handler) (strvec);
 
 				if (keyword_vec->sub) {
+					if (!keyword_vec->active)
+						skip_block();
+
 					kw_level++;
-					process_stream(keyword_vec->sub);
+					process_stream(keyword_vec->sub, bob_needed);
 					kw_level--;
-					if (keyword_vec->sub_close_handler)
+					if (keyword_vec->active && keyword_vec->sub_close_handler)
 						(*keyword_vec->sub_close_handler) ();
 				}
 				break;
 			}
 		}
+
+		if (i >= vector_size(keywords_vec))
+			log_message(LOG_INFO, "Unknown keyword '%s'", str );
 
 		free_strvec(strvec);
 	}
@@ -480,14 +574,15 @@ init_data(char *conf_file, vector_t * (*init_keywords) (void))
 	keywords = vector_alloc();
 	(*init_keywords) ();
 
-#if 0
+#if DUMP_KEYWORDS
 	/* Dump configuration */
 	vector_dump(keywords);
-	dump_keywords(keywords, 0);
+	dump_keywords(keywords, 0, NULL);
 #endif
 
 	/* Stream handling */
 	current_keywords = keywords;
 	read_conf_file((conf_file) ? conf_file : CONF);
 	free_keywords(keywords);
+	clear_rttables();
 }

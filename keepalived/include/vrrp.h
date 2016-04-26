@@ -8,9 +8,9 @@
  *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
  *
- *              This program is distributed in the hope that it will be useful, 
- *              but WITHOUT ANY WARRANTY; without even the implied warranty of 
- *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  
+ *              This program is distributed in the hope that it will be useful,
+ *              but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  *              See the GNU General Public License for more details.
  *
  *              This program is free software; you can redistribute it and/or
@@ -30,6 +30,7 @@
 /* local include */
 #include "vrrp_ipaddress.h"
 #include "vrrp_iproute.h"
+#include "vrrp_iprule.h"
 #include "vrrp_ipsecah.h"
 #include "vrrp_if.h"
 #include "vrrp_track.h"
@@ -75,11 +76,14 @@ typedef struct {
 #define VRRP_PRIO_OWNER		255		/* priority of the ip owner -- rfc2338.5.3.4 */
 #define VRRP_PRIO_DFL		100		/* default priority -- rfc2338.5.3.4 */
 #define VRRP_PRIO_STOP		0		/* priority to stop -- rfc2338.5.3.4 */
+#define VRRP_MAX_ADDR		((2^8)-1)	/* count addr field is 8 bits wide */
 #define VRRP_AUTH_NONE		0		/* no authentification -- rfc2338.5.3.6 */
+#ifdef _WITH_VRRP_AUTH_
 #define VRRP_AUTH_PASS		1		/* password authentification -- rfc2338.5.3.6 */
 #define VRRP_AUTH_AH		2		/* AH(IPSec) authentification - rfc2338.5.3.6 */
+#endif
 #define VRRP_ADVER_DFL		1		/* advert. interval (in sec) -- rfc2338.5.3.7 */
-#define VRRP_GARP_DELAY 	(5 * TIMER_HZ)	/* Default delay to launch gratuitous arp */
+#define VRRP_GARP_DELAY		(5 * TIMER_HZ)	/* Default delay to launch gratuitous arp */
 #define VRRP_GARP_REP		5		/* Default repeat value for MASTER state gratuitous arp */
 #define VRRP_GARP_REFRESH_REP	1		/* Default repeat value for refresh gratuitous arp */
 
@@ -107,24 +111,35 @@ typedef struct _vrrp_sgroup {
 
 /* Statistics */
 typedef struct _vrrp_stats {
-	int		advert_rcvd;
-	int		advert_sent;
+	uint64_t	advert_rcvd;
+	uint32_t	advert_sent;
 
-	int		become_master;
-	int		release_master;
+	uint32_t	become_master;
+	uint32_t	release_master;
 
-	int		packet_len_err;
-	int		advert_interval_err;
-	int		ip_ttl_err;
-	int		invalid_type_rcvd;
-	int		addr_list_err;
+	uint64_t	packet_len_err;
+	uint64_t	advert_interval_err;
+	uint64_t	ip_ttl_err;
+	uint64_t	invalid_type_rcvd;
+	uint64_t	addr_list_err;
 
-	int		invalid_authtype;
-	int		authtype_mismatch;
-	int		auth_failure;
+	uint32_t	invalid_authtype;
+	uint32_t	authtype_mismatch;
+	uint32_t	auth_failure;
 
-	int		pri_zero_rcvd;
-	int		pri_zero_sent;
+	uint64_t	pri_zero_rcvd;
+	uint64_t	pri_zero_sent;
+
+#ifdef _WITH_SNMP_RFC_
+	uint32_t	chk_err;
+	uint32_t	vers_err;
+	uint32_t	vrid_err;
+	timeval_t	uptime;
+#ifdef _WITH_SNMP_RFCV3_
+	int		master_reason;
+	int		proto_err_reason;
+#endif
+#endif
 } vrrp_stats;
 
 /* parameters per virtual router -- rfc2338.6.1.2 */
@@ -136,6 +151,9 @@ typedef struct _vrrp_t {
 	vrrp_stats		*stats;			/* Statistics */
 	interface_t		*ifp;			/* Interface we belong to */
 	int			dont_track_primary;	/* If set ignores ifp faults */
+	bool			skip_check_adv_addr;	/* If set, don't check the VIPs in subsequent
+							 * adverts from the same master */
+	int			strict_mode;		/* Enforces strict VRRP compliance */
 	unsigned long		vmac_flags;		/* VRRP VMAC flags */
 	char			vmac_ifname[IFNAMSIZ];	/* Name of VRRP VMAC interface */
 	unsigned int		vmac_ifindex;		/* ifindex of vmac interface */
@@ -147,15 +165,15 @@ typedef struct _vrrp_t {
 	struct sockaddr_storage master_saddr;		/* Store last heard Master address */
 	uint8_t			master_priority;	/* Store last heard priority */
 	timeval_t		last_transition;	/* Store transition time */
-	char			*lvs_syncd_if;		/* handle LVS sync daemon state using this
-							 * instance FSM & running on specific interface
-							 * => eth0 for example.
-							 */
 	int			garp_delay;		/* Delay to launch gratuitous ARP */
 	timeval_t		garp_refresh;		/* Next scheduled gratuitous ARP refresh */
 	timeval_t		garp_refresh_timer;	/* Next scheduled gratuitous ARP timer */
 	int			garp_rep;		/* gratuitous ARP repeat value */
 	int			garp_refresh_rep;	/* refresh gratuitous ARP repeat value */
+        int			garp_lower_prio_delay;	/* Delay to second set or ARP messages */
+        int			garp_lower_prio_rep;	/* Number of ARP messages to send at a time */
+        int			lower_prio_no_advert;	/* Don't send advert after lower prio
+							 * advert received */
 	int			vrid;			/* virtual id. from 1(!) to 255 */
 	int			base_priority;		/* configured priority value */
 	int			effective_priority;	/* effective priority value */
@@ -165,12 +183,14 @@ typedef struct _vrrp_t {
 							 * Those VIPs will not be presents into the
 							 * VRRP adverts
 							 */
+	bool			evip_add_ipv6;		/* Enable IPv6 for eVIPs if this is an IPv4 instance */
 	list			vroutes;		/* list of virtual routes */
+	list			vrules;			/* list of virtual rules */
 	int			adver_int;		/* locally configured delay between advertisements*/
-	int			master_adver_int; /* In v3, when we become BACKUP, we use the MASTER's
-								   * adver_int. If we become MASTER again, we use the
-								   * value we were originally configured with.
-								   */
+	int			master_adver_int;	/* In v3, when we become BACKUP, we use the MASTER's
+							 * adver_int. If we become MASTER again, we use the
+							 * value we were originally configured with.
+							 */
 	bool			accept;			/* Allow the non-master owner to process
 							 * the packets destined to VIP.
 							 */
@@ -181,7 +201,7 @@ typedef struct _vrrp_t {
 							 * prio is allowed.  0 means no delay.
 							 */
 	timeval_t		preempt_time;		/* Time after which preemption can happen */
-	int 			preempt_delay_active;
+	int			preempt_delay_active;
 	int			state;			/* internal state (init/backup/master) */
 	int			init_state;		/* the initial state of the instance */
 	int			wantstate;		/* user explicitly wants a state (back/mast) */
@@ -196,7 +216,7 @@ typedef struct _vrrp_t {
 							 * instead of three intervals.
 							 */
 
-	int version;            /* VRRP version (2 or 3) */
+	int version;		/* VRRP version (2 or 3) */
 
 	/* State transition notification */
 	int			smtp_alert;
@@ -207,7 +227,7 @@ typedef struct _vrrp_t {
 	char			*script_stop;
 	char			*script;
 
-	/* rfc2336.6.2 */
+	/* rfc2338.6.2 */
 	uint32_t		ms_down_timer;
 	timeval_t		sands;
 
@@ -215,9 +235,11 @@ typedef struct _vrrp_t {
 	char			*send_buffer;		/* Allocated send buffer */
 	int			send_buffer_size;
 
+#if defined _WITH_VRRP_AUTH_
 	/* Authentication data (only valid for VRRPv2) */
 	int			auth_type;		/* authentification type. VRRP_AUTH_* */
 	uint8_t			auth_data[8];		/* authentification data */
+#endif
 
 	/*
 	 * To have my own ip_id creates collision with kernel ip->id
@@ -238,9 +260,8 @@ typedef struct _vrrp_t {
 #define VRRP_STATE_MAST			2	/* rfc2338.6.4.3 */
 #define VRRP_STATE_FAULT		3	/* internal */
 #define VRRP_STATE_GOTO_MASTER		4	/* internal */
-#define VRRP_STATE_LEAVE_MASTER		5	/* internal */
-#define VRRP_STATE_GOTO_FAULT 		98	/* internal */
-#define VRRP_DISPATCHER 		99	/* internal */
+#define VRRP_STATE_GOTO_FAULT		98	/* internal */
+#define VRRP_DISPATCHER			99	/* internal */
 #define VRRP_MCAST_RETRY		10	/* internal */
 #define VRRP_MAX_FSM_STATE		4	/* internal */
 
@@ -252,17 +273,15 @@ typedef struct _vrrp_t {
 #define VRRP_PACKET_OTHER    4	/* Muliple VRRP on LAN, Identify "other" VRRP */
 
 /* VRRP Packet fixed length */
-#define VRRP_MAX_VIP		20
-#define VRRP_PACKET_TEMP_LEN	1024
 #define VRRP_AUTH_LEN		8
 #define VRRP_VIP_TYPE		(1 << 0)
 #define VRRP_EVIP_TYPE		(1 << 1)
 
 /* VRRP macro */
-#define VRRP_IS_BAD_VERSION(id)         ((id) < 2 || (id) > 3)
+#define VRRP_IS_BAD_VERSION(id)		((id) < 2 || (id) > 3)
 #define VRRP_IS_BAD_VID(id)		((id) < 1 || (id) > 255)	/* rfc2338.6.1.vrid */
 #define VRRP_IS_BAD_PRIORITY(p)		((p)<1 || (p)>255)	/* rfc2338.6.1.prio */
-#define VRRP_IS_BAD_ADVERT_INT(d) 	((d)<1)
+#define VRRP_IS_BAD_ADVERT_INT(d)	((d)<1)
 #define VRRP_IS_BAD_DEBUG_INT(d)	((d)<0 || (d)>4)
 #define VRRP_IS_BAD_PREEMPT_DELAY(d)	((d)<0 || (d)>TIMER_MAX_SEC)
 #define VRRP_SEND_BUFFER(V)		((V)->send_buffer)
@@ -277,12 +296,12 @@ typedef struct _vrrp_t {
 #define VRRP_PKT_SADDR(V) (((V)->saddr.ss_family) ? ((struct sockaddr_in *) &(V)->saddr)->sin_addr.s_addr : IF_ADDR((V)->ifp))
 #define VRRP_PKT_SADDR6(V) (((V)->saddr.ss_family) ? ((struct sockaddr_in6 *) &(V)->saddr)->sin6_addr : IF_ADDR6((V)->ifp))
 
-#define VRRP_IF_ISUP(V)        ((IF_ISUP((V)->ifp) || (V)->dont_track_primary) & \
-                               ((!LIST_ISEMPTY((V)->track_ifp)) ? TRACK_ISUP((V)->track_ifp) : 1))
+#define VRRP_IF_ISUP(V)		((IF_ISUP((V)->ifp) || (V)->dont_track_primary) & \
+				((!LIST_ISEMPTY((V)->track_ifp)) ? TRACK_ISUP((V)->track_ifp) : 1))
 
-#define VRRP_SCRIPT_ISUP(V)    ((!LIST_ISEMPTY((V)->track_script)) ? SCRIPT_ISUP((V)->track_script) : 1)
+#define VRRP_SCRIPT_ISUP(V)	((!LIST_ISEMPTY((V)->track_script)) ? SCRIPT_ISUP((V)->track_script) : 1)
 
-#define VRRP_ISUP(V)           (VRRP_IF_ISUP(V) && VRRP_SCRIPT_ISUP(V))
+#define VRRP_ISUP(V)		(VRRP_IF_ISUP(V) && VRRP_SCRIPT_ISUP(V))
 
 /* prototypes */
 extern vrrphdr_t *vrrp_get_header(sa_family_t, char *, int *);
@@ -298,12 +317,12 @@ extern int vrrp_state_master_tx(vrrp_t *, const int);
 extern void vrrp_state_backup(vrrp_t *, char *, int);
 extern void vrrp_state_goto_master(vrrp_t *);
 extern void vrrp_state_leave_master(vrrp_t *);
-extern int vrrp_ipsecah_len(void);
 extern int vrrp_complete_init(void);
 extern int vrrp_ipvs_needed(void);
+extern void restore_vrrp_interfaces(void);
 extern void shutdown_vrrp_instances(void);
 extern void clear_diff_vrrp(void);
 extern void clear_diff_script(void);
-extern void vrrp_restore_interface(vrrp_t *, int);
+extern void vrrp_restore_interface(vrrp_t *, bool, bool);
 
 #endif

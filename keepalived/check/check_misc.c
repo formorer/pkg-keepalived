@@ -108,8 +108,6 @@ misc_check_thread(thread_t * thread)
 {
 	checker_t *checker;
 	misc_checker_t *misck_checker;
-	int status, ret;
-	pid_t pid;
 
 	checker = THREAD_ARG(thread);
 	misck_checker = CHECKER_ARG(checker);
@@ -129,48 +127,10 @@ misc_check_thread(thread_t * thread)
 	thread_add_timer(thread->master, misc_check_thread, checker,
 			 checker->vs->delay_loop);
 
-	/* Daemonization to not degrade our scheduling timer */
-	pid = fork();
-
-	/* In case of fork is error. */
-	if (pid < 0) {
-		log_message(LOG_INFO, "Failed fork process");
-		return -1;
-	}
-
-	/* In case of this is parent process */
-	if (pid) {
-		long timeout;
-		timeout = (misck_checker->timeout) ? misck_checker->timeout : checker->vs->delay_loop;
-
-		thread_add_child(thread->master, misc_check_child_thread,
-				 checker, pid, timeout);
-		return 0;
-	}
-
-	/* Child part */
-	signal_handler_destroy();
-	closeall(0);
-
-	open("/dev/null", O_RDWR);
-	ret = dup(0);
-	if (ret < 0) {
-		log_message(LOG_INFO, "dup(0) error");
-	}
-
-	ret = dup(0);
-	if (ret < 0) {
-		log_message(LOG_INFO, "dup(0) error");
-	}
-
-	status = system_call(misck_checker->path);
-
-	if (status < 0 || !WIFEXITED(status))
-		status = 0; /* Script errors aren't server errors */
-	else
-		status = WEXITSTATUS(status);
-
-	exit(status);
+	/* Execute the script in a child process. Parent returns, child doesn't */
+	return system_call_script(thread->master, misc_check_child_thread,
+				  checker, (misck_checker->timeout) ? misck_checker->timeout : checker->vs->delay_loop,
+				  misck_checker->path);
 }
 
 int
@@ -213,14 +173,15 @@ misc_check_child_thread(thread_t * thread)
 		int status;
 		status = WEXITSTATUS(wait_status);
 		if (status == 0 ||
-                    (misck_checker->dynamic == 1 && status >= 2 && status <= 255)) {
+		    (misck_checker->dynamic == 1 && status >= 2 && status <= 255)) {
 			/*
 			 * The actual weight set when using misc_dynamic is two less than
 			 * the exit status returned.  Effective range is 0..253.
 			 * Catch legacy case of status being 0 but misc_dynamic being set.
 			 */
 			if (misck_checker->dynamic == 1 && status != 0)
-				update_svr_wgt(status - 2, checker->vs, checker->rs);
+				update_svr_wgt(status - 2, checker->vs,
+					       checker->rs, 1);
 
 			/* everything is good */
 			if (!svr_checker_up(checker->id, checker->rs)) {
@@ -270,7 +231,6 @@ misc_check_child_timeout_thread(thread_t * thread)
 	}
 
 	log_message(LOG_WARNING, "Process [%d] didn't respond to SIGTERM", pid);
-	waitpid(pid, NULL, 0);
 
 	return 0;
 }

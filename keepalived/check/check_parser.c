@@ -1,14 +1,14 @@
-/* 
+/*
  * Soft:        Keepalived is a failover program for the LVS project
  *              <www.linuxvirtualserver.org>. It monitor & manipulate
  *              a loadbalanced server pool using multi-layer checks.
- * 
+ *
  * Part:        Configuration file parser/reader. Place into the dynamic
  *              data structure representation the conf file representing
  *              the loadbalanced server pool.
- *  
+ *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
- *              
+ *
  *              This program is distributed in the hope that it will be useful,
  *              but WITHOUT ANY WARRANTY; without even the implied warranty of
  *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -32,6 +32,9 @@
 #include "memory.h"
 #include "utils.h"
 #include "ipwrapper.h"
+#if defined _WITH_VRRP_
+#include "vrrp_parser.h"
+#endif
 
 /* SSL handlers */
 static void
@@ -74,6 +77,26 @@ vs_handler(vector_t *strvec)
 	alloc_vs(vector_slot(strvec, 1), vector_slot(strvec, 2));
 }
 static void
+vs_end_handler(void)
+{
+	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
+	if (! vs->af)
+		vs->af = AF_INET;
+}
+static void
+ip_family_handler(vector_t *strvec)
+{
+	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
+	if (vs->af)
+		return;
+	if (0 == strcmp(vector_slot(strvec, 1), "inet"))
+		vs->af = AF_INET;
+	else if (0 == strcmp(vector_slot(strvec, 1), "inet6"))
+		vs->af = AF_INET6;
+	else
+		log_message(LOG_INFO, "unknown address family %s", (char *)vector_slot(strvec, 1));
+}
+static void
 delay_handler(vector_t *strvec)
 {
 	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
@@ -110,12 +133,6 @@ lbkind_handler(vector_t *strvec)
 		log_message(LOG_INFO, "PARSER : unknown [%s] routing method.", str);
 }
 static void
-natmask_handler(vector_t *strvec)
-{
-	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
-	inet_ston(vector_slot(strvec, 1), &vs->nat_mask);
-}
-static void
 pto_handler(vector_t *strvec)
 {
 	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
@@ -127,6 +144,16 @@ pto_handler(vector_t *strvec)
 		size = str_len;
 
 	memcpy(vs->timeout_persistence, str, size);
+}
+static void
+pengine_handler(vector_t *strvec)
+{
+	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
+	char *str = vector_slot(strvec, 1);
+	int size = sizeof (vs->pe_name);
+
+	strncpy(vs->pe_name, str, size - 1);
+	vs->pe_name[size - 1] = '\0';
 }
 static void
 pgr_handler(vector_t *strvec)
@@ -142,7 +169,14 @@ proto_handler(vector_t *strvec)
 {
 	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
 	char *str = vector_slot(strvec, 1);
-	vs->service_type = (!strcmp(str, "TCP")) ? IPPROTO_TCP : IPPROTO_UDP;
+	if (!strcmp(str, "TCP"))
+		vs->service_type = IPPROTO_TCP;
+	else if (!strcmp(str, "SCTP"))
+		vs->service_type = IPPROTO_SCTP;
+	else if (!strcmp(str, "UDP"))
+		vs->service_type = IPPROTO_UDP;
+	else
+		log_message(LOG_INFO, "Unknown protocol %s - ignoring", str);
 }
 static void
 hasuspend_handler(vector_t *strvec)
@@ -283,28 +317,26 @@ hysteresis_handler(vector_t *strvec)
 	vs->hysteresis = tmp;
 }
 
-vector_t *
-check_init_keywords(void)
+void
+init_check_keywords(bool active)
 {
-	/* global definitions mapping */
-	global_init_keywords();
-
 	/* SSL mapping */
-	install_keyword_root("SSL", &ssl_handler);
+	install_keyword_root("SSL", &ssl_handler, active);
 	install_keyword("password", &sslpass_handler);
 	install_keyword("ca", &sslca_handler);
 	install_keyword("certificate", &sslcert_handler);
 	install_keyword("key", &sslkey_handler);
 
 	/* Virtual server mapping */
-	install_keyword_root("virtual_server_group", &vsg_handler);
-	install_keyword_root("virtual_server", &vs_handler);
+	install_keyword_root("virtual_server_group", &vsg_handler, active);
+	install_keyword_root("virtual_server", &vs_handler, active);
+	install_keyword("ip_family", &ip_family_handler);
 	install_keyword("delay_loop", &delay_handler);
 	install_keyword("lb_algo", &lbalgo_handler);
 	install_keyword("lvs_sched", &lbalgo_handler);
 	install_keyword("lb_kind", &lbkind_handler);
 	install_keyword("lvs_method", &lbkind_handler);
-	install_keyword("nat_mask", &natmask_handler);
+	install_keyword("persistence_engine", &pengine_handler);
 	install_keyword("persistence_timeout", &pto_handler);
 	install_keyword("persistence_granularity", &pgr_handler);
 	install_keyword("protocol", &proto_handler);
@@ -334,9 +366,22 @@ check_init_keywords(void)
 	install_keyword("notify_up", &notify_up_handler);
 	install_keyword("notify_down", &notify_down_handler);
 
+	install_sublevel_end_handler(&vs_end_handler);
+
 	/* Checkers mapping */
 	install_checkers_keyword();
 	install_sublevel_end();
+}
 
+vector_t *
+check_init_keywords(void)
+{
+	/* global definitions mapping */
+	global_init_keywords();
+
+	init_check_keywords(true);
+#ifdef _WITH_VRRP_
+	init_vrrp_keywords(false);
+#endif
 	return keywords;
 }

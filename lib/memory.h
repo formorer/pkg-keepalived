@@ -29,10 +29,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 /* extern types */
-extern unsigned long mem_allocated;
 extern void *xalloc(unsigned long size);
 extern void *zalloc(unsigned long size);
 
@@ -45,14 +43,16 @@ extern void *zalloc(unsigned long size);
 #define MAX_ALLOC_LIST 2048
 
 #define MALLOC(n)    ( keepalived_malloc((n), \
-                      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
+		      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
 #define FREE(b)      ( keepalived_free((b), \
-                      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
+		      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
 #define REALLOC(b,n) ( keepalived_realloc((b), (n), \
-                      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
+		      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
+
+extern unsigned long mem_allocated;
 
 /* Memory debug prototypes defs */
-extern char *keepalived_malloc(unsigned long, char *, char *, int);
+extern void *keepalived_malloc(unsigned long, char *, char *, int);
 extern int keepalived_free(void *, char *, char *, int);
 extern void *keepalived_realloc(void *, unsigned long, char *, char *, int);
 extern void keepalived_free_final(char *);

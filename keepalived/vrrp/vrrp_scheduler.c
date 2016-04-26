@@ -88,7 +88,7 @@ struct {
 {
 /*    Stream Read Handlers      |    Stream Read_to handlers   *
  *------------------------------+------------------------------*/
-	{NULL, 				NULL},
+	{NULL,				NULL},
 	{vrrp_backup,			vrrp_goto_master},	/*  BACKUP          */
 	{vrrp_leave_master,		vrrp_master},		/*  MASTER          */
 	{vrrp_leave_fault,		vrrp_fault},		/*  FAULT           */
@@ -126,7 +126,7 @@ struct {
  * FSM since it will speed up convergence to init state.
  * Additionnaly, we have implemented some other handlers into the matrix
  * in order to speed up group synchronization takeover. For instance
- * transitions : 
+ * transitions :
  *    o B->B: To catch wantstate MASTER transition to force sync group
  *            to this transition state too.
  *    o F->F: To speed up FAULT state transition if group is not already
@@ -231,13 +231,19 @@ vrrp_init_state(list l)
 					 vrrp, vrrp->adver_int);
 		}
 
-		if (vrrp->wantstate == VRRP_STATE_MAST) {
+		if (vrrp->wantstate == VRRP_STATE_MAST
+			|| vrrp->wantstate == VRRP_STATE_GOTO_MASTER) {
 #ifdef _HAVE_IPVS_SYNCD_
 			/* Check if sync daemon handling is needed */
-			if (vrrp->lvs_syncd_if)
+			if (global_data->lvs_syncd_if)
 				ipvs_syncd_cmd(IPVS_STARTDAEMON,
-					       vrrp->lvs_syncd_if, IPVS_MASTER,
-					       vrrp->vrid);
+					       global_data->lvs_syncd_if,
+					       IPVS_MASTER,
+					       global_data->lvs_syncd_syncid,
+					       false);
+#endif
+#ifdef _WITH_SNMP_RFCV3_
+			vrrp->stats->master_reason = VRRPV3_MASTER_REASON_PREEMPTED;
 #endif
 			vrrp->state = VRRP_STATE_GOTO_MASTER;
 		} else {
@@ -245,20 +251,23 @@ vrrp_init_state(list l)
 			    + VRRP_TIMER_SKEW(vrrp);
 #ifdef _HAVE_IPVS_SYNCD_
 			/* Check if sync daemon handling is needed */
-			if (vrrp->lvs_syncd_if)
+			if (global_data->lvs_syncd_if &&
+			    global_data->lvs_syncd_vrrp == vrrp)
 				ipvs_syncd_cmd(IPVS_STARTDAEMON,
-					       vrrp->lvs_syncd_if, IPVS_BACKUP,
-					       vrrp->vrid);
+					       global_data->lvs_syncd_if,
+					       IPVS_BACKUP,
+					       global_data->lvs_syncd_syncid,
+					       false);
 #endif
 			log_message(LOG_INFO, "VRRP_Instance(%s) Entering BACKUP STATE",
 			       vrrp->iname);
 
 			/* Set BACKUP state */
-			vrrp_restore_interface(vrrp, 0);
+			vrrp_restore_interface(vrrp, false, false);
 			vrrp->state = VRRP_STATE_BACK;
 			vrrp_smtp_notifier(vrrp);
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_KEEPALIVED_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
 			vrrp->last_transition = timer_now();
@@ -269,12 +278,15 @@ vrrp_init_state(list l)
 					vgroup->state = VRRP_STATE_BACK;
 					vrrp_sync_smtp_notifier(vgroup);
 					notify_group_exec(vgroup, VRRP_STATE_BACK);
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_KEEPALIVED_
 					vrrp_snmp_group_trap(vgroup);
 #endif
 				}
 			}
 		}
+#ifdef _WITH_SNMP_RFC_
+		vrrp->stats->uptime = timer_now();
+#endif
 	}
 }
 
@@ -453,9 +465,11 @@ vrrp_create_sockpool(list l)
 		ifindex = (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
 										    IF_INDEX(vrrp->ifp);
 		unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
+#if defined _WITH_VRRP_AUTH_
 		if (vrrp->version == VRRP_VERSION_2 && vrrp->auth_type == VRRP_AUTH_AH)
 			proto = IPPROTO_IPSEC_AH;
 		else
+#endif
 			proto = IPPROTO_VRRP;
 
 		/* add the vrrp element if not exist */
@@ -499,13 +513,15 @@ vrrp_set_fds(list l)
 			ifindex = (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
 											    IF_INDEX(vrrp->ifp);
 			unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
+#if defined _WITH_VRRP_AUTH_
 			if (vrrp->version == VRRP_VERSION_2 && vrrp->auth_type == VRRP_AUTH_AH)
 				proto = IPPROTO_IPSEC_AH;
 			else
+#endif
 				proto = IPPROTO_VRRP;
 
 			if ((sock->ifindex == ifindex)	&&
-                (sock->family == vrrp->family) &&
+		(sock->family == vrrp->family) &&
 			    (sock->proto == proto)	&&
 			    (sock->unicast == unicast)) {
 				vrrp->fd_in = sock->fd_in;
@@ -582,7 +598,7 @@ vrrp_backup(vrrp_t * vrrp, char *buffer, int len)
 		if (vrrp->state != VRRP_STATE_FAULT) {
 			notify_instance_exec(vrrp, VRRP_STATE_FAULT);
 			vrrp->state = VRRP_STATE_FAULT;
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_KEEPALIVED_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
 		}
@@ -631,6 +647,7 @@ vrrp_leave_master(vrrp_t * vrrp, char *buffer, int len)
 	}
 }
 
+#ifdef _WITH_VRRP_AUTH_
 static void
 vrrp_ah_sync(vrrp_t *vrrp)
 {
@@ -643,6 +660,7 @@ vrrp_ah_sync(vrrp_t *vrrp)
 	vrrp->wantstate = VRRP_STATE_BACK;
 	vrrp_state_leave_master(vrrp);
 }
+#endif
 
 static void
 vrrp_leave_fault(vrrp_t * vrrp, char *buffer, int len)
@@ -651,42 +669,32 @@ vrrp_leave_fault(vrrp_t * vrrp, char *buffer, int len)
 		return;
 
 	if (vrrp_state_fault_rx(vrrp, buffer, len)) {
-		if (vrrp->sync) {
-			if (vrrp_sync_leave_fault(vrrp)) {
-				log_message(LOG_INFO,
-				       "VRRP_Instance(%s) prio is higher than received advert",
-				       vrrp->iname);
-				vrrp_become_master(vrrp, buffer, len);
-			}
-		} else {
+		if (!vrrp->sync || vrrp_sync_leave_fault(vrrp)) {
 			log_message(LOG_INFO,
 			       "VRRP_Instance(%s) prio is higher than received advert",
 			       vrrp->iname);
 			vrrp_become_master(vrrp, buffer, len);
+#ifdef _WITH_SNMP_RFC_
+#ifdef _WITH_SNMP_RFCV3_
+			vrrp->stats->master_reason = VRRPV3_MASTER_REASON_PREEMPTED;
+#endif
+			vrrp->stats->uptime = timer_now();
+#endif
 		}
 	} else {
-		if (vrrp->sync) {
-			if (vrrp_sync_leave_fault(vrrp)) {
-				log_message(LOG_INFO, "VRRP_Instance(%s) Entering BACKUP STATE",
-				       vrrp->iname);
-				vrrp->state = VRRP_STATE_BACK;
-				vrrp_smtp_notifier(vrrp);
-				notify_instance_exec(vrrp, VRRP_STATE_BACK);
-#ifdef _WITH_SNMP_
-				vrrp_snmp_instance_trap(vrrp);
-#endif
-				vrrp->last_transition = timer_now();
-			}
-		} else {
+		if (!vrrp->sync || vrrp_sync_leave_fault(vrrp)) {
 			log_message(LOG_INFO, "VRRP_Instance(%s) Entering BACKUP STATE",
 			       vrrp->iname);
 			vrrp->state = VRRP_STATE_BACK;
 			vrrp_smtp_notifier(vrrp);
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_KEEPALIVED_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
 			vrrp->last_transition = timer_now();
+#ifdef _WITH_SNMP_RFC_
+			vrrp->stats->uptime = vrrp->last_transition;
+#endif
 		}
 	}
 }
@@ -703,17 +711,24 @@ vrrp_goto_master(vrrp_t * vrrp)
 		vrrp->state = VRRP_STATE_FAULT;
 		vrrp->ms_down_timer = 3 * vrrp->adver_int + VRRP_TIMER_SKEW(vrrp);
 		notify_instance_exec(vrrp, VRRP_STATE_FAULT);
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_KEEPALIVED_
 		vrrp_snmp_instance_trap(vrrp);
 #endif
 		vrrp->last_transition = timer_now();
 	} else {
+#if defined _WITH_VRRP_AUTH_
 		/* If becoming MASTER in IPSEC AH AUTH, we reset the anti-replay */
 		if (vrrp->version == VRRP_VERSION_2 && vrrp->ipsecah_counter->cycle) {
 			vrrp->ipsecah_counter->cycle = 0;
 			vrrp->ipsecah_counter->seq_number = 0;
 		}
+#endif
 
+#ifdef _WITH_SNMP_RFCV3_
+		if ((vrrp->version == VRRP_VERSION_2 && vrrp->ms_down_timer >= 3 * vrrp->adver_int) ||
+		    (vrrp->version == VRRP_VERSION_3 && vrrp->ms_down_timer >= 3 * vrrp->master_adver_int))
+			vrrp->stats->master_reason = VRRPV3_MASTER_REASON_MASTER_NO_RESPONSE;
+#endif
 		/* handle master state transition */
 		vrrp->wantstate = VRRP_STATE_MAST;
 		vrrp_state_goto_master(vrrp);
@@ -721,13 +736,25 @@ vrrp_goto_master(vrrp_t * vrrp)
 }
 
 /* Delayed gratuitous ARP thread */
-int
+static int
 vrrp_gratuitous_arp_thread(thread_t * thread)
 {
 	vrrp_t *vrrp = THREAD_ARG(thread);
 
 	/* Simply broadcast the gratuitous ARP */
 	vrrp_send_link_update(vrrp, vrrp->garp_rep);
+
+	return 0;
+}
+
+/* Delayed gratuitous ARP thread after receiving a lower priority advert */
+int
+vrrp_lower_prio_gratuitous_arp_thread(thread_t * thread)
+{
+	vrrp_t *vrrp = THREAD_ARG(thread);
+
+	/* Simply broadcast the gratuitous ARP */
+	vrrp_send_link_update(vrrp, vrrp->garp_lower_prio_rep);
 
 	return 0;
 }
@@ -761,8 +788,8 @@ vrrp_update_priority(thread_t * thread)
 		new_prio = vrrp->base_priority + prio_offset;
 		if (new_prio < 1)
 			new_prio = 1;
-		else if (new_prio > 254)
-			new_prio = 254;
+		else if (new_prio >= VRRP_PRIO_OWNER)
+			new_prio = VRRP_PRIO_OWNER - 1;
 		vrrp->effective_priority = new_prio;
 	}
 
@@ -802,13 +829,12 @@ vrrp_master(vrrp_t * vrrp)
 		 * Send the VRRP advert.
 		 * If we catch the master transition
 		 * <=> vrrp_state_master_tx(...) = 1
-		 * register a gratuitous arp thread delayed to 5 secs.
+		 * register a gratuitous arp thread delayed to garp_delay secs.
 		 */
 		if (vrrp_state_master_tx(vrrp, 0)) {
-			thread_add_timer(master, vrrp_gratuitous_arp_thread,
-					 vrrp,
-					 (vrrp->garp_delay) ?
-						vrrp->garp_delay : VRRP_GARP_DELAY);
+			if (vrrp->garp_delay)
+				thread_add_timer(master, vrrp_gratuitous_arp_thread,
+						 vrrp, vrrp->garp_delay);
 			vrrp_smtp_notifier(vrrp);
 		}
 	}
@@ -831,6 +857,7 @@ vrrp_fault(vrrp_t * vrrp)
 	if (new_vrrp_socket(vrrp) < 0)
 		return;
 
+#if defined _WITH_VRRP_AUTH_
 	/*
 	 * We force the IPSEC AH seq_number sync
 	 * to be done in read advert handler.
@@ -840,19 +867,27 @@ vrrp_fault(vrrp_t * vrrp)
 	 */
 	if (vrrp->version == VRRP_VERSION_2 && vrrp->auth_type == VRRP_AUTH_AH) {
 		vrrp_ah_sync(vrrp);
-	} else {
+	} else
+#endif
+	{
 		/* Otherwise, we transit to init state */
 		if (vrrp->init_state == VRRP_STATE_BACK) {
 			vrrp->state = VRRP_STATE_BACK;
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
-#ifdef _WITH_SNMP_
+#ifdef _WITH_SNMP_KEEPALIVED_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
 			vrrp->last_transition = timer_now();
 		} else {
+#ifdef _WITH_SNMP_RFCV3_
+			vrrp->stats->master_reason = VRRPV3_MASTER_REASON_PREEMPTED;
+#endif
 			vrrp_goto_master(vrrp);
 		}
 	}
+#ifdef _WITH_SNMP_RFC_
+	vrrp->stats->uptime = timer_now();
+#endif
 }
 
 /* Handle dispatcher read timeout */
@@ -893,7 +928,7 @@ vrrp_dispatcher_read_to(int fd)
 	if (vrrp->quick_sync) {
 		vrrp->sands = timer_add_long(time_now, vrrp->adver_int);
 		vrrp->quick_sync = 0;
-        }
+	}
 
 	return vrrp->fd_in;
 }
@@ -905,14 +940,14 @@ vrrp_dispatcher_read(sock_t * sock)
 	vrrp_t *vrrp;
 	vrrphdr_t *hd;
 	int len = 0, prev_state = 0, proto = 0;
-        struct sockaddr_storage src_addr;
-        socklen_t src_addr_len = sizeof(src_addr);
+	struct sockaddr_storage src_addr;
+	socklen_t src_addr_len = sizeof(src_addr);
 
 	/* Clean the read buffer */
-	memset(vrrp_buffer, 0, VRRP_PACKET_TEMP_LEN);
+	memset(vrrp_buffer, 0, vrrp_buffer_len);
 
 	/* read & affect received buffer */
-	len = recvfrom(sock->fd_in, vrrp_buffer, VRRP_PACKET_TEMP_LEN, 0,
+	len = recvfrom(sock->fd_in, vrrp_buffer, vrrp_buffer_len, 0,
 		       (struct sockaddr *) &src_addr, &src_addr_len);
 	hd = vrrp_get_header(sock->family, vrrp_buffer, &proto);
 
@@ -980,52 +1015,15 @@ static int
 vrrp_script_thread(thread_t * thread)
 {
 	vrrp_script_t *vscript = THREAD_ARG(thread);
-	int status, ret;
-	pid_t pid;
 
 	/* Register next timer tracker */
 	thread_add_timer(thread->master, vrrp_script_thread, vscript,
 			 vscript->interval);
 
-	/* Daemonization to not degrade our scheduling timer */
-	pid = fork();
-
-	/* In case of fork is error. */
-	if (pid < 0) {
-		log_message(LOG_INFO, "Failed fork process");
-		return -1;
-	}
-
-	/* In case of this is parent process */
-	if (pid) {
-		thread_add_child(thread->master, vrrp_script_child_thread,
-				 vscript, pid,
-				 (vscript->timeout) ? vscript->timeout : vscript->interval);
-		return 0;
-	}
-
-	/* Child part */
-	signal_handler_destroy();
-	closeall(0);
-	open("/dev/null", O_RDWR);
-	ret = dup(0);
-	if (ret < 0) {
-		log_message(LOG_INFO, "dup(0) error");
-	}
-
-	ret = dup(0);
-	if (ret < 0) {
-		log_message(LOG_INFO, "dup(0) error");
-	}
-
-	status = system_call(vscript->script);
-
-	if (status < 0 || !WIFEXITED(status))
-		status = 0; /* Script errors aren't server errors */
-	else
-		status = WEXITSTATUS(status);
-
-	exit(status);
+	/* Execute the script in a child process. Parent returns, child doesn't */
+	return system_call_script(thread->master, vrrp_script_child_thread,
+				  vscript, (vscript->timeout) ? vscript->timeout : vscript->interval,
+				  vscript->script);
 }
 
 static int
@@ -1100,7 +1098,6 @@ vrrp_script_child_timeout_thread(thread_t * thread)
 	}
 
 	log_message(LOG_WARNING, "Process [%d] didn't respond to SIGTERM", pid);
-	waitpid(pid, NULL, 0);
 
 	return 0;
 }

@@ -1,10 +1,10 @@
-/* 
+/*
  * Soft:        Keepalived is a failover program for the LVS project
  *              <www.linuxvirtualserver.org>. It monitor & manipulate
  *              a loadbalanced server pool using multi-layer checks.
- * 
+ *
  * Part:        list.c include file.
- *  
+ *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
  *
  *              This program is distributed in the hope that it will be useful,
@@ -47,6 +47,7 @@ struct _list {
 #define LIST_HEAD(L)		((L)->head)
 #define LIST_TAIL_DATA(L)	((L)->tail->data)
 #define LIST_ISEMPTY(L)		((L) == NULL || ((L)->head == NULL && (L)->tail == NULL))
+#define LIST_EXISTS(L)		((L) != NULL)
 #define LIST_SIZE(V)		((V)->count)
 
 /* Prototypes */
