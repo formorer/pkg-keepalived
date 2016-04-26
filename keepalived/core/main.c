@@ -27,19 +27,21 @@
 #include "bitops.h"
 #include "logger.h"
 
+#define CHILD_WAIT_SECS	5
+
 /* global var */
-char *conf_file = NULL;		/* Configuration file */
-int log_facility = LOG_DAEMON;	/* Optional logging facilities */
-pid_t vrrp_child = -1;		/* VRRP child process ID */
-pid_t checkers_child = -1;	/* Healthcheckers child process ID */
-int daemon_mode = 0;		/* VRRP/CHECK subsystem selection */
-int linkwatch = 0;		/* Use linkwatch kernel netlink reflection */
-char *main_pidfile = KEEPALIVED_PID_FILE;	/* overrule default pidfile */
-char *checkers_pidfile = CHECKERS_PID_FILE;	/* overrule default pidfile */
-char *vrrp_pidfile = VRRP_PID_FILE;	/* overrule default pidfile */
+char *conf_file = NULL;					/* Configuration file */
+int log_facility = LOG_DAEMON;				/* Optional logging facilities */
+pid_t vrrp_child = -1;					/* VRRP child process ID */
+pid_t checkers_child = -1;				/* Healthcheckers child process ID */
+int linkwatch = 0;					/* Use linkwatch kernel netlink reflection */
+char *main_pidfile = KEEPALIVED_PID_FILE;		/* overrule default pidfile */
+char *checkers_pidfile = CHECKERS_PID_FILE;		/* overrule default pidfile */
+char *vrrp_pidfile = VRRP_PID_FILE;			/* overrule default pidfile */
+unsigned long daemon_mode = 0;				/* VRRP/CHECK subsystem selection */
 #ifdef _WITH_SNMP_
-int snmp = 0;			/* Enable SNMP support */
-const char *snmp_socket = NULL;	/* Socket to use for SNMP agent */
+int snmp = 0;						/* Enable SNMP support */
+const char *snmp_socket = NULL;				/* Socket to use for SNMP agent */
 #endif
 
 /* Log facility table */
@@ -54,17 +56,16 @@ static struct {
 static void
 stop_keepalived(void)
 {
-	log_message(LOG_INFO, "Stopping " VERSION_STRING);
 	/* Just cleanup memory & exit */
 	signal_handler_destroy();
 	thread_destroy_master(master);
 
 	pidfile_rm(main_pidfile);
 
-	if (daemon_mode & 1 || !daemon_mode)
+	if (__test_bit(DAEMON_VRRP, &daemon_mode))
 		pidfile_rm(vrrp_pidfile);
 
-	if (daemon_mode & 2 || !daemon_mode)
+	if (__test_bit(DAEMON_CHECKERS, &daemon_mode))
 		pidfile_rm(checkers_pidfile);
 
 #ifdef _DEBUG_
@@ -78,44 +79,101 @@ start_keepalived(void)
 {
 #ifdef _WITH_LVS_
 	/* start healthchecker child */
-	if (daemon_mode & 2 || !daemon_mode)
+	if (__test_bit(DAEMON_CHECKERS, &daemon_mode))
 		start_check_child();
 #endif
 #ifdef _WITH_VRRP_
 	/* start vrrp child */
-	if (daemon_mode & 1 || !daemon_mode)
+	if (__test_bit(DAEMON_VRRP, &daemon_mode))
 		start_vrrp_child();
 #endif
 }
 
-/* SIGHUP handler */
-void
-sighup(void *v, int sig)
+/* SIGHUP/USR1/USR2 handler */
+static void
+propogate_signal(void *v, int sig)
 {
 	/* Signal child process */
 	if (vrrp_child > 0)
-		kill(vrrp_child, SIGHUP);
-	if (checkers_child > 0)
-		kill(checkers_child, SIGHUP);
+		kill(vrrp_child, sig);
+	if (checkers_child > 0 && sig == SIGHUP)
+		kill(checkers_child, sig);
 }
 
 /* Terminate handler */
-void
+static void
 sigend(void *v, int sig)
 {
 	int status;
+	int ret;
+	int wait_count = 0;
+	sigset_t old_set, child_wait;
+	struct timespec timeout = { CHILD_WAIT_SECS, 0 };
+	struct timeval start_time, now;
 
 	/* register the terminate thread */
 	thread_add_terminate_event(master);
 
+	log_message(LOG_INFO, "Stopping");
+	sigprocmask(0, NULL, &old_set);
+	if (!sigismember(&old_set, SIGCHLD)) {
+		sigemptyset(&child_wait);
+		sigaddset(&child_wait, SIGCHLD);
+		sigprocmask(SIG_BLOCK, &child_wait, NULL);
+	}
+
 	if (vrrp_child > 0) {
 		kill(vrrp_child, SIGTERM);
-		waitpid(vrrp_child, &status, WNOHANG);
+		wait_count++;
 	}
 	if (checkers_child > 0) {
 		kill(checkers_child, SIGTERM);
-		waitpid(checkers_child, &status, WNOHANG);
+		wait_count++;
 	}
+
+	gettimeofday(&start_time, NULL);
+	while (wait_count) {
+		ret = sigtimedwait(&child_wait, NULL, &timeout);
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN)
+				break;
+		}
+
+		if (vrrp_child > 0 && vrrp_child == waitpid(vrrp_child, &status, WNOHANG)) {
+			report_child_status(status, vrrp_child, PROG_VRRP);
+			wait_count--;
+		}
+
+		if (checkers_child > 0 && checkers_child == waitpid(checkers_child, &status, WNOHANG)) {
+			report_child_status(status, checkers_child, PROG_CHECK);
+			wait_count--;
+		}
+		if (wait_count) {
+			gettimeofday(&now, NULL);
+			if (now.tv_usec < start_time.tv_usec) {
+				timeout.tv_nsec = (start_time.tv_usec - now.tv_usec) * 1000;
+				timeout.tv_sec = CHILD_WAIT_SECS - (now.tv_sec - start_time.tv_sec);
+			} else if (now.tv_usec == start_time.tv_usec) {
+				timeout.tv_nsec = 0;
+				timeout.tv_sec = CHILD_WAIT_SECS - (now.tv_sec - start_time.tv_sec);
+			} else {
+				timeout.tv_nsec = (1000000L + start_time.tv_usec - now.tv_usec) * 1000;
+				timeout.tv_sec = CHILD_WAIT_SECS - (now.tv_sec - start_time.tv_sec + 1);
+			}
+
+			timeout.tv_nsec = (start_time.tv_usec - now.tv_usec) * 1000;
+			timeout.tv_sec = CHILD_WAIT_SECS - (now.tv_sec - start_time.tv_sec);
+			if (timeout.tv_nsec < 0) {
+				timeout.tv_nsec += 1000000000L;
+				timeout.tv_sec--;
+			}
+		}
+	}
+
+	if (!sigismember(&old_set, SIGCHLD))
+		sigprocmask(SIG_UNBLOCK, &child_wait, NULL);
 }
 
 /* Initialize signal handler */
@@ -123,7 +181,9 @@ void
 signal_init(void)
 {
 	signal_handler_init();
-	signal_set(SIGHUP, sighup, NULL);
+	signal_set(SIGHUP, propogate_signal, NULL);
+	signal_set(SIGUSR1, propogate_signal, NULL);
+	signal_set(SIGUSR2, propogate_signal, NULL);
 	signal_set(SIGINT, sigend, NULL);
 	signal_set(SIGTERM, sigend, NULL);
 	signal_ignore(SIGPIPE);
@@ -188,14 +248,19 @@ parse_cmdline(int argc, char **argv)
 		{0, 0, 0, 0}
 	};
 
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:"
 #ifdef _WITH_SNMP_
-	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:xA:", long_options, NULL)) != EOF) {
-#else
-	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:", long_options, NULL)) != EOF) {
+								   "xA:"
 #endif
+									, long_options, NULL)) != EOF) {
 		switch (c) {
 		case 'v':
-			fprintf(stderr, VERSION_STRING);
+			fprintf(stderr, "%s", VERSION_STRING);
+#ifdef GIT_COMMIT
+			fprintf(stderr, ", git commit %s", GIT_COMMIT);
+#endif
+			fprintf(stderr, "\n\n%s\n\n", COPYRIGHT_STRING);
+			fprintf(stderr, "Build options: %s\n", BUILD_OPTIONS);
 			exit(0);
 			break;
 		case 'h':
@@ -233,10 +298,12 @@ parse_cmdline(int argc, char **argv)
 			conf_file = optarg;
 			break;
 		case 'P':
-			daemon_mode |= 1;
+			daemon_mode = 0;
+			__set_bit(DAEMON_VRRP, &daemon_mode);
 			break;
 		case 'C':
-			daemon_mode |= 2;
+			daemon_mode = 0;
+			__set_bit(DAEMON_CHECKERS, &daemon_mode);
 			break;
 		case 'p':
 			main_pidfile = optarg;
@@ -273,9 +340,14 @@ parse_cmdline(int argc, char **argv)
 int
 main(int argc, char **argv)
 {
+	int report_stopped = true;
+
 	/* Init debugging level */
-	mem_allocated = 0;
 	debug = 0;
+
+	/* Initialise daemon_mode */
+	__set_bit(DAEMON_VRRP, &daemon_mode);
+	__set_bit(DAEMON_CHECKERS, &daemon_mode);
 
 	/*
 	 * Parse command line and set debug level.
@@ -285,11 +357,16 @@ main(int argc, char **argv)
 
 	openlog(PROG, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
 		    , log_facility);
-	log_message(LOG_INFO, "Starting " VERSION_STRING);
+#ifdef GIT_COMMIT
+	log_message(LOG_INFO, "Starting %s, git commit %s", VERSION_STRING, GIT_COMMIT);
+#else
+	log_message(LOG_INFO, "Starting %s", VERSION_STRING);
+#endif
 
 	/* Check if keepalived is already running */
 	if (keepalived_running(daemon_mode)) {
 		log_message(LOG_INFO, "daemon is already running");
+		report_stopped = false;
 		goto end;
 	}
 
@@ -328,6 +405,14 @@ main(int argc, char **argv)
 	 * finally return from system
 	 */
 end:
+	if (report_stopped) {
+#ifdef GIT_COMMIT
+		log_message(LOG_INFO, "Stopped %s, git commit %s", VERSION_STRING, GIT_COMMIT);
+#else
+		log_message(LOG_INFO, "Stopped %s", VERSION_STRING);
+#endif
+	}
+
 	closelog();
 	exit(0);
 }

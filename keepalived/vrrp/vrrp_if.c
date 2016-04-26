@@ -105,6 +105,13 @@ if_get_by_ifname(const char *ifname)
 	return NULL;
 }
 
+/* Return the interface list itself */
+list
+get_if_list(void)
+{
+	return if_queue;
+}
+
 /*
  * Reflect base interface flags on VMAC interfaces.
  * VMAC interfaces should never update it own flags, only be reflected
@@ -201,7 +208,7 @@ if_mii_probe(const char *ifname)
 {
 	uint16_t *data = (uint16_t *) (&ifr.ifr_data);
 	int phy_id;
-	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	int status = 0;
 
 	if (fd < 0)
@@ -250,7 +257,7 @@ if_ethtool_status(const int fd)
 int
 if_ethtool_probe(const char *ifname)
 {
-	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	int status = 0;
 
 	if (fd < 0)
@@ -266,7 +273,7 @@ if_ethtool_probe(const char *ifname)
 void
 if_ioctl_flags(interface_t * ifp)
 {
-	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
 	if (fd < 0)
 		return;
@@ -290,17 +297,17 @@ free_if(void *data)
 void
 dump_if(void *data)
 {
-	interface_t *ifp = data;
-	char addr_str[41];
+	interface_t *ifp = data, *ifp_u;
+	char addr_str[INET6_ADDRSTRLEN];
 
 	log_message(LOG_INFO, "------< NIC >------");
 	log_message(LOG_INFO, " Name = %s", ifp->ifname);
 	log_message(LOG_INFO, " index = %d", ifp->ifindex);
 	log_message(LOG_INFO, " IPv4 address = %s", inet_ntop2(ifp->sin_addr.s_addr));
-	inet_ntop(AF_INET6, &ifp->sin6_addr, addr_str, 41);
+	inet_ntop(AF_INET6, &ifp->sin6_addr, addr_str, sizeof(addr_str));
 	log_message(LOG_INFO, " IPv6 address = %s", addr_str);
 
-	/* FIXME: Harcoded for ethernet */
+	/* FIXME: Hardcoded for ethernet */
 	if (ifp->hw_type == ARPHRD_ETHER)
 		log_message(LOG_INFO, " MAC = %.2x:%.2x:%.2x:%.2x:%.2x:%.2x",
 		       ifp->hw_addr[0], ifp->hw_addr[1], ifp->hw_addr[2]
@@ -328,6 +335,9 @@ dump_if(void *data)
 		log_message(LOG_INFO, " HW Type = UNKNOWN");
 		break;
 	}
+
+	if (ifp->vmac && (ifp_u = if_get_by_ifindex(ifp->base_ifindex)))
+		log_message(LOG_INFO, " VMAC underlying interface = %s", ifp_u->ifname);
 
 	/* MII channel supported ? */
 	if (IF_MII_SUPPORTED(ifp))
@@ -459,7 +469,6 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface_t *ifp, int proto)
 	if (family == AF_INET) {
 		memset(&imr, 0, sizeof(imr));
 		imr.imr_multiaddr = ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr;
-		imr.imr_address.s_addr = IF_ADDR(ifp);
 		imr.imr_ifindex = IF_INDEX(ifp);
 
 		/* -> Need to handle multicast convergance after takeover.
@@ -476,11 +485,11 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface_t *ifp, int proto)
 	}
 
 	if (ret < 0) {
-		log_message(LOG_INFO, "cant do IP%s_ADD_MEMBERSHIP errno=%s (%d)",
-			    (family == AF_INET) ? "" : "V6", strerror(errno), errno);
+		log_message(LOG_INFO, "(%s): cant do IP%s_ADD_MEMBERSHIP errno=%s (%d)",
+			    ifp->ifname, (family == AF_INET) ? "" : "V6", strerror(errno), errno);
 		close(*sd);
 		*sd = -1;
-        }
+	}
 
 	return *sd;
 }
@@ -488,7 +497,7 @@ if_join_vrrp_group(sa_family_t family, int *sd, interface_t *ifp, int proto)
 int
 if_leave_vrrp_group(sa_family_t family, int sd, interface_t *ifp)
 {
-	struct ip_mreq imr;
+	struct ip_mreqn imr;
 	struct ipv6_mreq imr6;
 	int ret = 0;
 
@@ -500,9 +509,9 @@ if_leave_vrrp_group(sa_family_t family, int sd, interface_t *ifp)
 	if (family == AF_INET) {
 		memset(&imr, 0, sizeof(imr));
 		imr.imr_multiaddr = ((struct sockaddr_in *) &global_data->vrrp_mcast_group4)->sin_addr;
-		imr.imr_interface.s_addr = IF_ADDR(ifp);
+		imr.imr_ifindex = IF_INDEX(ifp);
 		ret = setsockopt(sd, IPPROTO_IP, IP_DROP_MEMBERSHIP,
-				 (char *) &imr, sizeof(struct ip_mreq));
+				 (char *) &imr, sizeof(imr));
 	} else {
 		memset(&imr6, 0, sizeof(imr6));
 		imr6.ipv6mr_multiaddr = ((struct sockaddr_in6 *) &global_data->vrrp_mcast_group6)->sin6_addr;
@@ -512,14 +521,11 @@ if_leave_vrrp_group(sa_family_t family, int sd, interface_t *ifp)
 	}
 
 	if (ret < 0) {
-		log_message(LOG_INFO, "cant do IP%s_DROP_MEMBERSHIP errno=%s (%d)",
-			    (family == AF_INET) ? "" : "V6", strerror(errno), errno);
-		close(sd);
+		log_message(LOG_INFO, "(%s): cant do IP%s_DROP_MEMBERSHIP errno=%s (%d)",
+			    ifp->ifname, (family == AF_INET) ? "" : "V6", strerror(errno), errno);
 		return -1;
 	}
 
-	/* Finally close the desc */
-	close(sd);
 	return 0;
 }
 
@@ -592,6 +598,38 @@ if_setsockopt_ipv6_checksum(int *sd)
 
 
 int
+if_setsockopt_mcast_all(sa_family_t family, int *sd)
+{
+#ifndef IP_MULTICAST_ALL
+	/* IP_MULTICAST_ALL sockopt is available since Linux 2.6.31.
+	 * It seems reasonable to just skip the calls to if_setsockopt_mcast_all
+	 * if there is no support for that feature in header files */
+	return -1;
+#else
+	int ret;
+	unsigned char no = 0;
+
+	if (*sd < 0)
+		return -1;
+
+	if (family == AF_INET6)
+		return *sd;
+
+	/* Don't accept multicast packets we haven't requested */
+	ret = setsockopt(*sd, IPPROTO_IP, IP_MULTICAST_ALL, &no, sizeof(no));
+
+	if (ret < 0) {
+		log_message(LOG_INFO, "cant set IP_MULTICAST_ALL IP option. errno=%d (%m)",
+			    errno);
+		close(*sd);
+		*sd = -1;
+	}
+
+	return *sd;
+#endif
+}
+
+int
 if_setsockopt_mcast_loop(sa_family_t family, int *sd)
 {
 	int ret;
@@ -644,15 +682,22 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface_t *ifp)
 	int ret;
 	unsigned int ifindex;
 
-	/* Not applicable for IPv4 */
-	if (*sd < 0 || family == AF_INET)
+	if (*sd < 0)
 		return -1;
 
 	/* Set interface for sending outbound datagrams */
 	ifindex = IF_INDEX(ifp);
-	ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex));
+	if ( family == AF_INET)
+	{
+		struct ip_mreqn imr ;
+		imr.imr_ifindex = IF_INDEX(ifp);
+		ret = setsockopt(*sd, IPPROTO_IP, IP_MULTICAST_IF, &imr, sizeof(imr));
+	}
+	else
+		ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifindex, sizeof(ifindex));
+
 	if (ret < 0) {
-		log_message(LOG_INFO, "cant set IPV6_MULTICAST_IF IP option. errno=%d (%m)", errno);
+		log_message(LOG_INFO, "cant set IP%s_MULTICAST_IF IP option. errno=%d (%m)", (family == AF_INET) ? "" : "V6", errno);
 		close(*sd);
 		*sd = -1;
 	}
@@ -689,14 +734,14 @@ if_setsockopt_sndbuf(int *sd, int val)
 		return -1;
 
 	/* sndbuf option */
-        ret = setsockopt(*sd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val));
-        if (ret < 0) {
+	ret = setsockopt(*sd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val));
+	if (ret < 0) {
 		log_message(LOG_INFO, "cant set SO_SNDBUF IP option. errno=%d (%m)", errno);
 		close(*sd);
 		*sd = -1;
-        }
+	}
 
-        return *sd;
+	return *sd;
 }
 
 int

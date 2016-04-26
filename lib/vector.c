@@ -1,12 +1,12 @@
-/* 
+/*
  * Soft:        Keepalived is a failover program for the LVS project
  *              <www.linuxvirtualserver.org>. It monitor & manipulate
  *              a loadbalanced server pool using multi-layer checks.
- * 
+ *
  * Part:        Vector structure manipulation.
- *  
+ *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
- *              
+ *
  *              This program is distributed in the hope that it will be useful,
  *              but WITHOUT ANY WARRANTY; without even the implied warranty of
  *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -23,7 +23,7 @@
 #include "vector.h"
 #include "memory.h"
 
-/* 
+/*
  * Initialize vector struct.
  * allocalted 'size' slot elements then return vector.
  */
@@ -70,6 +70,10 @@ vector_insert_slot(vector_t *v, int index, void *value)
 	for (i = (v->allocated / VECTOR_DEFAULT_SIZE) - 2; i >= index; i--)
 		v->slot[i + 1] = v->slot[i];
 	v->slot[index] = value;
+	if (v->active >= index + 1)
+		v->active++;
+	else
+		v->active = index + 1;
 }
 
 /* Copy / dup a vector */
@@ -149,6 +153,7 @@ vector_set_slot(vector_t *v, void *value)
 	unsigned int i = v->allocated - 1;
 
 	v->slot[i] = value;
+	v->active = v->allocated;
 }
 
 /* Set value to specified index slot. */
@@ -198,7 +203,7 @@ vector_unset(vector_t *v, unsigned int i)
 	}
 }
 
-/* Count the number of not emplty slot. */
+/* Count the number of not empty slot. */
 unsigned int
 vector_count(vector_t *v)
 {
@@ -246,7 +251,7 @@ vector_dump(vector_t *v)
 {
 	int i;
 
-	printf("Vector Size : %d\n", v->allocated);
+	printf("Vector Size : %d, active %d\n", v->allocated, v->active);
 
 	for (i = 0; i < v->allocated; i++) {
 		if (v->slot[i] != NULL) {

@@ -20,6 +20,7 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "global_data.h"
 #include "vrrp_data.h"
 #include "vrrp_index.h"
 #include "vrrp_sync.h"
@@ -35,12 +36,13 @@
 vrrp_data_t *vrrp_data = NULL;
 vrrp_data_t *old_vrrp_data = NULL;
 char *vrrp_buffer;
+size_t vrrp_buffer_len;
 
 /* Static addresses facility function */
 void
 alloc_saddress(vector_t *strvec)
 {
-	if (LIST_ISEMPTY(vrrp_data->static_addresses))
+	if (!LIST_EXISTS(vrrp_data->static_addresses))
 		vrrp_data->static_addresses = alloc_list(free_ipaddress, dump_ipaddress);
 	alloc_ipaddress(vrrp_data->static_addresses, strvec, NULL);
 }
@@ -49,9 +51,18 @@ alloc_saddress(vector_t *strvec)
 void
 alloc_sroute(vector_t *strvec)
 {
-	if (LIST_ISEMPTY(vrrp_data->static_routes))
+	if (!LIST_EXISTS(vrrp_data->static_routes))
 		vrrp_data->static_routes = alloc_list(free_iproute, dump_iproute);
 	alloc_route(vrrp_data->static_routes, strvec);
+}
+
+/* Static rules facility function */
+void
+alloc_srule(vector_t *strvec)
+{
+	if (!LIST_EXISTS(vrrp_data->static_rules))
+		vrrp_data->static_rules = alloc_list(free_iprule, dump_iprule);
+	alloc_rule(vrrp_data->static_rules, strvec);
 }
 
 /* VRRP facility functions */
@@ -141,20 +152,13 @@ static void
 free_sock(void *sock_data)
 {
 	sock_t *sock = sock_data;
-	interface_t *ifp;
 
 	/* First of all cancel pending thread */
 	thread_cancel(sock->thread);
 
 	/* Close related socket */
-	if (sock->fd_in > 0) {
-		ifp = if_get_by_ifindex(sock->ifindex);
-		if (sock->unicast) {
-			close(sock->fd_in);
-		} else {
-			if_leave_vrrp_group(sock->family, sock->fd_in, ifp);
-		}
-	}
+	if (sock->fd_in > 0)
+		close(sock->fd_in);
 	if (sock->fd_out > 0)
 		close(sock->fd_out);
 	FREE(sock_data);
@@ -194,7 +198,6 @@ free_vrrp(void *data)
 
 	FREE(vrrp->iname);
 	FREE_PTR(vrrp->send_buffer);
-	FREE_PTR(vrrp->lvs_syncd_if);
 	FREE_PTR(vrrp->script_backup);
 	FREE_PTR(vrrp->script_master);
 	FREE_PTR(vrrp->script_fault);
@@ -217,13 +220,16 @@ free_vrrp(void *data)
 	free_list(vrrp->vip);
 	free_list(vrrp->evip);
 	free_list(vrrp->vroutes);
+	free_list(vrrp->vrules);
 	FREE(vrrp);
 }
 static void
 dump_vrrp(void *data)
 {
 	vrrp_t *vrrp = data;
+#ifdef _WITH_VRRP_AUTH_
 	char auth_data[sizeof(vrrp->auth_data) + 1];
+#endif
 
 	log_message(LOG_INFO, " VRRP Instance = %s", vrrp->iname);
 	log_message(LOG_INFO, "   Using VRRPv%d", vrrp->version);
@@ -233,28 +239,28 @@ dump_vrrp(void *data)
 		log_message(LOG_INFO, "   Want State = BACKUP");
 	else
 		log_message(LOG_INFO, "   Want State = MASTER");
-	log_message(LOG_INFO, "   Runing on device = %s", IF_NAME(vrrp->ifp));
+	log_message(LOG_INFO, "   Running on device = %s", IF_NAME(vrrp->ifp));
 	if (vrrp->dont_track_primary)
 		log_message(LOG_INFO, "   VRRP interface tracking disabled");
+	log_message(LOG_INFO, "   Skip checking advert IP addresses = %s", vrrp->skip_check_adv_addr ? "yes" : "no");
+	log_message(LOG_INFO, "   Enforcing strict VRRP compliance = %s", vrrp->strict_mode ? "yes" : "no");
 	if (vrrp->saddr.ss_family)
 		log_message(LOG_INFO, "   Using src_ip = %s"
 				    , inet_sockaddrtos(&vrrp->saddr));
-	if (vrrp->lvs_syncd_if)
-		log_message(LOG_INFO, "   Runing LVS sync daemon on interface = %s",
-		       vrrp->lvs_syncd_if);
-	if (vrrp->garp_delay)
-		log_message(LOG_INFO, "   Gratuitous ARP delay = %d",
+	log_message(LOG_INFO, "   Gratuitous ARP delay = %d",
 		       vrrp->garp_delay/TIMER_HZ);
-	if (!timer_isnull(vrrp->garp_refresh))
-		log_message(LOG_INFO, "   Gratuitous ARP refresh timer = %lu",
-		       vrrp->garp_refresh.tv_sec);
 	log_message(LOG_INFO, "   Gratuitous ARP repeat = %d", vrrp->garp_rep);
+	log_message(LOG_INFO, "   Gratuitous ARP refresh timer = %lu",
+		       vrrp->garp_refresh.tv_sec);
 	log_message(LOG_INFO, "   Gratuitous ARP refresh repeat = %d", vrrp->garp_refresh_rep);
+	log_message(LOG_INFO, "   Gratuitous ARP lower priority delay = %d", vrrp->garp_lower_prio_delay / TIMER_HZ);
+	log_message(LOG_INFO, "   Gratuitous ARP lower priority repeat = %d", vrrp->garp_lower_prio_rep);
+	log_message(LOG_INFO, "   Send advert after receive lower priority advert = %s", vrrp->lower_prio_no_advert ? "false" : "true");
 	log_message(LOG_INFO, "   Virtual Router ID = %d", vrrp->vrid);
 	log_message(LOG_INFO, "   Priority = %d", vrrp->base_priority);
-	log_message(LOG_INFO, "   Advert interval = %d %s\n",
+	log_message(LOG_INFO, "   Advert interval = %d %s",
 		(vrrp->version == VRRP_VERSION_2) ? (vrrp->adver_int / TIMER_HZ) :
-		(vrrp->adver_int * 1000 / TIMER_HZ),
+		(vrrp->adver_int / (TIMER_HZ / 1000)),
 		(vrrp->version == VRRP_VERSION_2) ? "sec" : "milli-sec");
 	log_message(LOG_INFO, "   Accept %s", ((vrrp->accept) ? "enabled" : "disabled"));
 	if (vrrp->nopreempt)
@@ -262,6 +268,7 @@ dump_vrrp(void *data)
 	if (vrrp->preempt_delay)
 		log_message(LOG_INFO, "   Preempt delay = %ld secs",
 		       vrrp->preempt_delay / TIMER_HZ);
+#if defined _WITH_VRRP_AUTH_
 	if (vrrp->version == VRRP_VERSION_2) {
 		if (vrrp->auth_type) {
 			log_message(LOG_INFO, "   Authentication type = %s",
@@ -275,6 +282,7 @@ dump_vrrp(void *data)
 			}
 		}
 	}
+#endif
 	if (!LIST_ISEMPTY(vrrp->track_ifp)) {
 		log_message(LOG_INFO, "   Tracked interfaces = %d", LIST_SIZE(vrrp->track_ifp));
 		dump_list(vrrp->track_ifp);
@@ -299,6 +307,10 @@ dump_vrrp(void *data)
 		log_message(LOG_INFO, "   Virtual Routes = %d", LIST_SIZE(vrrp->vroutes));
 		dump_list(vrrp->vroutes);
 	}
+	if (!LIST_ISEMPTY(vrrp->vrules)) {
+		log_message(LOG_INFO, "   Virtual Rules = %d", LIST_SIZE(vrrp->vrules));
+		dump_list(vrrp->vrules);
+	}
 	if (vrrp->script_backup)
 		log_message(LOG_INFO, "   Backup state transition script = %s", vrrp->script_backup);
 	if (vrrp->script_master)
@@ -312,9 +324,10 @@ dump_vrrp(void *data)
 	if (vrrp->smtp_alert)
 		log_message(LOG_INFO, "   Using smtp notification");
 	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
-		log_message(LOG_INFO, "   Using VRRP VMAC (flags:%s|%s)"
+		log_message(LOG_INFO, "   Using VRRP VMAC (flags:%s|%s), vmac ifindex %d"
 				    , (__test_bit(VRRP_VMAC_UP_BIT, &vrrp->vmac_flags)) ? "UP" : "DOWN"
-				    , (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? "xmit_base" : "xmit");
+				    , (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? "xmit_base" : "xmit"
+				    , vrrp->ifp->base_ifindex);
 }
 
 void
@@ -348,19 +361,27 @@ alloc_vrrp(char *iname)
 	new->ipsecah_counter = counter;
 
 	/* Set default values */
-	new->family = AF_INET;
+	new->family = AF_UNSPEC;
+	new->saddr.ss_family = AF_UNSPEC;
 	new->wantstate = VRRP_STATE_BACK;
 	new->init_state = VRRP_STATE_BACK;
-	new->version = VRRP_VERSION_2;
+	new->version = 0;
 	new->master_priority = 0;
 	new->last_transition = timer_now();
-	new->adver_int = TIMER_HZ;
+	new->adver_int = VRRP_ADVER_DFL * TIMER_HZ;
 	new->iname = (char *) MALLOC(size + 1);
-	new->stats = alloc_vrrp_stats();
 	memcpy(new->iname, iname, size);
+	new->stats = alloc_vrrp_stats();
 	new->quick_sync = 0;
-	new->garp_rep = VRRP_GARP_REP;
-	new->garp_refresh_rep = VRRP_GARP_REFRESH_REP;
+	new->garp_rep = global_data->vrrp_garp_rep;
+	new->garp_refresh_rep = global_data->vrrp_garp_refresh_rep;
+	new->garp_delay = global_data->vrrp_garp_delay;
+        new->garp_lower_prio_delay = -1;
+        new->garp_lower_prio_rep = -1;
+        new->lower_prio_no_advert = -1;
+
+	new->skip_check_adv_addr = global_data->vrrp_skip_check_adv_addr;
+	new->strict_mode = -1;
 
 	list_add(vrrp_data->vrrp, new);
 }
@@ -395,7 +416,7 @@ alloc_vrrp_unicast_peer(vector_t *strvec)
 	struct sockaddr_storage *peer = NULL;
 	int ret;
 
-	if (LIST_ISEMPTY(vrrp->unicast_peer))
+	if (!LIST_EXISTS(vrrp->unicast_peer))
 		vrrp->unicast_peer = alloc_list(free_unicast_peer, dump_unicast_peer);
 
 	/* Allocate new unicast peer */
@@ -409,7 +430,9 @@ alloc_vrrp_unicast_peer(vector_t *strvec)
 		return;
 	}
 
-	if (peer->ss_family != vrrp->family) {
+	if (!vrrp->family)
+		vrrp->family = peer->ss_family;
+	else if (peer->ss_family != vrrp->family) {
 		log_message(LOG_ERR, "Configuration error: VRRP instance[%s] and unicast peer address"
 				     "[%s] MUST be of the same family !!! Skipping..."
 				   , vrrp->iname, FMT_STR_VSLOT(strvec, 0));
@@ -425,7 +448,7 @@ alloc_vrrp_track(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
-	if (LIST_ISEMPTY(vrrp->track_ifp))
+	if (!LIST_EXISTS(vrrp->track_ifp))
 		vrrp->track_ifp = alloc_list(NULL, dump_track);
 	alloc_track(vrrp->track_ifp, strvec);
 }
@@ -435,7 +458,7 @@ alloc_vrrp_track_script(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
-	if (LIST_ISEMPTY(vrrp->track_script))
+	if (!LIST_EXISTS(vrrp->track_script))
 		vrrp->track_script = alloc_list(NULL, dump_track_script);
 	alloc_track_script(vrrp->track_script, strvec);
 }
@@ -444,11 +467,8 @@ void
 alloc_vrrp_vip(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	if (vrrp->ifp == NULL) {
-		log_message(LOG_ERR, "Configuration error: VRRP definition must belong to an interface");
-	}
 
-	if (LIST_ISEMPTY(vrrp->vip))
+	if (!LIST_EXISTS(vrrp->vip))
 		vrrp->vip = alloc_list(free_ipaddress, dump_ipaddress);
 	alloc_ipaddress(vrrp->vip, strvec, vrrp->ifp);
 }
@@ -457,7 +477,7 @@ alloc_vrrp_evip(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
-	if (LIST_ISEMPTY(vrrp->evip))
+	if (!LIST_EXISTS(vrrp->evip))
 		vrrp->evip = alloc_list(free_ipaddress, dump_ipaddress);
 	alloc_ipaddress(vrrp->evip, strvec, vrrp->ifp);
 }
@@ -467,9 +487,19 @@ alloc_vrrp_vroute(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
-	if (LIST_ISEMPTY(vrrp->vroutes))
+	if (!LIST_EXISTS(vrrp->vroutes))
 		vrrp->vroutes = alloc_list(free_iproute, dump_iproute);
 	alloc_route(vrrp->vroutes, strvec);
+}
+
+void
+alloc_vrrp_vrule(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+
+	if (!LIST_EXISTS(vrrp->vrules))
+		vrrp->vrules = alloc_list(free_iprule, dump_iprule);
+	alloc_rule(vrrp->vrules, strvec);
 }
 
 void
@@ -494,15 +524,18 @@ alloc_vrrp_script(char *sname)
 
 /* data facility functions */
 void
-alloc_vrrp_buffer(void)
+alloc_vrrp_buffer(size_t len)
 {
-	vrrp_buffer = (char *) MALLOC(VRRP_PACKET_TEMP_LEN);
+	vrrp_buffer = (char *) MALLOC(len);
+	vrrp_buffer_len = (vrrp_buffer) ? len : 0;
 }
 
 void
 free_vrrp_buffer(void)
 {
 	FREE(vrrp_buffer);
+	vrrp_buffer = NULL;
+	vrrp_buffer_len = 0;
 }
 
 vrrp_data_t *
@@ -526,6 +559,7 @@ free_vrrp_data(vrrp_data_t * data)
 {
 	free_list(data->static_addresses);
 	free_list(data->static_routes);
+	free_list(data->static_rules);
 	free_mlist(data->vrrp_index, 255+1);
 	free_mlist(data->vrrp_index_fd, 1024+1);
 	free_list(data->vrrp);
@@ -544,6 +578,10 @@ dump_vrrp_data(vrrp_data_t * data)
 	if (!LIST_ISEMPTY(data->static_routes)) {
 		log_message(LOG_INFO, "------< Static Routes >------");
 		dump_list(data->static_routes);
+	}
+	if (!LIST_ISEMPTY(data->static_rules)) {
+		log_message(LOG_INFO, "------< Static Rules >------");
+		dump_list(data->static_rules);
 	}
 	if (!LIST_ISEMPTY(data->vrrp)) {
 		log_message(LOG_INFO, "------< VRRP Topology >------");

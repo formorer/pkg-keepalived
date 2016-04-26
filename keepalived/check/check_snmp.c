@@ -26,6 +26,106 @@
 #include "ipvswrapper.h"
 #include "ipwrapper.h"
 #include "global_data.h"
+#include "snmp.h"
+
+
+/* CHECK SNMP defines */
+#define CHECK_OID KEEPALIVED_OID, 3
+
+#define CHECK_SNMP_VSGROUPNAME 1
+#define CHECK_SNMP_VSGROUPMEMBERTYPE 3
+#define CHECK_SNMP_VSGROUPMEMBERFWMARK 4
+#define CHECK_SNMP_VSGROUPMEMBERADDRTYPE 5
+#define CHECK_SNMP_VSGROUPMEMBERADDRESS 6
+#define CHECK_SNMP_VSGROUPMEMBERADDR1 7
+#define CHECK_SNMP_VSGROUPMEMBERADDR2 8
+#define CHECK_SNMP_VSGROUPMEMBERPORT 9
+#define CHECK_SNMP_VSTYPE 10
+#define CHECK_SNMP_VSNAMEGROUP 14
+#define CHECK_SNMP_VSFWMARK 11
+#define CHECK_SNMP_VSADDRTYPE 12
+#define CHECK_SNMP_VSADDRESS 13
+#define CHECK_SNMP_VSPORT 16
+#define CHECK_SNMP_VSPROTOCOL 17
+#define CHECK_SNMP_VSLOADBALANCINGALGO 18
+#define CHECK_SNMP_VSLOADBALANCINGKIND 19
+#define CHECK_SNMP_VSSTATUS 20
+#define CHECK_SNMP_VSVIRTUALHOST 21
+#define CHECK_SNMP_VSPERSIST 22
+#define CHECK_SNMP_VSPERSISTTIMEOUT 23
+#define CHECK_SNMP_VSPERSISTGRANULARITY 24
+#define CHECK_SNMP_VSDELAYLOOP 25
+#define CHECK_SNMP_VSHASUSPEND 26
+#define CHECK_SNMP_VSALPHA 27
+#define CHECK_SNMP_VSOMEGA 28
+#define CHECK_SNMP_VSQUORUM 29
+#define CHECK_SNMP_VSQUORUMSTATUS 30
+#define CHECK_SNMP_VSQUORUMUP 31
+#define CHECK_SNMP_VSQUORUMDOWN 32
+#define CHECK_SNMP_VSHYSTERESIS 33
+#define CHECK_SNMP_VSREALTOTAL 34
+#define CHECK_SNMP_VSREALUP 35
+#define CHECK_SNMP_VSSTATSCONNS 61
+#define CHECK_SNMP_VSSTATSINPKTS 62
+#define CHECK_SNMP_VSSTATSOUTPKTS 63
+#define CHECK_SNMP_VSSTATSINBYTES 64
+#define CHECK_SNMP_VSSTATSOUTBYTES 65
+#define CHECK_SNMP_VSRATECPS 66
+#define CHECK_SNMP_VSRATEINPPS 67
+#define CHECK_SNMP_VSRATEOUTPPS 68
+#define CHECK_SNMP_VSRATEINBPS 69
+#define CHECK_SNMP_VSRATEOUTBPS 70
+#define CHECK_SNMP_RSTYPE 36
+#define CHECK_SNMP_RSADDRTYPE 37
+#define CHECK_SNMP_RSADDRESS 38
+#define CHECK_SNMP_RSPORT 39
+#define CHECK_SNMP_RSSTATUS 40
+#define CHECK_SNMP_RSWEIGHT 41
+#define CHECK_SNMP_RSUPPERCONNECTIONLIMIT 42
+#define CHECK_SNMP_RSLOWERCONNECTIONLIMIT 43
+#define CHECK_SNMP_RSACTIONWHENDOWN 44
+#define CHECK_SNMP_RSNOTIFYUP 45
+#define CHECK_SNMP_RSNOTIFYDOWN 46
+#define CHECK_SNMP_RSFAILEDCHECKS 47
+#define CHECK_SNMP_RSSTATSCONNS 48
+#define CHECK_SNMP_RSSTATSACTIVECONNS 49
+#define CHECK_SNMP_RSSTATSINACTIVECONNS 50
+#define CHECK_SNMP_RSSTATSPERSISTENTCONNS 51
+#define CHECK_SNMP_RSSTATSINPKTS 52
+#define CHECK_SNMP_RSSTATSOUTPKTS 53
+#define CHECK_SNMP_RSSTATSINBYTES 54
+#define CHECK_SNMP_RSSTATSOUTBYTES 55
+#define CHECK_SNMP_RSRATECPS 56
+#define CHECK_SNMP_RSRATEINPPS 57
+#define CHECK_SNMP_RSRATEOUTPPS 58
+#define CHECK_SNMP_RSRATEINBPS 59
+#define CHECK_SNMP_RSRATEOUTBPS 60
+#define CHECK_SNMP_VSOPS 71
+
+#define STATE_VSGM_FWMARK 1
+#define STATE_VSGM_ADDRESS 2
+#define STATE_VSGM_RANGE 3
+#define STATE_VSGM_END 4
+
+#define STATE_RS_SORRY 1
+#define STATE_RS_REGULAR_FIRST 2
+#define STATE_RS_REGULAR_NEXT 3
+#define STATE_RS_END 4
+
+/* Macro */
+#define RETURN_IP46ADDRESS(entity)					\
+do {									\
+  if (entity->addr.ss_family == AF_INET6) {				\
+    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&entity->addr;	\
+    *var_len = 16;							\
+    return (u_char *)&addr6->sin6_addr;					\
+  } else {								\
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)&entity->addr;	\
+    *var_len = 4;							\
+    return (u_char *)&addr4->sin_addr;					\
+  }									\
+} while(0)
+
 
 static u_char*
 check_snmp_vsgroup(struct variable *vp, oid *name, size_t *length,
@@ -45,8 +145,8 @@ check_snmp_vsgroup(struct variable *vp, oid *name, size_t *length,
 		return (u_char *)g->gname;
 	default:
 		break;
-        }
-        return NULL;
+	}
+	return NULL;
 }
 
 static u_char*
@@ -56,8 +156,8 @@ check_snmp_vsgroupmember(struct variable *vp, oid *name, size_t *length,
 	static unsigned long long_ret;
 	static uint32_t ip;
 	static struct in6_addr ip6;
-        oid *target, current[2], best[2];
-        int result, target_len;
+	oid *target, current[2], best[2];
+	int result, target_len;
 	int curgroup = 0, curentry;
 	element e1, e2;
 	virtual_server_group_t *group;
@@ -66,10 +166,10 @@ check_snmp_vsgroupmember(struct variable *vp, oid *name, size_t *length,
 	list l;
 
 
-        if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
-                memcpy(name, vp->name, sizeof(oid) * vp->namelen);
-                *length = vp->namelen;
-        }
+	if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
+		memcpy(name, vp->name, sizeof(oid) * vp->namelen);
+		*length = vp->namelen;
+	}
 
 	*write_method = 0;
 	*var_len = sizeof(long);
@@ -80,9 +180,9 @@ check_snmp_vsgroupmember(struct variable *vp, oid *name, size_t *length,
 	/* We search the best match: equal if exact, the lower OID in
 	   the set of the OID strictly superior to the target
 	   otherwise. */
-        best[0] = best[1] = MAX_SUBID; /* Our best match */
-        target = &name[vp->namelen];   /* Our target match */
-        target_len = *length - vp->namelen;
+	best[0] = best[1] = MAX_SUBID; /* Our best match */
+	target = &name[vp->namelen];   /* Our target match */
+	target_len = *length - vp->namelen;
 	for (e1 = LIST_HEAD(check_data->vs_group); e1; ELEMENT_NEXT(e1)) {
 		group = ELEMENT_DATA(e1);
 		curgroup++;
@@ -144,8 +244,8 @@ check_snmp_vsgroupmember(struct variable *vp, oid *name, size_t *length,
 		return NULL;
  vsgmember_be_found:
 	/* Let's use our best match */
-        memcpy(target, best, sizeof(oid) * 2);
-        *length = vp->namelen + 2;
+	memcpy(target, best, sizeof(oid) * 2);
+	*length = vp->namelen + 2;
  vsgmember_found:
 	switch (vp->magic) {
 	case CHECK_SNMP_VSGROUPMEMBERTYPE:
@@ -201,7 +301,7 @@ check_snmp_vsgroupmember(struct variable *vp, oid *name, size_t *length,
 	if (!exact && (name[*length-1] < MAX_SUBID))
 		return check_snmp_vsgroupmember(vp, name, length,
 						exact, var_len, write_method);
-        return NULL;
+	return NULL;
 }
 
 static u_char*
@@ -280,17 +380,6 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 		long_ret = 0;
 		switch (v->loadbalancing_kind) {
 #ifdef _WITH_LVS_
-#ifdef _KRNL_2_2_
-		case 0:
-			long_ret = 1;
-			break;
-		case IP_MASQ_F_VS_DROUTE:
-			long_ret = 2;
-			break;
-		case IP_MASQ_F_VS_TUNNEL:
-			long_ret = 3;
-			break;
-#else
 		case IP_VS_CONN_F_MASQ:
 			long_ret = 1;
 			break;
@@ -300,7 +389,6 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 		case IP_VS_CONN_F_TUNNEL:
 			long_ret = 3;
 			break;
-#endif
 #endif
 		}
 		if (!long_ret) break;
@@ -420,11 +508,11 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 #endif
 	default:
 		return NULL;
-        }
+	}
 	if (!exact && (name[*length-1] < MAX_SUBID))
 		return check_snmp_virtualserver(vp, name, length,
 						exact, var_len, write_method);
-        return NULL;
+	return NULL;
 }
 
 static int
@@ -476,7 +564,7 @@ check_snmp_realserver_weight(int action,
 		if (action == RESERVE2)
 			break;
 		/* Commit: change values. There is no way to fail. */
-		update_svr_wgt((long)(*var_val), vs, rs);
+		update_svr_wgt((long)(*var_val), vs, rs, 1);
 		break;
 	}
 	return SNMP_ERR_NOERROR;
@@ -490,8 +578,8 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 #ifdef _KRNL_2_6_
 	static U64 counter64_ret;
 #endif
-        oid *target, current[2], best[2];
-        int result, target_len;
+	oid *target, current[2], best[2];
+	int result, target_len;
 	int curvirtual = 0, curreal;
 	real_server_t *e = NULL, *be = NULL;
 	element e1, e2 = NULL;
@@ -499,10 +587,10 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 	int state;
 	int type, btype;
 
-        if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
-                memcpy(name, vp->name, sizeof(oid) * vp->namelen);
-                *length = vp->namelen;
-        }
+	if ((result = snmp_oid_compare(name, *length, vp->name, vp->namelen)) < 0) {
+		memcpy(name, vp->name, sizeof(oid) * vp->namelen);
+		*length = vp->namelen;
+	}
 
 	*write_method = 0;
 	*var_len = sizeof(long);
@@ -513,9 +601,9 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 	/* We search the best match: equal if exact, the lower OID in
 	   the set of the OID strictly superior to the target
 	   otherwise. */
-        best[0] = best[1] = MAX_SUBID; /* Our best match */
-        target = &name[vp->namelen];   /* Our target match */
-        target_len = *length - vp->namelen;
+	best[0] = best[1] = MAX_SUBID; /* Our best match */
+	target = &name[vp->namelen];   /* Our target match */
+	target_len = *length - vp->namelen;
 	for (e1 = LIST_HEAD(check_data->vs); e1; ELEMENT_NEXT(e1)) {
 		vs = ELEMENT_DATA(e1);
 		curvirtual++;
@@ -592,8 +680,8 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		return NULL;
  real_be_found:
 	/* Let's use our best match */
-        memcpy(target, best, sizeof(oid) * 2);
-        *length = vp->namelen + 2;
+	memcpy(target, best, sizeof(oid) * 2);
+	*length = vp->namelen + 2;
  real_found:
 	switch (vp->magic) {
 	case CHECK_SNMP_RSTYPE:
@@ -716,7 +804,7 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 	if (!exact && (name[*length-1] < MAX_SUBID))
 		return check_snmp_realserver(vp, name, length,
 					     exact, var_len, write_method);
-        return NULL;
+	return NULL;
 }
 
 static oid check_oid[] = {CHECK_OID};
@@ -874,7 +962,8 @@ static struct variable8 check_vars[] = {
 void
 check_snmp_agent_init(const char *snmp_socket)
 {
-	snmp_agent_init(snmp_socket);
+	/* We handle the global oid if we are running SNMP */
+	snmp_agent_init(snmp_socket, true);
 	snmp_register_mib(check_oid, OID_LENGTH(check_oid), "Healthchecker",
 			  (struct variable *)check_vars,
 			  sizeof(struct variable8),
@@ -884,7 +973,8 @@ check_snmp_agent_init(const char *snmp_socket)
 void
 check_snmp_agent_close()
 {
-	snmp_agent_close(check_oid, OID_LENGTH(check_oid), "Healthchecker");
+	snmp_unregister_mib(check_oid, OID_LENGTH(check_oid));
+	snmp_agent_close(true);
 }
 
 void

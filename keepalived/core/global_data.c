@@ -29,46 +29,42 @@
 #include "list.h"
 #include "logger.h"
 #include "utils.h"
+#include "vrrp.h"
+#include "main.h"
 
 /* global vars */
 data_t *global_data = NULL;
 
 /* Default settings */
 static void
-set_default_router_id(data_t * data)
+set_default_router_id(data_t *data, char *new_id)
 {
-	char *new_id = NULL;
-
-	new_id = get_local_name();
 	if (!new_id || !new_id[0])
 		return;
 
-	data->router_id = new_id;
+	data->router_id = MALLOC(strlen(new_id)+1);
+	strcpy(data->router_id, new_id);
 }
 
 static void
-set_default_email_from(data_t * data)
+set_default_email_from(data_t * data, const char *hostname)
 {
 	struct passwd *pwd = NULL;
-	char *hostname = NULL;
 	int len = 0;
 
-	hostname = get_local_name();
 	if (!hostname || !hostname[0])
 		return;
 
 	pwd = getpwuid(getuid());
 	if (!pwd)
-		goto end;
+		return;
 
 	len = strlen(hostname) + strlen(pwd->pw_name) + 2;
 	data->email_from = MALLOC(len);
 	if (!data->email_from)
-		goto end;
+		return;
 
 	snprintf(data->email_from, len, "%s@%s", pwd->pw_name, hostname);
-  end:
-	FREE(hostname);
 }
 
 static void
@@ -82,6 +78,30 @@ set_default_mcast_group(data_t * data)
 {
 	inet_stosockaddr("224.0.0.18", 0, &data->vrrp_mcast_group4);
 	inet_stosockaddr("ff02::12", 0, &data->vrrp_mcast_group6);
+}
+
+static void
+set_vrrp_defaults(data_t * data)
+{
+	data->vrrp_garp_rep = VRRP_GARP_REP;
+	data->vrrp_garp_refresh_rep = VRRP_GARP_REFRESH_REP;
+	data->vrrp_garp_delay = VRRP_GARP_DELAY;
+	data->vrrp_garp_lower_prio_delay = -1;
+	data->vrrp_garp_lower_prio_rep = -1;
+	data->vrrp_lower_prio_no_advert = false;
+	data->vrrp_version = VRRP_VERSION_2;
+	strcpy(data->vrrp_iptables_inchain, "INPUT");
+	data->block_ipv4 = 0;
+	data->block_ipv6 = 0;
+#ifdef _HAVE_LIBIPSET_
+	data->using_ipsets = 1;
+	strcpy(data->vrrp_ipset_address, "keepalived");
+	strcpy(data->vrrp_ipset_address6, "keepalived6");
+	strcpy(data->vrrp_ipset_address_iface6, "keepalived_if6");
+#endif
+	data->vrrp_check_unicast_src = false;
+	data->vrrp_skip_check_adv_addr = false;
+	data->vrrp_strict = false;
 }
 
 /* email facility functions */
@@ -119,6 +139,30 @@ alloc_global_data(void)
 	new->email = alloc_list(free_email, dump_email);
 
 	set_default_mcast_group(new);
+	set_vrrp_defaults(new);
+
+#ifdef _WITH_SNMP_
+	if (snmp) {
+#ifdef _WITH_SNMP_KEEPALIVED_
+		new->enable_snmp_keepalived = true;
+#endif
+#ifdef _WITH_SNMP_RFCV2_
+		new->enable_snmp_rfcv2 = true;
+#endif
+#ifdef _WITH_SNMP_RFCV3_
+		new->enable_snmp_rfcv3 = true;
+#endif
+#ifdef _WITH_SNMP_CHECKER_
+		new->enable_snmp_checker = true;
+#endif
+	}
+	new->lvs_syncd_syncid = -1;
+
+	if (snmp_socket) {
+		new->snmp_socket = MALLOC(strlen(snmp_socket + 1));
+		strcpy(new->snmp_socket, snmp_socket);
+	}
+#endif
 
 	return new;
 }
@@ -126,18 +170,32 @@ alloc_global_data(void)
 void
 init_global_data(data_t * data)
 {
-	if (!data->router_id) {
-		set_default_router_id(data);
-	}
+	char* local_name = NULL;
+
+	if (!data->router_id ||
+	    (data->smtp_server.ss_family &&
+	     (!data->smtp_helo_name ||
+	      !data->email_from)))
+		local_name = get_local_name();
+
+	if (!data->router_id)
+		set_default_router_id(data, local_name);
 
 	if (data->smtp_server.ss_family) {
-		if (!data->smtp_connection_to) {
+		if (!data->smtp_connection_to)
 			set_default_smtp_connection_timeout(data);
-		}
-		if (!data->email_from) {
-			set_default_email_from(data);
+
+		if (local_name) {
+			if (!data->email_from)
+				set_default_email_from(data, local_name);
+
+			if (!data->smtp_helo_name) {
+				data->smtp_helo_name = local_name;
+				local_name = NULL;	/* We have taken over the pointer */
+			}
 		}
 	}
+	FREE_PTR(local_name);
 }
 
 void
@@ -145,8 +203,13 @@ free_global_data(data_t * data)
 {
 	free_list(data->email);
 	FREE_PTR(data->router_id);
-	FREE_PTR(data->plugin_dir);
 	FREE_PTR(data->email_from);
+	FREE_PTR(data->smtp_helo_name);
+#ifdef _WITH_SNMP_
+	FREE_PTR(data->snmp_socket);
+#endif
+	FREE_PTR(data->lvs_syncd_if);
+	FREE_PTR(data->lvs_syncd_vrrp_name);
 	FREE(data);
 }
 
@@ -162,10 +225,10 @@ dump_global_data(data_t * data)
 	}
 	if (data->router_id)
 		log_message(LOG_INFO, " Router ID = %s", data->router_id);
-	if (data->plugin_dir)
-		log_message(LOG_INFO, " Plugin dir = %s", data->plugin_dir);
 	if (data->smtp_server.ss_family)
 		log_message(LOG_INFO, " Smtp server = %s", inet_sockaddrtos(&data->smtp_server));
+	if (data->smtp_helo_name)
+		log_message(LOG_INFO, " Smtp HELO name = %s" , data->smtp_helo_name);
 	if (data->smtp_connection_to)
 		log_message(LOG_INFO, " Smtp server connection timeout = %lu"
 				    , data->smtp_connection_to / TIMER_HZ);
@@ -173,6 +236,15 @@ dump_global_data(data_t * data)
 		log_message(LOG_INFO, " Email notification from = %s"
 				    , data->email_from);
 		dump_list(data->email);
+	}
+	if (data->lvs_syncd_vrrp) {
+		log_message(LOG_INFO, " LVS syncd vrrp instance = %s"
+				    , data->lvs_syncd_vrrp->iname);
+		if (data->lvs_syncd_if)
+			log_message(LOG_INFO, " LVS syncd interface = %s"
+				    , data->lvs_syncd_if);
+		log_message(LOG_INFO, " LVS syncd syncid = %d"
+				    , data->lvs_syncd_syncid);
 	}
 	if (data->vrrp_mcast_group4.ss_family) {
 		log_message(LOG_INFO, " VRRP IPv4 mcast group = %s"
@@ -182,10 +254,51 @@ dump_global_data(data_t * data)
 		log_message(LOG_INFO, " VRRP IPv6 mcast group = %s"
 				    , inet_sockaddrtos(&data->vrrp_mcast_group6));
 	}
+	log_message(LOG_INFO, " Gratuitous ARP delay = %d",
+		       data->vrrp_garp_delay/TIMER_HZ);
+	log_message(LOG_INFO, " Gratuitous ARP repeat = %d", data->vrrp_garp_rep);
+	log_message(LOG_INFO, " Gratuitous ARP refresh timer = %lu",
+		       data->vrrp_garp_refresh.tv_sec);
+	log_message(LOG_INFO, " Gratuitous ARP refresh repeat = %d", data->vrrp_garp_refresh_rep);
+	log_message(LOG_INFO, " Gratuitous ARP lower priority delay = %d", data->vrrp_garp_lower_prio_delay / TIMER_HZ);
+	log_message(LOG_INFO, " Gratuitous ARP lower priority repeat = %d", data->vrrp_garp_lower_prio_rep);
+	log_message(LOG_INFO, " Send advert after receive lower priority advert = %s", data->vrrp_lower_prio_no_advert ? "false" : "true");
+	log_message(LOG_INFO, " VRRP default protocol version = %d", data->vrrp_version);
+	if (data->vrrp_iptables_inchain[0])
+		log_message(LOG_INFO," Iptables input chain = %s", data->vrrp_iptables_inchain);
+	if (data->vrrp_iptables_outchain[0])
+		log_message(LOG_INFO," Iptables output chain = %s", data->vrrp_iptables_outchain);
+#ifdef _HAVE_LIBIPSET_
+	log_message(LOG_INFO, " Using ipsets = %s", data->using_ipsets ? "true" : "false");
+	if (data->vrrp_ipset_address[0])
+		log_message(LOG_INFO," ipset IPv4 address set = %s", data->vrrp_ipset_address);
+	if (data->vrrp_ipset_address6[0])
+		log_message(LOG_INFO," ipset IPv6 address set = %s", data->vrrp_ipset_address6);
+	if (data->vrrp_ipset_address_iface6[0])
+		log_message(LOG_INFO," ipset IPv6 address,iface set = %s", data->vrrp_ipset_address_iface6);
+#endif
+
+	log_message(LOG_INFO, " VRRP check unicast_src = %s", data->vrrp_check_unicast_src ? "true" : "false");
+	log_message(LOG_INFO, " VRRP skip check advert addresses = %s", data->vrrp_skip_check_adv_addr ? "true" : "false");
+	log_message(LOG_INFO, " VRRP strict mode = %s", data->vrrp_strict ? "true" : "false");
+	log_message(LOG_INFO, " VRRP process priority = %d", data->vrrp_process_priority);
+	log_message(LOG_INFO, " Checker process priority = %d", data->checker_process_priority);
+	log_message(LOG_INFO, " VRRP don't swap = %s", data->vrrp_no_swap ? "true" : "false");
+	log_message(LOG_INFO, " Checker don't swap = %s", data->checker_no_swap ? "true" : "false");
+#ifdef _WITH_SNMP_KEEPALIVED_
+	log_message(LOG_INFO, " SNMP keepalived %s", data->enable_snmp_keepalived ? "enabled" : "disabled");
+#endif
+#ifdef _WITH_SNMP_CHECKER_
+	log_message(LOG_INFO, " SNMP checker %s", data->enable_snmp_checker ? "enabled" : "disabled");
+#endif
+#ifdef _WITH_SNMP_RFCV2_
+	log_message(LOG_INFO, " SNMP RFCv2 %s", data->enable_snmp_rfcv2 ? "enabled" : "disabled");
+#endif
+#ifdef _WITH_SNMP_RFCV3_
+	log_message(LOG_INFO, " SNMP RFCv3 %s", data->enable_snmp_rfcv3 ? "enabled" : "disabled");
+#endif
 #ifdef _WITH_SNMP_
-	if (data->enable_traps)
-		log_message(LOG_INFO, " SNMP Trap enabled");
-	else
-		log_message(LOG_INFO, " SNMP Trap disabled");
+	log_message(LOG_INFO, " SNMP traps %s", data->enable_traps ? "enabled" : "disabled");
+	log_message(LOG_INFO, " SNMP socket = %s", data->snmp_socket ? data->snmp_socket : "default (127.0.0.1:161)");
 #endif
 }

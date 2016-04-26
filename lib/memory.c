@@ -22,12 +22,19 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+#ifdef _DEBUG_
+#include <assert.h>
+#endif
+
 #include "memory.h"
 #include "utils.h"
 #include "bitops.h"
 
+#ifdef _DEBUG_
 /* Global var */
-unsigned long mem_allocated;	/* Total memory used in Bytes */
+size_t mem_allocated;		/* Total memory used in Bytes */
+size_t max_mem_allocated;	/* Maximum memory used in Bytes */
+#endif
 
 void *
 xalloc(unsigned long size)
@@ -39,7 +46,12 @@ xalloc(unsigned long size)
 		exit(EXIT_FAILURE);
 	}
 
-	mem_allocated += size;
+#ifdef _DEBUG_
+	mem_allocated += size - sizeof(long);
+	if (mem_allocated > max_mem_allocated)
+		max_mem_allocated = mem_allocated;
+#endif
+
 	return mem;
 }
 
@@ -93,7 +105,7 @@ static int number_alloc_list = 0;
 static int n = 0;		/* Alloc list pointer */
 static int f = 0;		/* Free list pointer */
 
-char *
+void *
 keepalived_malloc(unsigned long size, char *file, char *function, int line)
 {
 	void *buf;
@@ -124,7 +136,7 @@ keepalived_malloc(unsigned long size, char *file, char *function, int line)
 	alloc_list[i].csum = check;
 	alloc_list[i].type = 9;
 
-	if (debug & 1)
+	if (__test_bit(DONT_FORK_BIT, &debug))
 		printf("zalloc[%3d:%3d], %p, %4ld at %s, %3d, %s\n",
 		       i, number_alloc_list, buf, size, file, line,
 		       function);
@@ -164,7 +176,7 @@ keepalived_free(void *buffer, char *file, char *function, int line)
 		if (alloc_list[i].type == 9 && alloc_list[i].ptr == buf) {
 			if (*((long *) ((char *) alloc_list[i].ptr + alloc_list[i].size)) == alloc_list[i].csum) {
 				alloc_list[i].type = 0;	/* Release */
-				mem_allocated -= alloc_list[i].size;
+				mem_allocated -= alloc_list[i].size - sizeof(long);
 			} else {
 				alloc_list[i].type = 1;	/* Overrun */
 				if (__test_bit(LOG_CONSOLE_BIT, &debug)) {
@@ -294,6 +306,7 @@ keepalived_free_final(char *banner)
 	printf("Total number of bytes not freed...: %d\n", sum);
 	printf("Number of entries not freed.......: %d\n", n);
 	printf("Maximum allocated entries.........: %d\n", number_alloc_list);
+	printf("Maximum memory allocated..........: %zu\n", max_mem_allocated);
 	printf("Number of bad entries.............: %d\n", badptr);
 	printf("Number of buffer overrun..........: %d\n\n", overrun);
 

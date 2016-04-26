@@ -25,6 +25,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include "utils.h"
+#include "signals.h"
+#include "bitops.h"
 
 /* global vars */
 unsigned long debug = 0;
@@ -165,6 +167,34 @@ inet_stor(char *addr)
 	return 0;
 }
 
+/* Domain to sockaddr_storage */
+int
+domain_stosockaddr(char *domain, char *port, struct sockaddr_storage *addr)
+{
+	struct addrinfo *res = NULL;
+
+	if (getaddrinfo(domain, NULL, NULL, &res) != 0 || !res)
+		return -1;
+
+	addr->ss_family = res->ai_family;
+
+	if (addr->ss_family == AF_INET6) {
+		struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
+		*addr6 = *(struct sockaddr_in6 *) res->ai_addr;
+		if (port)
+			addr6->sin6_port = htons(atoi(port));
+	} else {
+		struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
+		*addr4 = *(struct sockaddr_in *) res->ai_addr;
+		if (port)
+			addr4->sin_port = htons(atoi(port));
+	}
+
+	freeaddrinfo(res);
+
+	return 0;
+}
+
 /* IP string to sockaddr_storage */
 int
 inet_stosockaddr(char *ip, char *port, struct sockaddr_storage *addr)
@@ -175,17 +205,10 @@ inet_stosockaddr(char *ip, char *port, struct sockaddr_storage *addr)
 	addr->ss_family = (strchr(ip, ':')) ? AF_INET6 : AF_INET;
 
 	/* remove range and mask stuff */
-	if (strstr(ip, "-")) {
-		while (*cp != '-' && *cp != '\0')
-			cp++;
-		if (*cp == '-')
-			*cp = 0;
-	} else if (strstr(ip, "/")) {
-		while (*cp != '/' && *cp != '\0')
-			cp++;
-		if (*cp == '/')
-			*cp = 0;
-	}
+	if ((cp = strchr(ip, '-')))
+		*cp = 0;
+	else if ((cp = strchr(ip, '/')))
+		*cp = 0;
 
 	if (addr->ss_family == AF_INET6) {
 		struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
@@ -199,38 +222,37 @@ inet_stosockaddr(char *ip, char *port, struct sockaddr_storage *addr)
 		addr_ip = &addr4->sin_addr;
 	}
 
-	if (!inet_pton(addr->ss_family, ip, addr_ip))
+	if (!inet_pton(addr->ss_family, ip, addr_ip)) {
+		addr->ss_family = AF_UNSPEC;
 		return -1;
+	}
 
 	return 0;
 }
 
 /* IPv4 to sockaddr_storage */
-int
+void
 inet_ip4tosockaddr(struct in_addr *sin_addr, struct sockaddr_storage *addr)
 {
 	struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
 	addr4->sin_family = AF_INET;
 	addr4->sin_addr = *sin_addr;
-	return 0;
 }
 
 /* IPv6 to sockaddr_storage */
-int
+void
 inet_ip6tosockaddr(struct in6_addr *sin_addr, struct sockaddr_storage *addr)
 {
 	struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
 	addr6->sin6_family = AF_INET6;
 	addr6->sin6_addr = *sin_addr;
-	return 0;
 }
 
-int
+void
 inet_ip6scopeid(uint32_t scope_id, struct sockaddr_storage *addr)
 {
 	struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
 	addr6->sin6_scope_id = scope_id;
-	return 0;
 }
 
 /* IP network to string representation */
@@ -273,7 +295,7 @@ inet_sockaddrport(struct sockaddr_storage *addr)
 		struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
 		port = addr4->sin_port;
 	}
-	
+
 	return port;
 }
 
@@ -295,7 +317,7 @@ inet_sockaddrip4(struct sockaddr_storage *addr)
 {
 	if (addr->ss_family != AF_INET)
 		return -1;
-	
+
 	return ((struct sockaddr_in *) addr)->sin_addr.s_addr;
 }
 
@@ -304,7 +326,7 @@ inet_sockaddrip6(struct sockaddr_storage *addr, struct in6_addr *ip6)
 {
 	if (addr->ss_family != AF_INET6)
 		return -1;
-	
+
 	*ip6 = ((struct sockaddr_in6 *) addr)->sin6_addr;
 	return 0;
 }
@@ -489,36 +511,61 @@ string_equal(const char *str1, const char *str2)
 	return (*str1 == 0 && *str2 == 0);
 }
 
-int
-fork_exec(char **argv)
+void
+set_std_fd(int force)
 {
-	pid_t pid;
 	int fd;
-	int status;
 
-	pid = fork();
-	if (pid < 0)
-		return -1;
-
-	/* Child */
-	if (pid == 0) {
-		fd = open("/dev/null", O_RDWR, 0);
+	if (force || __test_bit(DONT_FORK_BIT, &debug)) {
+		fd = open("/dev/null", O_RDWR);
 		if (fd != -1) {
 			dup2(fd, STDIN_FILENO);
 			dup2(fd, STDOUT_FILENO);
 			dup2(fd, STDERR_FILENO);
-			if (fd > 2)
+			if (fd > STDERR_FILENO)
 				close(fd);
 		}
+	}
+
+	signal_pipe_close(STDERR_FILENO+1);
+}
+
+#ifndef _HAVE_LIBIPTC_
+int
+fork_exec(char **argv)
+{
+	pid_t pid;
+	int status;
+	struct sigaction act, old_act;
+	int res = 0;
+
+	act.sa_handler = SIG_DFL;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+
+	sigaction(SIGCHLD, &act, &old_act);
+
+	pid = fork();
+	if (pid < 0)
+		res = -1;
+	else if (pid == 0) {
+		/* Child */
+		set_std_fd(false);
+
+		signal_handler_script();
+
 		execvp(*argv, argv);
 		exit(EXIT_FAILURE);
 	} else {
 		/* Parent */
 		while (waitpid(pid, &status, 0) != pid);
 
-		if (WEXITSTATUS(status) != EXIT_SUCCESS)
-			return -1;
+		if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS)
+			res = -1;
 	}
 
-	return 0;
+	sigaction(SIGCHLD, &old_act, NULL);
+
+	return res;
 }
+#endif

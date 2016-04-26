@@ -11,7 +11,7 @@
  *              but WITHOUT ANY WARRANTY; without even the implied warranty of
  *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  *              See the GNU General Public License for more details.
- *              
+ *
  *              This program is free software; you can redistribute it and/or
  *              modify it under the terms of the GNU General Public License
  *              as published by the Free Software Foundation; either version
@@ -32,25 +32,42 @@
 #include <asm/types.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#ifdef _HAVE_LIBNL3_
+#include <netlink/netlink.h>
+#include <libnfnetlink/libnfnetlink.h>
+#endif
+#ifdef _HAVE_LIBNL1_
+#include <libnfnetlink/libnfnetlink.h>
+#endif
 
 /* local includes */
 #include "timer.h"
+#include "vrrp_if.h"
 
 /* types definitions */
 typedef struct _nl_handle {
+#ifdef _HAVE_LIBNL3_
+	struct nl_sock*		sk;
+#endif
 	int			fd;
-	struct sockaddr_nl	snl;
+	uint32_t		nl_pid;
 	__u32			seq;
 	thread_t		*thread;
 } nl_handle_t;
 
 /* Define types */
 #define NETLINK_TIMER (30 * TIMER_HZ)
+#ifndef _HAVE_LIBNL3_
+#ifndef _HAVE_LIBNL1_
 #define NLMSG_TAIL(nmsg) ((struct rtattr *) (((void *) (nmsg)) + NLMSG_ALIGN((nmsg)->nlmsg_len)))
+#define SOL_NETLINK 270
+#endif
+#endif
 
 /* Global vars exported */
 extern nl_handle_t nl_kernel;	/* Kernel reflection channel */
 extern nl_handle_t nl_cmd;	/* Command channel */
+extern int netlink_error_ignore; /* If we get this error, ignore it */
 
 /* prototypes */
 extern int addattr32(struct nlmsghdr *, int, int, uint32_t);
@@ -58,7 +75,7 @@ extern int addattr_l(struct nlmsghdr *, int, int, void *, int);
 extern int rta_addattr_l(struct rtattr *, int, int, const void *, int);
 extern char *netlink_scope_n2a(int);
 extern int netlink_scope_a2n(char *);
-extern int netlink_socket(nl_handle_t *, unsigned long);
+extern int netlink_socket(nl_handle_t *, int, int, ...);
 extern int netlink_close(nl_handle_t *);
 extern int netlink_talk(nl_handle_t *, struct nlmsghdr *);
 extern int netlink_interface_lookup(void);

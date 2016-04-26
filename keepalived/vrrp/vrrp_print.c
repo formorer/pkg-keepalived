@@ -26,7 +26,10 @@
 #include "vrrp_data.h"
 #include "vrrp_print.h"
 #include "vrrp_iproute.h"
+#include "vrrp_iprule.h"
 #include "vrrp_netlink.h"
+
+#include <time.h>
 
 void
 vrrp_print_list(FILE *file, list l, void (*fptr)(FILE*, void*))
@@ -50,9 +53,14 @@ vrrp_print_data(void)
 		fprintf(file, "------< VRRP Sync groups >------\n");
 		vrrp_print_list(file, vrrp_data->vrrp_sync_group, &vgroup_print);
 	}
-        fclose(file);
+	fclose(file);
 }
 
+#if __WORDSIZE == 64
+#define u64	"%lu"
+#else	/* __WORDSIZE == 32 */
+#define u64	"%llu"
+#endif
 void
 vrrp_print_stats(void)
 {
@@ -67,19 +75,19 @@ vrrp_print_stats(void)
 		vrrp = ELEMENT_DATA(e);
 		fprintf(file, "VRRP Instance: %s\n", vrrp->iname);
 		fprintf(file, "  Advertisements:\n");
-		fprintf(file, "    Received: %d\n", vrrp->stats->advert_rcvd);
+		fprintf(file, "    Received: " u64 "\n", vrrp->stats->advert_rcvd);
 		fprintf(file, "    Sent: %d\n", vrrp->stats->advert_sent);
 		fprintf(file, "  Became master: %d\n", vrrp->stats->become_master);
 		fprintf(file, "  Released master: %d\n",
 			vrrp->stats->release_master);
 		fprintf(file, "  Packet Errors:\n");
-		fprintf(file, "    Length: %d\n", vrrp->stats->packet_len_err);
-		fprintf(file, "    TTL: %d\n", vrrp->stats->ip_ttl_err);
-		fprintf(file, "    Invalid Type: %d\n",
+		fprintf(file, "    Length: " u64 "\n", vrrp->stats->packet_len_err);
+		fprintf(file, "    TTL: " u64 "\n", vrrp->stats->ip_ttl_err);
+		fprintf(file, "    Invalid Type: " u64 "\n",
 			vrrp->stats->invalid_type_rcvd);
-		fprintf(file, "    Advertisement Interval: %d\n",
+		fprintf(file, "    Advertisement Interval: " u64 "\n",
 			vrrp->stats->advert_interval_err);
-		fprintf(file, "    Address List: %d\n",
+		fprintf(file, "    Address List: " u64 "\n",
 			vrrp->stats->addr_list_err);
 		fprintf(file, "  Authentication Errors:\n");
 		fprintf(file, "    Invalid Type: %d\n",
@@ -89,8 +97,8 @@ vrrp_print_stats(void)
 		fprintf(file, "    Failure: %d\n",
 			vrrp->stats->auth_failure);
 		fprintf(file, "  Priority Zero:\n");
-		fprintf(file, "    Received: %d\n", vrrp->stats->pri_zero_rcvd);
-		fprintf(file, "    Sent: %d\n", vrrp->stats->pri_zero_sent);
+		fprintf(file, "    Received: " u64 "\n", vrrp->stats->pri_zero_rcvd);
+		fprintf(file, "    Sent: " u64 "\n", vrrp->stats->pri_zero_sent);
 	}
 	fclose(file);
 }
@@ -99,7 +107,11 @@ void
 vrrp_print(FILE *file, void *data)
 {
 	vrrp_t *vrrp = data;
+#ifdef _WITH_VRRP_AUTH_
 	char auth_data[sizeof(vrrp->auth_data) + 1];
+#endif
+	char time_str[26];
+
 	fprintf(file, " VRRP Instance = %s\n", vrrp->iname);
 	fprintf(file, " VRRP Version = %d\n", vrrp->version);
 	if (vrrp->family == AF_INET6)
@@ -117,23 +129,32 @@ vrrp_print(FILE *file, void *data)
 		fprintf(file, "   State = MASTER\n");
 	else
 		fprintf(file, "   State = %d\n", vrrp->state);
-	fprintf(file, "   Last transition = %ld\n",
-		vrrp->last_transition.tv_sec);
+	ctime_r(&vrrp->last_transition.tv_sec, time_str);
+	time_str[sizeof(time_str)-2] = '\0';	/* Remove '\n' char */
+	fprintf(file, "   Last transition = %ld (%s)\n",
+		vrrp->last_transition.tv_sec, time_str);
 	fprintf(file, "   Listening device = %s\n", IF_NAME(vrrp->ifp));
 	if (vrrp->dont_track_primary)
 		fprintf(file, "   VRRP interface tracking disabled\n");
+	if (vrrp->skip_check_adv_addr)
+		fprintf(file, "   Skip checking advert IP addresses\n");
+	if (vrrp->strict_mode)
+		fprintf(file, "   Enforcing VRRP compliance\n");
 	fprintf(file, "   Using src_ip = %s\n", inet_sockaddrtos(&vrrp->saddr));
-	if (vrrp->lvs_syncd_if)
-		fprintf(file, "   Runing LVS sync daemon on interface = %s\n",
-		       vrrp->lvs_syncd_if);
-	if (vrrp->garp_delay)
-		fprintf(file, "   Gratuitous ARP delay = %d\n",
+	fprintf(file, "   Gratuitous ARP delay = %d\n",
 		       vrrp->garp_delay/TIMER_HZ);
+	fprintf(file, "   Gratuitous ARP repeat = %d\n", vrrp->garp_rep);
+	fprintf(file, "   Gratuitous ARP refresh = %lu\n",
+		       vrrp->garp_refresh.tv_sec/TIMER_HZ);
+	fprintf(file, "   Gratuitous ARP refresh repeat = %d\n", vrrp->garp_refresh_rep);
+	fprintf(file, "   Gratuitous ARP lower priority delay = %d", vrrp->garp_lower_prio_delay / TIMER_HZ);
+	fprintf(file, "   Gratuitous ARP lower priority repeat = %d", vrrp->garp_lower_prio_rep);
+	fprintf(file, "   Send advert after receive lower priority advert = %s", vrrp->lower_prio_no_advert ? "false" : "true");
 	fprintf(file, "   Virtual Router ID = %d\n", vrrp->vrid);
 	fprintf(file, "   Priority = %d\n", vrrp->base_priority);
 	fprintf(file, "   Advert interval = %d %s\n",
 		(vrrp->version == VRRP_VERSION_2) ? (vrrp->adver_int / TIMER_HZ) :
-		(vrrp->adver_int * 1000 / TIMER_HZ),
+		(vrrp->adver_int / (TIMER_HZ / 1000)),
 		(vrrp->version == VRRP_VERSION_2) ? "sec" : "milli-sec");
 	fprintf(file, "   Accept = %s\n", ((vrrp->accept) ? "enabled" : "disabled"));
 	if (vrrp->nopreempt)
@@ -143,6 +164,7 @@ vrrp_print(FILE *file, void *data)
 	if (vrrp->preempt_delay)
 		fprintf(file, "   Preempt delay = %ld secs\n",
 		       vrrp->preempt_delay / TIMER_HZ);
+#if defined _WITH_VRRP_AUTH_
 	if (vrrp->auth_type) {
 		fprintf(file, "   Authentication type = %s\n",
 		       (vrrp->auth_type ==
@@ -156,6 +178,7 @@ vrrp_print(FILE *file, void *data)
 	}
 	else
 		fprintf(file, "   Authentication type = none\n");
+#endif
 
 	if (!LIST_ISEMPTY(vrrp->track_ifp)) {
 		fprintf(file, "   Tracked interfaces = %d\n",
@@ -179,6 +202,10 @@ vrrp_print(FILE *file, void *data)
 	if (!LIST_ISEMPTY(vrrp->vroutes)) {
 		fprintf(file, "   Virtual Routes = %d\n", LIST_SIZE(vrrp->vroutes));
 		vrrp_print_list(file, vrrp->vroutes, &route_print);
+	}
+	if (!LIST_ISEMPTY(vrrp->vrules)) {
+		fprintf(file, "   Virtual Rules = %d\n", LIST_SIZE(vrrp->vrules));
+		vrrp_print_list(file, vrrp->vrules, &rule_print);
 	}
 	if (vrrp->script_backup)
 		fprintf(file, "   Backup state transition script = %s\n",
@@ -207,7 +234,7 @@ vgroup_print(FILE *file, void *data)
 
 	vrrp_sgroup_t *vgroup = data;
 	fprintf(file, " VRRP Sync Group = %s, %s\n", vgroup->gname,
-       		(vgroup->state == VRRP_STATE_MAST) ? "MASTER" : "BACKUP");
+		(vgroup->state == VRRP_STATE_MAST) ? "MASTER" : "BACKUP");
 	for (i = 0; i < vector_size(vgroup->iname); i++) {
 		str = vector_slot(vgroup->iname, i);
 		fprintf(file, "   monitor = %s\n", str);
@@ -232,7 +259,8 @@ vgroup_print(FILE *file, void *data)
 void
 vscript_print(FILE *file, void *data)
 {
-	vrrp_script_t *vscript = data;
+	tracked_sc_t *tsc = data;
+	vrrp_script_t *vscript = tsc->scr;
 	char *str;
 
 	fprintf(file, " VRRP Script = %s\n", vscript->sname);
@@ -253,87 +281,80 @@ vscript_print(FILE *file, void *data)
 		str = (vscript->result >= vscript->rise) ? "GOOD" : "BAD";
 	}
 	fprintf(file, "   Status = %s\n", str);
+	fprintf(file, "   Interface weight %d\n", tsc->weight);
 }
 
 void
 address_print(FILE *file, void *data)
 {
 	ip_address_t *ipaddr = data;
-	char *broadcast = (char *) MALLOC(21);
-	char *addr_str = (char *) MALLOC(41);
+	char broadcast[INET_ADDRSTRLEN + 5] = "";	/* allow for " brd " */
+	char addr_str[INET6_ADDRSTRLEN] = "";
 
 	if (IP_IS6(ipaddr)) {
-		inet_ntop(AF_INET6, &ipaddr->u.sin6_addr, addr_str, 41);
+		inet_ntop(AF_INET6, &ipaddr->u.sin6_addr, addr_str, sizeof(addr_str));
 	} else {
-		inet_ntop(AF_INET, &ipaddr->u.sin.sin_addr, addr_str, 41);
+		inet_ntop(AF_INET, &ipaddr->u.sin.sin_addr, addr_str, sizeof(addr_str));
 	if (ipaddr->u.sin.sin_brd.s_addr)
-		snprintf(broadcast, 20, " brd %s",
+		snprintf(broadcast, sizeof(broadcast) - 1, " brd %s",
 			 inet_ntop2(ipaddr->u.sin.sin_brd.s_addr));
 	}
 
-	fprintf(file, "     %s/%d%s dev %s scope %s%s%s\n"
+	fprintf(file, "     %s/%d%s dev %s%s%s%s%s\n"
 		, addr_str
 		, ipaddr->ifa.ifa_prefixlen
 		, broadcast
 		, IF_NAME(ipaddr->ifp)
-		, netlink_scope_n2a(ipaddr->ifa.ifa_scope)
+		, IP_IS4(ipaddr) ? " scope " : ""
+		, IP_IS4(ipaddr) ? netlink_scope_n2a(ipaddr->ifa.ifa_scope) : ""
 		, ipaddr->label ? " label " : ""
 		, ipaddr->label ? ipaddr->label : "");
-	FREE(broadcast);
-	FREE(addr_str);
 }
 
 void
 route_print(FILE *file, void *data)
 {
 	ip_route_t *route = data;
-	char *msg = MALLOC(150);
-	char *tmp = MALLOC(30);
 
-	if (route->blackhole) {
-		strncat(msg, "blackhole ", 30);
-	}
-	if (route->dst) {
-		snprintf(tmp, 30, "%s/%d", ipaddresstos(route->dst),
-			route->dmask);
-		strncat(msg, tmp, 30);
-	}
-	if (route->gw) {
-		snprintf(tmp, 30, " gw %s", ipaddresstos(route->gw));
-		strncat(msg, tmp, 30);
-	}
-	if (route->gw2) {
-		snprintf(tmp, 30, " or gw %s", ipaddresstos(route->gw2));
-		strncat(msg, tmp, 30);
-	}
-	if (route->src) {
-		snprintf(tmp, 30, " src %s", ipaddresstos(route->src));
-		strncat(msg, tmp, 30);
-	}
-	if (route->index) {
-		snprintf(tmp, 30, " dev %s",
-		  IF_NAME(if_get_by_ifindex(route->index)));
-		strncat(msg, tmp, 30);
-	}
-	if (route->table) {
-		snprintf(tmp, 30, " table %d", route->table);
-		strncat(msg, tmp, 30);
-	}
-	if (route->scope) {
-		snprintf(tmp, 30, " scope %s",
-		  netlink_scope_n2a(route->scope));
-		strncat(msg, tmp, 30);
-	}
-	if (route->metric) {
-		snprintf(tmp, 30, " metric %d", route->metric);
-		strncat(msg, tmp, 30);
-	}
+	fprintf(file, "     ");
 
-	fprintf(file, "     %s\n", msg);
+	if (route->blackhole)
+		fprintf(file, "blackhole ");
+	if (route->dst)
+		fprintf(file, "%s/%d", ipaddresstos(NULL, route->dst), route->dmask);
+	if (route->gw)
+		fprintf(file, " gw %s", ipaddresstos(NULL, route->gw));
+	if (route->gw2)
+		fprintf(file, " or gw %s", ipaddresstos(NULL, route->gw2));
+	if (route->src)
+		fprintf(file, " src %s", ipaddresstos(NULL, route->src));
+	if (route->index)
+		fprintf(file, " dev %s", IF_NAME(if_get_by_ifindex(route->index)));
+	if (route->table)
+		fprintf(file, " table %d", route->table);
+	if (route->scope)
+		fprintf(file, " scope %s", netlink_scope_n2a(route->scope));
+	if (route->metric)
+		fprintf(file, " metric %d", route->metric);
 
-	FREE(tmp);
-	FREE(msg);
+	fprintf(file, "\n");
+}
 
+void
+rule_print(FILE *file, void *data)
+{
+	ip_rule_t *rule = data;
+
+	fprintf(file, "     ");
+
+	if (rule->dir)
+		fprintf(file, "%s ", (rule->dir == VRRP_RULE_FROM) ? "from" : "to");
+	if (rule->addr)
+		fprintf(file, "%s", ipaddresstos(NULL, rule->addr));
+	if (rule->table)
+		fprintf(file, " table %d", rule->table);
+
+	fprintf(file, "\n");
 }
 
 void
@@ -341,7 +362,7 @@ if_print(FILE *file, void * data)
 {
 	tracked_if_t *tip = data;
 	interface_t *ifp = tip->ifp;
-	char addr_str[41];
+	char addr_str[INET6_ADDRSTRLEN];
 	int weight = tip->weight;
 
 	fprintf(file, "------< NIC >------\n");
@@ -349,7 +370,7 @@ if_print(FILE *file, void * data)
 	fprintf(file, " index = %d\n", ifp->ifindex);
 	fprintf(file, " IPv4 address = %s\n",
 		inet_ntop2(ifp->sin_addr.s_addr));
-	inet_ntop(AF_INET6, &ifp->sin6_addr, addr_str, 41);
+	inet_ntop(AF_INET6, &ifp->sin6_addr, addr_str, sizeof(addr_str));
 	fprintf(file, " IPv6 address = %s\n", addr_str);
 
 	/* FIXME: Harcoded for ethernet */
@@ -386,10 +407,9 @@ if_print(FILE *file, void * data)
 
 	/* MII channel supported ? */
 	if (IF_MII_SUPPORTED(ifp))
-	        fprintf(file, " NIC support MII regs\n");
+		fprintf(file, " NIC support MII regs\n");
 	else if (IF_ETHTOOL_SUPPORTED(ifp))
-	        fprintf(file, " NIC support EHTTOOL GLINK interface\n");
+		fprintf(file, " NIC support EHTTOOL GLINK interface\n");
 	else
-	        fprintf(file, " Enabling NIC ioctl refresh polling\n");
+		fprintf(file, " Enabling NIC ioctl refresh polling\n");
 }
-

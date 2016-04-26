@@ -4,7 +4,7 @@
 #
 # Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
 
-TARFILES = AUTHOR bin ChangeLog configure configure.in CONTRIBUTORS COPYING \
+TARFILES = AUTHOR bin ChangeLog configure configure.ac CONTRIBUTORS COPYING \
 	   doc genhash INSTALL install-sh keepalived keepalived.spec.in lib Makefile.in \
 	   README TODO VERSION
 
@@ -29,31 +29,52 @@ profile:
 	@echo ""
 	@echo "Make complete"
 
-clean:
-	$(MAKE) -C lib clean
-	$(MAKE) -C keepalived clean
-	$(MAKE) -C genhash clean
-
 id: ID
- 		
-ID: 
-	find . -name "*.[chCH]" -print | xargs mkid -fID 
+
+ID:
+	find . -name "*.[chCH]" -print | xargs mkid -fID
 
 tags: TAGS
 
 TAGS:
 	find . -name "*.[chCH]" -print | etags -
 
-distclean:
+clean_sub:
+	$(MAKE) -C lib clean
+	$(MAKE) -C keepalived clean
+	$(MAKE) -C genhash clean
+
+clean_me:
+	rm -f *.[ao] *~ *.orig *.rej core
+
+clean: clean_sub clean_me
+
+distclean_sub:
 	$(MAKE) -C lib distclean
 	$(MAKE) -C keepalived distclean
 	$(MAKE) -C genhash distclean
+
+distclean_me: clean_me
 	rm -f Makefile
 	rm -f keepalived.spec
 	rm -f TAGS ID
 
-mrproper: distclean
+distclean: distclean_me distclean_sub
+
+tarclean_sub:
+	$(MAKE) -C lib tarclean
+	$(MAKE) -C keepalived tarclean
+	$(MAKE) -C genhash tarclean
+
+tarclean_me: distclean_me
 	rm -f config.*
+
+tarclean: tarclean_me tarclean_sub
+
+mrproper: tarclean_me
+	$(MAKE) -C lib mrproper
+	$(MAKE) -C keepalived mrproper
+	$(MAKE) -C genhash mrproper
 
 uninstall:
 	$(MAKE) -C keepalived uninstall
@@ -64,11 +85,24 @@ install:
 	$(MAKE) -C genhash install
 ifeq (@SNMP_SUPPORT@, _WITH_SNMP_)
 	mkdir -p $(DESTDIR)/usr/share/snmp/mibs/
+ifeq (@SNMP_RFC2_SUPPORT@, _WITH_SNMP_RFC2_)
 	cp -f doc/VRRP-MIB $(DESTDIR)/usr/share/snmp/mibs/
+endif
+ifeq (@SNMP_RFC3_SUPPORT@, _WITH_SNMP_RFC3_)
+	cp -f doc/VRRPv3-MIB $(DESTDIR)/usr/share/snmp/mibs/
+endif
+ifeq (@SNMP_RFCV3_SUPPORT@, _WITH_SNMP_RFCV3_)
+	cp -f doc/VRRPv3-MIB $(DESTDIR)/usr/share/snmp/mibs/
+endif
+ifeq (@SNMP_KEEPALIVED_SUPPORT@, _WITH_SNMP_KEEPALIVED_)
+	cp -f doc/KEEPALIVED-MIB $(DESTDIR)/usr/share/snmp/mibs/
+else ifeq (@SNMP_CHECKER_SUPPORT@, _WITH_SNMP_CHECKER_)
 	cp -f doc/KEEPALIVED-MIB $(DESTDIR)/usr/share/snmp/mibs/
 endif
+endif
 
-tarball: mrproper
+tarball: tarclean
+	make -C lib git-commit.h
 	mkdir keepalived-@VERSION@
 	cp -a $(TARFILES) keepalived-@VERSION@
 	tar --exclude .git -czf $(TARBALL) keepalived-@VERSION@

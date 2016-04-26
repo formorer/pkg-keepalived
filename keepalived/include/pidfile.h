@@ -32,14 +32,12 @@
 
 /* lock pidfile */
 #define KEEPALIVED_PID_FILE "/var/run/keepalived.pid"
-#define KEEPALIVED_VRRP_PID_FILE "/var/run/keepalived_vrrp.pid"
-#define KEEPALIVED_CHECKERS_PID_FILE "/var/run/keepalived_checkers.pid"
 #define VRRP_PID_FILE "/var/run/vrrp.pid"
 #define CHECKERS_PID_FILE "/var/run/checkers.pid"
 
 /* Prototypes */
 extern int pidfile_write(char *, int);
 extern void pidfile_rm(char *);
-extern int keepalived_running(int);
+extern int keepalived_running(unsigned long);
 
 #endif
