@@ -1,6 +1,11 @@
 keepalived (1:1.2.20-1) unstable; urgency=medium
 
   * [2a22d69] Imported Upstream version 1.2.20
+    enable support for:
+     - nfnetlink
+     - ipset
+     - iptc
+     - snmp rfcv2 and rfcv3 
 
  -- Alexander Wirt <alexander.wirt@credativ.de>  Tue, 17 May 2016 13:25:05 +0200
 
