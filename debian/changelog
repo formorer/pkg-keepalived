@@ -1,3 +1,10 @@
+keepalived (1:1.2.23-1) unstable; urgency=medium
+
+  * [94beb84] Imported Upstream version 1.2.23
+    Closes (#821941)
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 21 Jul 2016 10:12:06 +0200
+
 keepalived (1:1.2.20-1) unstable; urgency=medium
 
   * [2a22d69] Imported Upstream version 1.2.20
