@@ -26,6 +26,9 @@
 #include <unistd.h>
 #include <libgen.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <stdbool.h>
 #include "parser.h"
 #include "memory.h"
 #include "logger.h"
@@ -35,12 +38,12 @@
 
 /* global vars */
 vector_t *keywords;
-vector_t *current_keywords;
-FILE *current_stream;
-char *current_conf_file;
 int reload = 0;
 
 /* local vars */
+static char *current_conf_file;
+static vector_t *current_keywords;
+static FILE *current_stream;
 static int sublevel = 0;
 static int skip_sublevel = 0;
 
@@ -48,7 +51,7 @@ static int skip_sublevel = 0;
 static void process_stream(vector_t *, int);
 
 static void
-keyword_alloc(vector_t *keywords_vec, char *string, void (*handler) (vector_t *), bool active)
+keyword_alloc(vector_t *keywords_vec, const char *string, void (*handler) (vector_t *), bool active)
 {
 	keyword_t *keyword;
 
@@ -63,7 +66,7 @@ keyword_alloc(vector_t *keywords_vec, char *string, void (*handler) (vector_t *)
 }
 
 static void
-keyword_alloc_sub(vector_t *keywords_vec, char *string, void (*handler) (vector_t *))
+keyword_alloc_sub(vector_t *keywords_vec, const char *string, void (*handler) (vector_t *))
 {
 	int i = 0;
 	keyword_t *keyword;
@@ -98,13 +101,13 @@ install_sublevel_end(void)
 }
 
 void
-install_keyword_root(char *string, void (*handler) (vector_t *), bool active)
+install_keyword_root(const char *string, void (*handler) (vector_t *), bool active)
 {
 	keyword_alloc(keywords, string, handler, active);
 }
 
 void
-install_keyword(char *string, void (*handler) (vector_t *))
+install_keyword(const char *string, void (*handler) (vector_t *))
 {
 	keyword_alloc_sub(keywords, string, handler);
 }
@@ -129,14 +132,19 @@ install_sublevel_end_handler(void (*handler) (void))
 static void
 dump_keywords(vector_t *keydump, int level, FILE *fp)
 {
-	int i;
+	unsigned int i;
 	keyword_t *keyword_vec;
 	char file_name[21];
 
 	if (!level) {
 		sprintf(file_name, "/tmp/keywords.%d", getpid());
+		snprintf(file_name, sizeof(file_name), "/tmp/keywords.%d", getpid());
 		fp = fopen(file_name, "w");
+		if (!fp)
+			return;
 	}
+
+	vector_dump(fp, keywords);
 
 	for (i = 0; i < vector_size(keydump); i++) {
 		keyword_vec = vector_slot(keydump, i);
@@ -150,11 +158,11 @@ dump_keywords(vector_t *keydump, int level, FILE *fp)
 }
 #endif
 
-void
+static void
 free_keywords(vector_t *keywords_vec)
 {
 	keyword_t *keyword_vec;
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < vector_size(keywords_vec); i++) {
 		keyword_vec = vector_slot(keywords_vec, i);
@@ -225,25 +233,42 @@ alloc_strvec(char *string)
 	}
 }
 
-void read_conf_file(char *conf_file)
+static void
+read_conf_file(const char *conf_file)
 {
 	FILE *stream;
 	char *path;
 	int ret;
 	glob_t globbuf;
+	int	res;
+	struct stat stb;
 
 	globbuf.gl_offs = 0;
-	glob(conf_file, 0, NULL, &globbuf);
+	res = glob(conf_file, 0, NULL, &globbuf);
+
+	if (res) {
+		log_message(LOG_INFO, "Unable to find config file(s) '%s'.", conf_file);
+		return;
+	}
 
 	int i;
 	for(i = 0; i < globbuf.gl_pathc; i++){
 		log_message(LOG_INFO, "Opening file '%s'.", globbuf.gl_pathv[i]);
 		stream = fopen(globbuf.gl_pathv[i], "r");
 		if (!stream) {
-			log_message(LOG_INFO, "Configuration file '%s' open problem (%s)..."
+			log_message(LOG_INFO, "Configuration file '%s' open problem (%s) - skipping"
 				       , globbuf.gl_pathv[i], strerror(errno));
-			return;
+			continue;
 		}
+
+		/* Make sure what we have opened is a regular file, and not for example a directory */
+		if (fstat(fileno(stream), &stb) ||
+		    !S_ISREG(stb.st_mode)) {
+			log_message(LOG_INFO, "Configuration file '%s' is not a regular file - skipping", globbuf.gl_pathv[i]);
+			fclose(stream);
+			continue;
+		}
+
 		current_stream = stream;
 		current_conf_file = globbuf.gl_pathv[i];
 
@@ -275,7 +300,48 @@ void read_conf_file(char *conf_file)
 	globfree(&globbuf);
 }
 
-int
+bool check_conf_file(const char *conf_file)
+{
+	glob_t globbuf;
+	int i;
+	bool ret = true;
+	int res;
+	struct stat stb;
+
+	globbuf.gl_offs = 0;
+	res = glob(conf_file, 0, NULL, &globbuf);
+	if (res) {
+		log_message(LOG_INFO, "Unable to find configuration file %s (glob returned %d)", conf_file, res);
+		return false;
+	}
+
+	if (globbuf.gl_pathc == 0) {
+		log_message(LOG_INFO, "Unable to find configuration file %s", conf_file);
+		ret = false;
+	} else {
+		for (i = 0; i < globbuf.gl_pathc; i++) {
+			if (access(globbuf.gl_pathv[i], R_OK)) {
+				log_message(LOG_INFO, "Unable to read configuration file %s", globbuf.gl_pathv[i]);
+				ret = false;
+				break;
+			}
+
+			/* Make sure that the file is a regular file, and not for example a directory */
+			if (stat(globbuf.gl_pathv[i], &stb) ||
+			    !S_ISREG(stb.st_mode)) {
+				log_message(LOG_INFO, "Configuration file '%s' is not a regular file", globbuf.gl_pathv[i]);
+				ret = false;
+				break;
+			}
+		}
+	}
+
+	globfree(&globbuf);
+
+	return ret;
+}
+
+static int
 check_include(char *buf)
 {
 	char *str;
@@ -325,28 +391,31 @@ check_include(char *buf)
 int
 read_line(char *buf, int size)
 {
-	int ch;
+	size_t len ;
+	bool eof = false;
 
 	do {
-		int count = 0;
-		memset(buf, 0, size);
-		while ((ch = fgetc(current_stream)) != EOF && (int) ch != '\n'
-			   && (int) ch != '\r') {
-			if (count < size)
-				buf[count] = (int) ch;
-			else
-				break;
-			count++;
+		if (fgets(buf, size, current_stream)) {
+			for (len = strlen(buf) - 1; len >= 0; len--) {
+				if (buf[len] != '\r' && buf[len] != '\n')
+					break;
+				buf[len] = '\0';
+			}
+		}
+		else
+		{
+			eof = true;
+			buf[0] = '\0';
 		}
 	} while (check_include(buf) == 1);
-	return (ch == EOF) ? 0 : 1;
+	return (eof) ? 0 : 1;
 }
 
 vector_t *
 read_value_block(vector_t *strvec)
 {
 	char *buf;
-	int word;
+	unsigned int word;
 	char *str = NULL;
 	char *dup;
 	vector_t *vec = NULL;
@@ -468,7 +537,7 @@ static int kw_level = 0;
 static void
 process_stream(vector_t *keywords_vec, int need_bob)
 {
-	int i;
+	unsigned int i;
 	keyword_t *keyword_vec;
 	char *str;
 	char *buf;
@@ -477,10 +546,10 @@ process_stream(vector_t *keywords_vec, int need_bob)
 	current_keywords = keywords_vec;
 	int bob_needed = 0;
 
-	buf = zalloc(MAXBUF);
+	buf = MALLOC(MAXBUF);
 	while (read_line(buf, MAXBUF)) {
 		strvec = alloc_strvec(buf);
-		memset(buf,0, MAXBUF);
+		memset(buf, 0, MAXBUF);
 
 		if (!strvec)
 			continue;
@@ -562,13 +631,13 @@ process_stream(vector_t *keywords_vec, int need_bob)
 	}
 
 	current_keywords = prev_keywords;
-	free(buf);
+	FREE(buf);
 	return;
 }
 
 /* Data initialization */
 void
-init_data(char *conf_file, vector_t * (*init_keywords) (void))
+init_data(const char *conf_file, vector_t * (*init_keywords) (void))
 {
 	/* Init Keywords structure */
 	keywords = vector_alloc();
@@ -576,13 +645,12 @@ init_data(char *conf_file, vector_t * (*init_keywords) (void))
 
 #if DUMP_KEYWORDS
 	/* Dump configuration */
-	vector_dump(keywords);
 	dump_keywords(keywords, 0, NULL);
 #endif
 
 	/* Stream handling */
 	current_keywords = keywords;
-	read_conf_file((conf_file) ? conf_file : CONF);
+	read_conf_file(conf_file);
 	free_keywords(keywords);
 	clear_rttables();
 }

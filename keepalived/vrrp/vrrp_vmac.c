@@ -35,7 +35,6 @@
 #include "vrrp_if_config.h"
 #include "vrrp_ipaddress.h"
 
-#ifdef _HAVE_VRRP_VMAC_
 const char * const macvlan_ll_kind = "macvlan";
 u_char ll_addr[ETH_ALEN] = {0x00, 0x00, 0x5e, 0x00, 0x01, 0x00};
 
@@ -81,12 +80,10 @@ netlink_link_up(vrrp_t *vrrp)
 
 	return status;
 }
-#endif
 
 int
 netlink_link_add_vmac(vrrp_t *vrrp)
 {
-#ifdef _HAVE_VRRP_VMAC_
 	struct rtattr *linkinfo;
 	struct rtattr *data;
 	unsigned int base_ifindex;
@@ -289,7 +286,6 @@ netlink_link_add_vmac(vrrp_t *vrrp)
 			log_message(LOG_INFO, "Deleting auto link-local address from vmac failed");
 	}
 #endif
-#endif
 
 	return 1;
 }
@@ -299,7 +295,6 @@ netlink_link_del_vmac(vrrp_t *vrrp)
 {
 	int status = 1;
 
-#ifdef _HAVE_VRRP_VMAC_
 	interface_t *base_ifp ;
 	struct {
 		struct nlmsghdr n;
@@ -311,10 +306,14 @@ netlink_link_del_vmac(vrrp_t *vrrp)
 		return -1;
 
 	/* Reset arp_ignore and arp_filter on the base interface if necessary */
-	base_ifp = if_get_by_ifindex(vrrp->ifp->base_ifindex);
+	if (vrrp->family == AF_INET) {
+		base_ifp = if_get_by_ifindex(vrrp->ifp->base_ifindex);
 
-	if (vrrp->family == AF_INET)
-		reset_interface_parameters(base_ifp);
+		if (base_ifp)
+			reset_interface_parameters(base_ifp);
+		else
+			log_message(LOG_INFO, "Unable to find base interface for vrrp instance %s", vrrp->iname);
+	}
 
 	memset(&req, 0, sizeof (req));
 
@@ -332,7 +331,6 @@ netlink_link_del_vmac(vrrp_t *vrrp)
 
 	log_message(LOG_INFO, "vmac: Success removing VMAC interface %s for vrrp_instance %s"
 			    , vrrp->vmac_ifname, vrrp->iname);
-#endif
 
 	return status;
 }

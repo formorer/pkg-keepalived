@@ -22,12 +22,18 @@ IMPORTS
         FROM SNMPv2-TC;
 
 keepalived MODULE-IDENTITY
-     LAST-UPDATED "201510270000Z"
+     LAST-UPDATED "201606290000Z"
      ORGANIZATION "Keepalived"
      CONTACT-INFO "http://www.keepalived.org"
      DESCRIPTION
         "This MIB describes objects used by keepalived, both
          for VRRP and health checker."
+     REVISION "201606290000Z"
+     DESCRIPTION "add lvs_flush"
+     REVISION "201606030000Z"
+     DESCRIPTION "update comment for vrrpInstancePreemptDelay"
+     REVISION "201605221540Z"
+     DESCRIPTION "smtpServerPort added"
      REVISION "201510270000Z"
      DESCRIPTION "routerId added to traps variables"
      REVISION "200904080000Z"
@@ -119,6 +125,14 @@ emailTable OBJECT-TYPE
         "Table of email notification addresses."
     ::= { mail 5 }
 
+smtpServerPort OBJECT-TYPE
+    SYNTAX InetPortNumber
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Port of SMTP server."
+    ::= { mail 6 }
+
 emailEntry OBJECT-TYPE
     SYNTAX EmailEntry
     MAX-ACCESS not-accessible
@@ -167,6 +181,14 @@ linkBeat OBJECT-TYPE
         change while polling(2) means that the status of the link is
         checked periodically."
     ::= { global 5 }
+
+lvsFlush OBJECT-TYPE
+    SYNTAX INTEGER { enabled(1), disabled(2) }
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Indicate whether LVS config is flushed at startup."
+    ::= { global 6 }
 
 -- ----------------------------------------------------------------------
 -- VRRP part
@@ -486,7 +508,7 @@ vrrpInstancePreemptDelay OBJECT-TYPE
     MAX-ACCESS read-only
     STATUS current
     DESCRIPTION
-        "Delay after startup until preemption can happen. 0 means that there is no delay."
+        "Delay after startup or lower priority advert received until preemption can happen. 0 means that there is no delay."
     ::= { vrrpInstanceEntry 14 }
 
 vrrpInstanceAuthType OBJECT-TYPE
@@ -2094,8 +2116,10 @@ globalGroup OBJECT-GROUP
     smtpServerTimeout,
     emailFrom,
     emailAddress,
+    smtpServerPort,
     trapEnable,
-    linkBeat
+    linkBeat,
+    lvsFlush
     }
     STATUS current
     DESCRIPTION

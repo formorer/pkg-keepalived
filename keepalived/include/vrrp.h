@@ -29,8 +29,6 @@
 
 /* local include */
 #include "vrrp_ipaddress.h"
-#include "vrrp_iproute.h"
-#include "vrrp_iprule.h"
 #include "vrrp_ipsecah.h"
 #include "vrrp_if.h"
 #include "vrrp_track.h"
@@ -76,7 +74,7 @@ typedef struct {
 #define VRRP_PRIO_OWNER		255		/* priority of the ip owner -- rfc2338.5.3.4 */
 #define VRRP_PRIO_DFL		100		/* default priority -- rfc2338.5.3.4 */
 #define VRRP_PRIO_STOP		0		/* priority to stop -- rfc2338.5.3.4 */
-#define VRRP_MAX_ADDR		((2^8)-1)	/* count addr field is 8 bits wide */
+#define VRRP_MAX_ADDR		0xFF		/* count addr field is 8 bits wide */
 #define VRRP_AUTH_NONE		0		/* no authentification -- rfc2338.5.3.6 */
 #ifdef _WITH_VRRP_AUTH_
 #define VRRP_AUTH_PASS		1		/* password authentification -- rfc2338.5.3.6 */
@@ -147,16 +145,17 @@ typedef struct _vrrp_t {
 	sa_family_t		family;			/* AF_INET|AF_INET6 */
 	char			*iname;			/* Instance Name */
 	vrrp_sgroup_t		*sync;			/* Sync group we belong to */
-	char			base_iface[IFNAMSIZ];	/* base interface name */
 	vrrp_stats		*stats;			/* Statistics */
 	interface_t		*ifp;			/* Interface we belong to */
 	int			dont_track_primary;	/* If set ignores ifp faults */
 	bool			skip_check_adv_addr;	/* If set, don't check the VIPs in subsequent
 							 * adverts from the same master */
 	int			strict_mode;		/* Enforces strict VRRP compliance */
+#ifdef _HAVE_VRRP_VMAC_
 	unsigned long		vmac_flags;		/* VRRP VMAC flags */
 	char			vmac_ifname[IFNAMSIZ];	/* Name of VRRP VMAC interface */
 	unsigned int		vmac_ifindex;		/* ifindex of vmac interface */
+#endif
 	list			track_ifp;		/* Interface state we monitor */
 	list			track_script;		/* Script state we monitor */
 	struct sockaddr_storage	saddr;			/* Src IP address to use in VRRP IP header */
@@ -170,9 +169,11 @@ typedef struct _vrrp_t {
 	timeval_t		garp_refresh_timer;	/* Next scheduled gratuitous ARP timer */
 	int			garp_rep;		/* gratuitous ARP repeat value */
 	int			garp_refresh_rep;	/* refresh gratuitous ARP repeat value */
-        int			garp_lower_prio_delay;	/* Delay to second set or ARP messages */
-        int			garp_lower_prio_rep;	/* Number of ARP messages to send at a time */
-        int			lower_prio_no_advert;	/* Don't send advert after lower prio
+	int			garp_lower_prio_delay;	/* Delay to second set or ARP messages */
+	bool			garp_pending;		/* Are there gratuitous ARP messages still to be sent */
+	bool			gna_pending;		/* Are there gratuitous NA messages still to be sent */
+	int			garp_lower_prio_rep;	/* Number of ARP messages to send at a time */
+	int			lower_prio_no_advert;	/* Don't send advert after lower prio
 							 * advert received */
 	int			vrid;			/* virtual id. from 1(!) to 255 */
 	int			base_priority;		/* configured priority value */
@@ -201,7 +202,6 @@ typedef struct _vrrp_t {
 							 * prio is allowed.  0 means no delay.
 							 */
 	timeval_t		preempt_time;		/* Time after which preemption can happen */
-	int			preempt_delay_active;
 	int			state;			/* internal state (init/backup/master) */
 	int			init_state;		/* the initial state of the instance */
 	int			wantstate;		/* user explicitly wants a state (back/mast) */
@@ -306,9 +306,8 @@ typedef struct _vrrp_t {
 /* prototypes */
 extern vrrphdr_t *vrrp_get_header(sa_family_t, char *, int *);
 extern int open_vrrp_send_socket(sa_family_t, int, int, int);
-extern int open_vrrp_socket(sa_family_t, int, int, int);
+extern int open_vrrp_read_socket(sa_family_t, int, int, int);
 extern int new_vrrp_socket(vrrp_t *);
-extern void close_vrrp_socket(vrrp_t *);
 extern void vrrp_send_link_update(vrrp_t *, int);
 extern int vrrp_send_adv(vrrp_t *, int);
 extern int vrrp_state_fault_rx(vrrp_t *, char *, int);
@@ -324,5 +323,6 @@ extern void shutdown_vrrp_instances(void);
 extern void clear_diff_vrrp(void);
 extern void clear_diff_script(void);
 extern void vrrp_restore_interface(vrrp_t *, bool, bool);
+extern void vrrp_remove_delayed_arp_na(vrrp_t *);
 
 #endif

@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include <sys/resource.h>
+
 #include "main.h"
 #include "config.h"
 #include "signals.h"
@@ -30,14 +32,13 @@
 #define CHILD_WAIT_SECS	5
 
 /* global var */
-char *conf_file = NULL;					/* Configuration file */
+char *conf_file = CONF;					/* Configuration file */
 int log_facility = LOG_DAEMON;				/* Optional logging facilities */
 pid_t vrrp_child = -1;					/* VRRP child process ID */
 pid_t checkers_child = -1;				/* Healthcheckers child process ID */
-int linkwatch = 0;					/* Use linkwatch kernel netlink reflection */
-char *main_pidfile = KEEPALIVED_PID_FILE;		/* overrule default pidfile */
-char *checkers_pidfile = CHECKERS_PID_FILE;		/* overrule default pidfile */
-char *vrrp_pidfile = VRRP_PID_FILE;			/* overrule default pidfile */
+const char *main_pidfile = KEEPALIVED_PID_FILE;		/* overrule default pidfile */
+const char *checkers_pidfile = CHECKERS_PID_FILE;	/* overrule default pidfile */
+const char *vrrp_pidfile = VRRP_PID_FILE;		/* overrule default pidfile */
 unsigned long daemon_mode = 0;				/* VRRP/CHECK subsystem selection */
 #ifdef _WITH_SNMP_
 int snmp = 0;						/* Enable SNMP support */
@@ -51,6 +52,12 @@ static struct {
 	{LOG_LOCAL0}, {LOG_LOCAL1}, {LOG_LOCAL2}, {LOG_LOCAL3},
 	{LOG_LOCAL4}, {LOG_LOCAL5}, {LOG_LOCAL6}, {LOG_LOCAL7}
 };
+
+/* Control producing core dumps */
+static bool set_core_dump_pattern = false;
+static bool create_core_dump = false;
+static const char *core_dump_pattern = "core";
+static char *orig_core_dump_pattern = NULL;
 
 /* Daemon stop sequence */
 static void
@@ -68,7 +75,7 @@ stop_keepalived(void)
 	if (__test_bit(DAEMON_CHECKERS, &daemon_mode))
 		pidfile_rm(checkers_pidfile);
 
-#ifdef _DEBUG_
+#ifdef _MEM_CHECK_
 	keepalived_free_final("Parent process");
 #endif
 }
@@ -108,7 +115,10 @@ sigend(void *v, int sig)
 	int ret;
 	int wait_count = 0;
 	sigset_t old_set, child_wait;
-	struct timespec timeout = { CHILD_WAIT_SECS, 0 };
+	struct timespec timeout = {
+		.tv_sec = CHILD_WAIT_SECS,
+		.tv_nsec = 0
+	};
 	struct timeval start_time, now;
 
 	/* register the terminate thread */
@@ -177,7 +187,7 @@ sigend(void *v, int sig)
 }
 
 /* Initialize signal handler */
-void
+static void
 signal_init(void)
 {
 	signal_handler_init();
@@ -189,6 +199,70 @@ signal_init(void)
 	signal_ignore(SIGPIPE);
 }
 
+/* To create a core file when abrt is running (a RedHat distribution),
+ * and keepalived isn't installed from an RPM package, edit the file
+ * “/etc/abrt/abrt.conf”, and change the value of the field
+ * “ProcessUnpackaged” to “yes”. */
+static void
+update_core_dump_pattern(const char *pattern_str)
+{
+	int fd;
+	bool initialising = (orig_core_dump_pattern == NULL);
+
+	/* CORENAME_MAX_SIZE in kernel source defines the maximum string length,
+	 * see core_pattern[CORENAME_MAX_SIZE] in fs/coredump.c. Currently,
+	 * (Linux 4.6) defineds it to be 128, but the definition is not exposed
+	 * to user-space. */
+#define	CORENAME_MAX_SIZE	128
+
+	if (initialising)
+		orig_core_dump_pattern = MALLOC(CORENAME_MAX_SIZE);
+
+	fd = open ("/proc/sys/kernel/core_pattern", O_RDWR);
+
+	if (fd == -1 ||
+	    ( initialising && read(fd, orig_core_dump_pattern, CORENAME_MAX_SIZE - 1) == -1) ||
+	    write(fd, pattern_str, strlen(pattern_str)) == -1) {
+		log_message(LOG_INFO, "Unable to read/write core_pattern");
+
+		if (fd != -1)
+			close(fd);
+
+		FREE(orig_core_dump_pattern);
+		orig_core_dump_pattern = NULL;
+
+		return;
+	}
+
+	close(fd);
+
+	if (!initialising) {
+		FREE(orig_core_dump_pattern);
+		orig_core_dump_pattern = NULL;
+	}
+}
+
+static void
+core_dump_init(void)
+{
+	struct rlimit rlim;
+
+	if (set_core_dump_pattern) {
+		/* If we set the core_pattern here, we will attempt to restore it when we
+		 * exit. This will be fine if it is a child of ours that core dumps, 
+		 * but if we ourself core dump, then the core_pattern will not be restored */
+		update_core_dump_pattern(core_dump_pattern);
+	}
+
+	if (create_core_dump) {
+		rlim.rlim_cur = RLIM_INFINITY;
+		rlim.rlim_max = RLIM_INFINITY;
+
+		if (setrlimit(RLIMIT_CORE, &rlim) == -1)
+			log_message(LOG_INFO, "Failed to set core file size");
+	}
+}
+		
 /* Usage function */
 static void
 usage(const char *prog)
@@ -212,6 +286,11 @@ usage(const char *prog)
 #ifdef _WITH_SNMP_
 	fprintf(stderr, "  -x, --snmp                   Enable SNMP subsystem\n");
 	fprintf(stderr, "  -A, --snmp-agent-socket=FILE Use the specified socket for master agent\n");
+#endif
+	fprintf(stderr, "  -m, --core-dump              Produce core dump if terminate abnormally\n");
+	fprintf(stderr, "  -M, --core-dump-pattern=PATN Also set /proc/sys/kernel/core_pattern to PATN (default 'core')\n");
+#ifdef _MEM_CHECK_LOG_
+	fprintf(stderr, "  -L, --mem-check-log          Log malloc/frees to syslog\n");
 #endif
 	fprintf(stderr, "  -v, --version                Display the version number\n");
 	fprintf(stderr, "  -h, --help                   Display this help message\n");
@@ -243,14 +322,19 @@ parse_cmdline(int argc, char **argv)
 		{"snmp",              no_argument,       0, 'x'},
 		{"snmp-agent-socket", required_argument, 0, 'A'},
  #endif
+		{"core-dump",         no_argument,       0, 'm'},
+		{"core-dump-pattern", optional_argument, 0, 'M'},
+#ifdef _MEM_CHECK_LOG_
+		{"mem-check-log",     no_argument,       0, 'L'},
+#endif
 		{"version",           no_argument,       0, 'v'},
 		{"help",              no_argument,       0, 'h'},
 		{0, 0, 0, 0}
 	};
 
-	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:"
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:mML"
 #ifdef _WITH_SNMP_
-								   "xA:"
+					    "xA:"
 #endif
 									, long_options, NULL)) != EOF) {
 		switch (c) {
@@ -322,6 +406,18 @@ parse_cmdline(int argc, char **argv)
 			snmp_socket = optarg;
 			break;
 #endif
+		case 'M':
+			set_core_dump_pattern = true;
+			if (optarg && optarg[0])
+				core_dump_pattern = optarg;
+		case 'm':
+			create_core_dump = true;
+			break;
+#ifdef _MEM_CHECK_LOG_
+		case 'L':
+			__set_bit(MEM_CHECK_LOG_BIT, &debug);
+			break;
+#endif
 		default:
 			exit(0);
 			break;
@@ -363,6 +459,13 @@ main(int argc, char **argv)
 	log_message(LOG_INFO, "Starting %s", VERSION_STRING);
 #endif
 
+#ifdef _MEM_CHECK_
+	mem_log_init(PROG);
+#endif
+
+	/* Handle any core file requirements */
+	core_dump_init();
+
 	/* Check if keepalived is already running */
 	if (keepalived_running(daemon_mode)) {
 		log_message(LOG_INFO, "daemon is already running");
@@ -376,6 +479,16 @@ main(int argc, char **argv)
 	/* daemonize process */
 	if (!__test_bit(DONT_FORK_BIT, &debug))
 		xdaemon(0, 0, 0);
+
+	/* Check we can read the configuration file(s).
+ 	   NOTE: the working directory will be / if we
+ 	   forked, but will be the current working directory
+ 	   when keepalived was run if we haven't forked.
+ 	   This means that if any config file names are not
+ 	   absolute file names, the behaviour will be different
+ 	   depending on whether we forked or not. */
+	if (!check_conf_file(conf_file))
+		goto end;
 
 	/* write the father's pidfile */
 	if (!pidfile_write(main_pidfile, getpid()))
@@ -412,6 +525,10 @@ end:
 		log_message(LOG_INFO, "Stopped %s", VERSION_STRING);
 #endif
 	}
+
+	/* Restore original core_pattern if necessary */
+	if (orig_core_dump_pattern)
+		update_core_dump_pattern(orig_core_dump_pattern);
 
 	closelog();
 	exit(0);

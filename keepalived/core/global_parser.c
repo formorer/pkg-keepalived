@@ -59,11 +59,20 @@ smtpto_handler(vector_t *strvec)
 static void
 smtpserver_handler(vector_t *strvec)
 {
-	int ret;
-	ret = inet_stosockaddr(vector_slot(strvec, 1), SMTP_PORT_STR, &global_data->smtp_server);
-	if (ret < 0) {
-		domain_stosockaddr(vector_slot(strvec, 1), SMTP_PORT_STR, &global_data->smtp_server);
-	}
+	int ret = -1;
+	char *port_str = SMTP_PORT_STR;
+
+	/* Has a port number been specified? */
+	if (vector_size(strvec) >= 3)
+		port_str = vector_slot(strvec,2);
+
+	/* It can't be an IP address if it contains '-' or '/', and 
+	   inet_stosockaddr() modifies the string if it contains either of them */
+	if (!strpbrk(vector_slot(strvec, 1), "-/"))
+		ret = inet_stosockaddr(vector_slot(strvec, 1), port_str, &global_data->smtp_server);
+
+	if (ret < 0)
+		domain_stosockaddr(vector_slot(strvec, 1), port_str, &global_data->smtp_server);
 }
 static void
 smtphelo_handler(vector_t *strvec)
@@ -84,7 +93,7 @@ static void
 email_handler(vector_t *strvec)
 {
 	vector_t *email_vec = read_value_block(strvec);
-	int i;
+	unsigned int i;
 	char *str;
 
 	for (i = 0; i < vector_size(email_vec); i++) {
@@ -122,6 +131,11 @@ lvs_syncd_handler(vector_t *strvec)
 		else
 			global_data->lvs_syncd_syncid = syncid;
 	}
+}
+static void
+lvs_flush_handler(vector_t *strvec)
+{
+	global_data->lvs_flush = true;
 }
 static void
 vrrp_mcast_group4_handler(vector_t *strvec)
@@ -183,6 +197,20 @@ vrrp_garp_lower_prio_rep_handler(vector_t *strvec)
 	/* Allow 0 GARP messages to be sent */
 	if (global_data->vrrp_garp_lower_prio_rep < 0)
 		global_data->vrrp_garp_lower_prio_rep = 0;
+}
+static void
+vrrp_garp_interval_handler(vector_t *strvec)
+{
+	global_data->vrrp_garp_interval = atof(vector_slot(strvec, 1)) * 1000000;
+	if (global_data->vrrp_garp_interval >= 1000000)
+		log_message(LOG_INFO, "The vrrp_garp_interval is very large - %s seconds", FMT_STR_VSLOT(strvec, 1));
+}
+static void
+vrrp_gna_interval_handler(vector_t *strvec)
+{
+	global_data->vrrp_gna_interval = atof(vector_slot(strvec, 1)) * 1000000;
+	if (global_data->vrrp_gna_interval >= 1000000)
+		log_message(LOG_INFO, "The vrrp_gna_interval is very large - %s seconds", FMT_STR_VSLOT(strvec, 1));
 }
 static void
 vrrp_lower_prio_no_advert_handler(vector_t *strvec)
@@ -423,6 +451,7 @@ global_init_keywords(void)
 	install_keyword("smtp_connect_timeout", &smtpto_handler);
 	install_keyword("notification_email", &email_handler);
 	install_keyword("lvs_sync_daemon", &lvs_syncd_handler);
+	install_keyword("lvs_flush", &lvs_flush_handler);
 	install_keyword("vrrp_mcast_group4", &vrrp_mcast_group4_handler);
 	install_keyword("vrrp_mcast_group6", &vrrp_mcast_group6_handler);
 	install_keyword("vrrp_garp_master_delay", &vrrp_garp_delay_handler);
@@ -431,6 +460,8 @@ global_init_keywords(void)
 	install_keyword("vrrp_garp_master_refresh_repeat", &vrrp_garp_refresh_rep_handler);
 	install_keyword("vrrp_garp_lower_prio_delay", &vrrp_garp_lower_prio_delay_handler);
 	install_keyword("vrrp_garp_lower_prio_repeat", &vrrp_garp_lower_prio_rep_handler);
+	install_keyword("vrrp_garp_interval", &vrrp_garp_interval_handler);
+	install_keyword("vrrp_gna_interval", &vrrp_gna_interval_handler);
 	install_keyword("vrrp_lower_prio_no_advert", &vrrp_lower_prio_no_advert_handler);
 	install_keyword("vrrp_version", &vrrp_version_handler);
 	install_keyword("vrrp_iptables", &vrrp_iptables_handler);

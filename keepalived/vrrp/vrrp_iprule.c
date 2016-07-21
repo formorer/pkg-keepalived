@@ -54,7 +54,7 @@ add_addr2req(struct nlmsghdr *n, int maxlen, int type, ip_address_t *ip_address)
 }
 
 /* Add/Delete IP rule to/from a specific IP/network */
-int
+static int
 netlink_rule(ip_rule_t *iprule, int cmd)
 {
 	int status = 1;
@@ -118,12 +118,12 @@ netlink_rulelist(list rule_list, int cmd, bool force)
 	for (e = LIST_HEAD(rule_list); e; ELEMENT_NEXT(e)) {
 		iprule = ELEMENT_DATA(e);
 		if (force ||
-		    (cmd && !iprule->set) ||
-		    (!cmd && iprule->set)) {
+		    (cmd == IPRULE_ADD && !iprule->set) ||
+		    (cmd == IPRULE_DEL&& iprule->set)) {
 			if (netlink_rule(iprule, cmd) > 0)
-				iprule->set = (cmd) ? 1 : 0;
+				iprule->set = (cmd == IPRULE_ADD);
 			else
-				iprule->set = 0;
+				iprule->set = false;
 		}
 	}
 
@@ -162,7 +162,7 @@ alloc_rule(list rule_list, vector_t *strvec)
 {
 	ip_rule_t *new;
 	char *str;
-	int i = 0;
+	unsigned int i = 0;
 	unsigned int table_id;
 
 	new  = (ip_rule_t *) MALLOC(sizeof(ip_rule_t));
@@ -192,7 +192,7 @@ alloc_rule(list rule_list, vector_t *strvec)
 }
 
 /* Try to find a rule in a list */
-int
+static int
 rule_exist(list l, ip_rule_t *iprule)
 {
 	ip_rule_t *ipr;

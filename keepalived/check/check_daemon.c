@@ -28,8 +28,6 @@
 #include "check_ssl.h"
 #include "check_api.h"
 #include "global_data.h"
-#include "ipwrapper.h"
-#include "ipvswrapper.h"
 #include "pidfile.h"
 #include "daemon.h"
 #include "signals.h"
@@ -73,7 +71,7 @@ stop_check(void)
 	free_interface_queue();
 #endif
 
-#ifdef _DEBUG_
+#ifdef _MEM_CHECK_
 	keepalived_free_final("Healthcheck child process");
 #endif
 
@@ -97,10 +95,6 @@ start_check(void)
 		return;
 	}
 
-	/* Remove any entries left over from previous invocation */
-	if (!reload)
-		ipvs_flush_cmd();
-
 	init_checkers_queue();
 #ifdef _WITH_VRRP_
 	init_interface_queue();
@@ -121,6 +115,10 @@ start_check(void)
 #ifdef _DEBUG_
 	log_message(LOG_INFO, "Configuration is using : %lu Bytes", mem_allocated);
 #endif
+
+	/* Remove any entries left over from previous invocation */
+	if (!reload && global_data->lvs_flush)
+		ipvs_flush_cmd();
 
 #ifdef _WITH_SNMP_CHECKER_
 	if (!reload && global_data->enable_snmp_checker)
@@ -172,15 +170,16 @@ start_check(void)
 }
 
 /* Reload handler */
-int reload_check_thread(thread_t *);
-void
+static int reload_check_thread(thread_t *);
+
+static void
 sighup_check(void *v, int sig)
 {
 	thread_add_event(master, reload_check_thread, NULL, 0);
 }
 
 /* Terminate handler */
-void
+static void
 sigend_check(void *v, int sig)
 {
 	if (master)
@@ -188,7 +187,7 @@ sigend_check(void *v, int sig)
 }
 
 /* CHECK Child signal handling */
-void
+static void
 check_signal_init(void)
 {
 	signal_handler_init();
@@ -199,7 +198,7 @@ check_signal_init(void)
 }
 
 /* Reload thread */
-int
+static int
 reload_check_thread(thread_t * thread)
 {
 	/* set the reloading flag */
@@ -211,8 +210,7 @@ reload_check_thread(thread_t * thread)
 #ifdef _WITH_VRRP_
 	kernel_netlink_close();
 #endif
-	thread_destroy_master(master);
-	master = thread_make_master();
+	thread_cleanup_master(master);
 	free_global_data(global_data);
 	free_checkers_queue();
 #ifdef _WITH_VRRP_
@@ -239,7 +237,7 @@ reload_check_thread(thread_t * thread)
 }
 
 /* CHECK Child respawning thread */
-int
+static int
 check_respawn_thread(thread_t * thread)
 {
 	pid_t pid;
@@ -295,6 +293,10 @@ start_check_child(void)
 	openlog(PROG_CHECK, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
 			  , (log_facility==LOG_DAEMON) ? LOG_LOCAL2 : log_facility);
 
+#ifdef _MEM_CHECK_
+        mem_log_init(PROG_CHECK);
+#endif
+
 	/* Child process part, write pidfile */
 	if (!pidfile_write(checkers_pidfile, getpid())) {
 		log_message(LOG_INFO, "Healthcheck child process: cannot write pidfile");
@@ -303,7 +305,7 @@ start_check_child(void)
 
 	/* Create the new master thread */
 	signal_handler_destroy();
-	thread_destroy_master(master);
+	thread_destroy_master(master);	/* This destroys any residual settings from the parent */
 	master = thread_make_master();
 
 	/* change to / dir */

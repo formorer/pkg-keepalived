@@ -23,6 +23,8 @@
 #ifndef _VECTOR_H
 #define _VECTOR_H
 
+#include <stdio.h>
+
 /* vector definition */
 typedef struct _vector {
 	unsigned int	active;
@@ -44,25 +46,12 @@ typedef struct _vector {
 
 /* Prototypes */
 extern vector_t *vector_alloc(void);
-extern vector_t *vector_init(unsigned int);
 extern void vector_alloc_slot(vector_t *);
-extern void vector_insert_slot(vector_t *, int, void *);
-extern vector_t *vector_copy(vector_t *);
-extern void vector_ensure(vector_t *, unsigned int);
-extern int vector_empty_slot(vector_t *);
-extern int vector_set(vector_t *, void *);
 extern void vector_set_slot(vector_t *, void *);
-extern int vector_set_index(vector_t *, unsigned int, void *);
-extern void *vector_lookup(vector_t *, unsigned int);
-extern void *vector_lookup_ensure(vector_t *, unsigned int);
 extern void vector_unset(vector_t *, unsigned int);
 extern unsigned int vector_count(vector_t *);
-extern void vector_only_wrapper_free(vector_t *);
-extern void vector_only_index_free(void *);
-extern void vector_only_slot_free(void *);
 extern void vector_free(vector_t *);
-extern void vector_dump(vector_t *);
+extern void vector_dump(FILE *fp, vector_t *);
 extern void free_strvec(vector_t *);
-extern void dump_strvec(vector_t *);
 
 #endif

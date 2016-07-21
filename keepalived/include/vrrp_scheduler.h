@@ -35,11 +35,15 @@
 #include "list.h"
 #include "vrrp_data.h"
 
+/* global vars */
+extern timeval_t garp_next_time;
+extern thread_t *garp_thread;
+
 /* VRRP FSM Macro */
 #define VRRP_FSM_READ_TO(V)			\
 do {						\
-  if ((*(VRRP_FSM[(V)->state].read_to)))	\
-    (*(VRRP_FSM[(V)->state].read_to)) (V);	\
+  if ((*(VRRP_FSM[(V)->state].read_timeout)))	\
+    (*(VRRP_FSM[(V)->state].read_timeout)) (V);	\
 } while (0)
 
 #define VRRP_FSM_READ(V, B, L)			\
@@ -60,7 +64,8 @@ do {						\
 /* extern prototypes */
 extern void vrrp_dispatcher_release(vrrp_data_t *);
 extern int vrrp_dispatcher_init(thread_t *);
-extern int vrrp_read_dispatcher_thread(thread_t *);
 extern int vrrp_lower_prio_gratuitous_arp_thread(thread_t *);
+extern void vrrp_set_effective_priority(vrrp_t *, int);
+extern int vrrp_arp_thread(thread_t *);
 
 #endif

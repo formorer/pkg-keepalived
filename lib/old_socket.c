@@ -3,7 +3,7 @@
  *              <www.linuxvirtualserver.org>. It monitor & manipulate
  *              a loadbalanced server pool using multi-layer checks.
  *
- * Part:        pidfile.c include file.
+ * Part:        old_socket.c
  *
  * Author:      Alexandre Cassen, <acassen@linux-vs.org>
  *
@@ -17,27 +17,35 @@
  *              as published by the Free Software Foundation; either version
  *              2 of the License, or (at your option) any later version.
  *
- * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2001-2016 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _PIDFILE_H
-#define _PIDFILE_H
-
-/* system include */
+#include <sys/socket.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <syslog.h>
+#include <fcntl.h>
+#include <string.h>
+#include <errno.h>
 
-/* lock pidfile */
-#define KEEPALIVED_PID_FILE "/var/run/keepalived.pid"
-#define VRRP_PID_FILE "/var/run/vrrp.pid"
-#define CHECKERS_PID_FILE "/var/run/checkers.pid"
+#include "old_socket.h"
+#include "logger.h"
 
-/* Prototypes */
-extern int pidfile_write(const char *, int);
-extern void pidfile_rm(const char *);
-extern int keepalived_running(unsigned long);
+bool set_sock_flags(int fd, int cmd, long flags)
+{
+	/* This is slightly odd. The man page for fcntl says that the
+	   parameter passed to F_SETFD/F_SETFL is a long, but fnctl
+	   only returns an int to F_GETFD/F_GETFL */
+	long sock_flags;
+	int get_cmd = (cmd == F_SETFD) ? F_GETFD : F_GETFL;
 
-#endif
+	if ((sock_flags = fcntl(fd, get_cmd)) == -1) {
+		log_message(LOG_INFO, "Netlink: Cannot get socket flags : (%s)", strerror(errno));
+		return true;
+	}
+
+	if (fcntl(fd, cmd, sock_flags | flags) < 0) {
+		log_message(LOG_INFO, "Netlink: Cannot set socket flags: (%s)", strerror(errno));
+		return true;
+	}
+
+	return false;
+}

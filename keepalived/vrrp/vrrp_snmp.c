@@ -74,9 +74,14 @@
 #include "vrrp_data.h"
 #include "vrrp_track.h"
 #include "vrrp_ipaddress.h"
+#ifdef _HAVE_FIB_ROUTING_
 #include "vrrp_iproute.h"
 #include "vrrp_iprule.h"
+#include "vrrp_scheduler.h"
+#endif
+#ifdef _HAVE_VRRP_VMAC_
 #include "vrrp_vmac.h"
+#endif
 #include "config.h"
 #include "vector.h"
 #include "list.h"
@@ -600,6 +605,7 @@ vrrp_snmp_address(struct variable *vp, oid *name, size_t *length,
 	return NULL;
 }
 
+#ifdef _HAVE_FIB_ROUTING_
 static u_char*
 vrrp_snmp_route(struct variable *vp, oid *name, size_t *length,
 		 int exact, size_t *var_len, WriteMethod **write_method)
@@ -679,6 +685,8 @@ vrrp_snmp_route(struct variable *vp, oid *name, size_t *length,
 		else long_ret = 1;
 		return (u_char *)&long_ret;
 	case VRRP_SNMP_ROUTE_IFINDEX:
+		if (!route->index)
+			break;
 		long_ret = route->index;
 		return (u_char *)&long_ret;
 	case VRRP_SNMP_ROUTE_IFNAME:
@@ -755,6 +763,7 @@ vrrp_snmp_rule(struct variable *vp, oid *name, size_t *length,
 				       exact, var_len, write_method);
 	return NULL;
 }
+#endif
 
 static u_char*
 vrrp_snmp_syncgroup(struct variable *vp, oid *name, size_t *length,
@@ -998,7 +1007,7 @@ vrrp_snmp_instance_priority(int action,
 		   thread. Otherwise, we should set it equal to the
 		   base priority. */
 		if (vrrp->sync)
-			vrrp->effective_priority = vrrp->base_priority;
+			vrrp_set_effective_priority(vrrp, vrrp->base_priority);
 //TODO - could affect accept
 		break;
 	}
@@ -1467,6 +1476,7 @@ static struct variable8 vrrp_vars[] = {
 	 vrrp_snmp_address, 3, {6, 1, 10}},
 	{VRRP_SNMP_ADDRESS_ISADVERTISED, ASN_INTEGER, RONLY,
 	 vrrp_snmp_address, 3, {6, 1, 11}},
+#ifdef _HAVE_FIB_ROUTING_
 	/* vrrpRouteTable */
 	{VRRP_SNMP_ROUTE_ADDRESSTYPE, ASN_INTEGER, RONLY,
 	 vrrp_snmp_route, 3, {7, 1, 2}},
@@ -1507,6 +1517,7 @@ static struct variable8 vrrp_vars[] = {
 	 vrrp_snmp_rule, 3, {8, 1, 6}},
 	{VRRP_SNMP_RULE_ISSET, ASN_INTEGER, RONLY,
 	 vrrp_snmp_rule, 3, {8, 1, 7}},
+#endif
 	/* vrrpScriptTable */
 	{VRRP_SNMP_SCRIPT_NAME, ASN_OCTET_STR, RONLY, vrrp_snmp_script, 3, {9, 1, 2}},
 	{VRRP_SNMP_SCRIPT_COMMAND, ASN_OCTET_STR, RONLY, vrrp_snmp_script, 3, {9, 1, 3}},
@@ -1930,9 +1941,11 @@ vrrp_rfcv2_snmp_opertable(struct variable *vp, oid *name, size_t *length,
 	case VRRP_RFC_SNMP_OPER_MIP:
 		return (u_char*)&((struct sockaddr_in *)&rt->master_saddr)->sin_addr.s_addr;
 	case VRRP_RFC_SNMP_OPER_PIP:
+#ifdef _HAVE_VRRP_VMAC_
 		if (rt->ifp->vmac)
 			ifp = if_get_by_ifindex(rt->ifp->base_ifindex);
 		else
+#endif
 			ifp = rt->ifp;
 		return (u_char*)&ifp->sin_addr;
 	case VRRP_RFC_SNMP_OPER_AUTH_TYPE:
@@ -2598,9 +2611,11 @@ vrrp_rfcv3_snmp_opertable(struct variable *vp, oid *name, size_t *length,
 		}
 		/* Fall through. If we are master, we want to return the Primary IP address */
 	case VRRP_RFCv3_SNMP_OPER_PIP:
+#ifdef _HAVE_VRRP_VMAC_
 		if (rt->ifp->vmac)
 			ifp = if_get_by_ifindex(rt->ifp->base_ifindex);
 		else
+#endif
 			ifp = rt->ifp;
 		if (rt->family == AF_INET) {
 			*var_len = sizeof(struct in_addr);

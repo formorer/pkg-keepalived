@@ -27,7 +27,9 @@
 #include "vrrp_sync.h"
 #include "vrrp_index.h"
 #include "vrrp_if.h"
+#ifdef _HAVE_VRRP_VMAC_
 #include "vrrp_vmac.h"
+#endif
 #include "vrrp.h"
 #include "global_data.h"
 #include "global_parser.h"
@@ -46,6 +48,7 @@ static_addresses_handler(vector_t *strvec)
 	alloc_value_block(strvec, alloc_saddress);
 }
 
+#ifdef _HAVE_FIB_ROUTING_
 /* Static routes handler */
 static void
 static_routes_handler(vector_t *strvec)
@@ -59,6 +62,7 @@ static_rules_handler(vector_t *strvec)
 {
 	alloc_value_block(strvec, alloc_srule);
 }
+#endif
 
 /* VRRP handlers */
 static void
@@ -328,16 +332,13 @@ static void
 vrrp_adv_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	vrrp->adver_int = atof(vector_slot(strvec, 1)) * 100; /* multiply by 100 to get integer value */
+	int adver_int = atof(vector_slot(strvec, 1)) * TIMER_HZ;
 
 	/* Simple check - just positive */
-	if (VRRP_IS_BAD_ADVERT_INT(vrrp->adver_int)) {
-		log_message(LOG_INFO, "(%s): Advert interval not valid !", vrrp->iname);
-		log_message(LOG_INFO, "%*smust be >=1sec for VRRPv2 or >=0.01sec for VRRPv3.", (int)strlen(vrrp->iname) + 4, "");
-		log_message(LOG_INFO, "%*sUsing default value : 1sec", (int)strlen(vrrp->iname) + 4, "");
-		vrrp->adver_int = VRRP_ADVER_DFL * 100;
-	}
-	vrrp->adver_int *= TIMER_CENTI_HZ;
+	if (adver_int <= 0)
+		log_message(LOG_INFO, "(%s): Advert interval (%s) not valid! Must be > 0 - ignoring", vrrp->iname, FMT_STR_VSLOT(strvec, 1));
+	else
+		vrrp->adver_int = adver_int;
 }
 static void
 vrrp_debug_handler(vector_t *strvec)
@@ -497,7 +498,6 @@ vrrp_garp_refresh_rep_handler(vector_t *strvec)
 		vrrp->garp_refresh_rep = 1;
 }
 
-
 static void
 vrrp_garp_lower_prio_delay_handler(vector_t *strvec)
 {
@@ -594,8 +594,8 @@ vrrp_vip_handler(vector_t *strvec)
 				if (vrrp->family == AF_UNSPEC)
 					vrrp->family = address_family;
 				else if (address_family != vrrp->family) {
-					log_message(LOG_INFO, "(%s): address family must match VRRP instance [%s] - ignoring", vrrp->iname, buf);
-					free_list_element(vrrp->vip, LIST_TAIL_DATA(vrrp->vip));
+					log_message(LOG_INFO, "(%s): address family must match VRRP instance [%s] - ignoring", vrrp->iname, str);
+					free_list_element(vrrp->vip, vrrp->vip->tail);
 				}
 			}
 
@@ -610,6 +610,7 @@ vrrp_evip_handler(vector_t *strvec)
 {
 	alloc_value_block(strvec, alloc_vrrp_evip);
 }
+#ifdef _HAVE_FIB_ROUTING_
 static void
 vrrp_vroutes_handler(vector_t *strvec)
 {
@@ -620,6 +621,7 @@ vrrp_vrules_handler(vector_t *strvec)
 {
 	alloc_value_block(strvec, alloc_vrrp_vrule);
 }
+#endif
 static void
 vrrp_script_handler(vector_t *strvec)
 {
@@ -699,13 +701,110 @@ vrrp_accept_handler(vector_t *strvec)
 	vrrp->accept = true;
 }
 
+static void
+garp_group_handler(vector_t *strvec)
+{
+	alloc_garp_delay();
+}
+static void
+garp_group_garp_interval_handler(vector_t *strvec)
+{
+	garp_delay_t *delay = LIST_TAIL_DATA(garp_delay);
+
+	delay->garp_interval.tv_usec = atof(vector_slot(strvec, 1)) * 1000000;
+	delay->garp_interval.tv_sec = delay->garp_interval.tv_usec / 1000000;
+	delay->garp_interval.tv_usec %= 1000000;
+	delay->have_garp_interval = true;
+
+	if (delay->garp_interval.tv_sec >= 1)
+		log_message(LOG_INFO, "The garp_interval is very large - %s seconds", FMT_STR_VSLOT(strvec,1));
+}
+static void
+garp_group_gna_interval_handler(vector_t *strvec)
+{
+	garp_delay_t *delay = LIST_TAIL_DATA(garp_delay);
+
+	delay->gna_interval.tv_usec = atof(vector_slot(strvec, 1)) * 1000000;
+	delay->gna_interval.tv_sec = delay->gna_interval.tv_usec / 1000000;
+	delay->gna_interval.tv_usec %= 1000000;
+	delay->have_gna_interval = true;
+
+	if (delay->gna_interval.tv_sec >= 1)
+		log_message(LOG_INFO, "The gna_interval is very large - %s seconds", FMT_STR_VSLOT(strvec,1));
+}
+static void
+garp_group_interface_handler(vector_t *strvec)
+{
+	interface_t *ifp = if_get_by_ifname(vector_slot(strvec, 1));
+	if (!ifp) {
+		log_message(LOG_INFO, "Unknown interface %s specified for garp_group - ignoring", FMT_STR_VSLOT(strvec, 1));
+		return;
+	}
+
+	if (ifp->garp_delay) {
+		log_message(LOG_INFO, "garp_group already specified for %s - ignoring", FMT_STR_VSLOT(strvec, 1));
+		return;
+	}
+
+#ifdef _HAVE_VRRP_VMAC_
+	if (ifp->vmac) {
+		log_message(LOG_INFO, "Cannot specify garp_delay on a vmac (%s) - ignoring", ifp->ifname);
+		return;
+	}
+#endif
+	ifp->garp_delay = LIST_TAIL_DATA(garp_delay);
+}
+static void
+garp_group_interfaces_handler(vector_t *strvec)
+{
+	garp_delay_t *delay = LIST_TAIL_DATA(garp_delay);
+	interface_t *ifp;
+        vector_t *interface_vec = read_value_block(strvec);
+	int i;
+	garp_delay_t *gd;
+	element e;
+
+	/* First set the next aggregation group number */
+	delay->aggregation_group = 1;
+	for (e = LIST_HEAD(garp_delay); e; ELEMENT_NEXT(e)) {
+		gd = ELEMENT_DATA(e);
+		if (gd->aggregation_group && gd != delay)
+			delay->aggregation_group++;
+	}
+
+        for (i = 0; i < vector_size(interface_vec); i++) {
+		ifp = if_get_by_ifname(vector_slot(interface_vec, i));
+		if (!ifp) {
+			log_message(LOG_INFO, "Unknown interface %s specified for garp_group - ignoring", FMT_STR_VSLOT(interface_vec, i));
+			continue;
+		}
+
+		if (ifp->garp_delay) {
+			log_message(LOG_INFO, "garp_group already specified for %s - ignoring", FMT_STR_VSLOT(strvec, 1));
+			continue;
+		}
+
+#ifdef _HAVE_VRRP_VMAC_
+		if (ifp->vmac) {
+			log_message(LOG_INFO, "Cannot specify garp_delay on a vmac (%s) - ignoring", ifp->ifname);
+			continue;
+		}
+#endif
+		ifp->garp_delay = delay;
+	}
+
+        free_strvec(interface_vec);
+}
+
 void
 init_vrrp_keywords(bool active)
 {
 	/* Static routes mapping */
 	install_keyword_root("static_ipaddress", &static_addresses_handler, active);
+#ifdef _HAVE_FIB_ROUTING_
 	install_keyword_root("static_routes", &static_routes_handler, active);
 	install_keyword_root("static_rules", &static_rules_handler, active);
+#endif
 
 	/* VRRP Instance mapping */
 	install_keyword_root("vrrp_sync_group", &vrrp_sync_group_handler, active);
@@ -716,6 +815,13 @@ init_vrrp_keywords(bool active)
 	install_keyword("notify", &vrrp_gnotify_handler);
 	install_keyword("smtp_alert", &vrrp_gsmtp_handler);
 	install_keyword("global_tracking", &vrrp_gglobal_tracking_handler);
+
+	install_keyword_root("garp_group", &garp_group_handler, active);
+	install_keyword("garp_interval", &garp_group_garp_interval_handler);
+	install_keyword("gna_interval", &garp_group_gna_interval_handler);
+	install_keyword("interface", &garp_group_interface_handler);
+	install_keyword("interfaces", &garp_group_interfaces_handler);
+
 	install_keyword_root("vrrp_instance", &vrrp_handler, active);
 #ifdef _HAVE_VRRP_VMAC_
 	install_keyword("use_vmac", &vrrp_vmac_handler);
@@ -736,8 +842,10 @@ init_vrrp_keywords(bool active)
 	install_keyword("advert_int", &vrrp_adv_handler);
 	install_keyword("virtual_ipaddress", &vrrp_vip_handler);
 	install_keyword("virtual_ipaddress_excluded", &vrrp_evip_handler);
+#ifdef _HAVE_FIB_ROUTING_
 	install_keyword("virtual_routes", &vrrp_vroutes_handler);
 	install_keyword("virtual_rules", &vrrp_vrules_handler);
+#endif
 	install_keyword("accept", &vrrp_accept_handler);
 	install_keyword("skip_check_adv_addr", &vrrp_skip_check_adv_addr_handler);
 	install_keyword("strict_mode", &vrrp_strict_mode_handler);

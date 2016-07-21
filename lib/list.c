@@ -136,13 +136,18 @@ free_list_elements(list l)
 }
 
 void
-free_list(list l)
+free_list(list *lp)
 {
+	list l = *lp;
+
 	if (!l)
 		return;
+
+	/* Remove the caller's reference to the list */
+	*lp = NULL;
+
 	free_elements(l);
 	FREE(l);
-	l = NULL;
 }
 
 void
@@ -174,6 +179,7 @@ alloc_mlist(void (*free_func) (void *), void (*dump_func) (void *), int size)
 	return new;
 }
 
+#ifdef _INCLUDE_UNUSED_CODE_
 void
 dump_mlist(list l, int size)
 {
@@ -186,6 +192,7 @@ dump_mlist(list l, int size)
 				(*l->dump) (e->data);
 	}
 }
+#endif
 
 static void
 free_melement(list l, void (*free_func) (void *))
