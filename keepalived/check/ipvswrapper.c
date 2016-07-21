@@ -24,6 +24,9 @@
 #ifndef O_CLOEXEC
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE /* to make O_CLOEXEC available */
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0	/* It doesn't really matter if O_CLOEXEC isn't set here */
+#endif
 #endif
 #include <fcntl.h>
 #endif
@@ -102,15 +105,13 @@ ipvs_talk(int cmd, bool ignore_error)
 	if (ignore_error)
 		result = 0;
 	else if (result) {
-		log_message(LOG_INFO, "IPVS : %s", ipvs_strerror(errno));
 		if (errno == EEXIST &&
-			(cmd == IP_VS_SO_SET_ADD || IP_VS_SO_SET_ADDDEST)
-		)
+			(cmd == IP_VS_SO_SET_ADD || cmd == IP_VS_SO_SET_ADDDEST))
 			result = 0;
 		else if (errno == ENOENT &&
-			(cmd == IP_VS_SO_SET_DEL || IP_VS_SO_SET_DELDEST)
-		)
+			(cmd == IP_VS_SO_SET_DEL || cmd == IP_VS_SO_SET_DELDEST))
 			result = 0;
+		log_message(LOG_INFO, "IPVS : %s", ipvs_strerror(errno));
 	}
 	return result;
 }
@@ -218,7 +219,7 @@ ipvs_group_cmd(int cmd, virtual_server_t * vs, real_server_t * rs)
 }
 
 /* Fill IPVS rule with root vs infos */
-void
+static void
 ipvs_set_rule(int cmd, virtual_server_t * vs, real_server_t * rs)
 {
 	/* Clean up target rule */
@@ -468,15 +469,13 @@ ipvs_talk(int cmd, bool ignore_error)
 	if (ignore_error)
 		result = 0;
 	else if (result) {
-		log_message(LOG_INFO, "IPVS: %s", ipvs_strerror(errno));
 		if (errno == EEXIST &&
-			(cmd == IP_VS_SO_SET_ADD || IP_VS_SO_SET_ADDDEST)
-		)
+			(cmd == IP_VS_SO_SET_ADD || cmd == IP_VS_SO_SET_ADDDEST))
 			result = 0;
 		else if (errno == ENOENT &&
-			(cmd == IP_VS_SO_SET_DEL || IP_VS_SO_SET_DELDEST)
-		)
+			(cmd == IP_VS_SO_SET_DEL || cmd == IP_VS_SO_SET_DELDEST))
 			result = 0;
+		log_message(LOG_INFO, "IPVS: %s", ipvs_strerror(errno));
 	}
 	return result;
 }
@@ -609,7 +608,7 @@ ipvs_group_cmd(int cmd, virtual_server_t * vs, real_server_t * rs)
 }
 
 /* Fill IPVS rule with root vs infos */
-void
+static void
 ipvs_set_rule(int cmd, virtual_server_t * vs, real_server_t * rs)
 {
 	/* Clean target rule */
@@ -1103,24 +1102,30 @@ get_modprobe(void)
 	char *ret;
 	int count;
 
-	procfile = open("/proc/sys/kernel/modprobe", O_RDONLY | O_CLOEXEC);
-	if (procfile < 0)
+	ret = MALLOC(PATH_MAX);
+	if (!ret)
 		return NULL;
 
-	ret = MALLOC(PATH_MAX);
-	if (ret) {
-		count = read(procfile, ret, PATH_MAX);
-		close(procfile);
-		if (count > 0 && count < PATH_MAX)
-		{
-			if (ret[count - 1] == '\n')
-				ret[count - 1] = '\0';
-			else
-				ret[count] = '\0';
-			return ret;
-		}
+	procfile = open("/proc/sys/kernel/modprobe", O_RDONLY | O_CLOEXEC);
+	if (procfile < 0) {
+		FREE(ret);
+		return NULL;
 	}
+
+	count = read(procfile, ret, PATH_MAX);
+	close(procfile);
+
+	if (count > 0 && count < PATH_MAX)
+	{
+		if (ret[count - 1] == '\n')
+			ret[count - 1] = '\0';
+		else
+			ret[count] = '\0';
+		return ret;
+	}
+
 	FREE(ret);
+
 	return NULL;
 }
 

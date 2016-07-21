@@ -26,7 +26,7 @@
 #include "timer.h"
 
 /* time_now holds current time */
-timeval_t time_now = { tv_sec: 0, tv_usec: 0 };
+timeval_t time_now;
 
 /* set a timer to a specific value */
 timeval_t
@@ -112,7 +112,8 @@ timer_add_long(timeval_t a, long b)
  * normally return 0, unless <now> is NULL, in which case it will return -1 and
  * set errno to EFAULT.
  */
-int monotonic_gettimeofday(timeval_t *now)
+static int
+monotonic_gettimeofday(timeval_t *now)
 {
 	static timeval_t mono_date;
 	static timeval_t drift; /* warning: signed seconds! */

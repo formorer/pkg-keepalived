@@ -29,6 +29,8 @@
 
 /* local includes */
 #include "vrrp_ipaddress.h"
+#include "scheduler.h"
+#include "vrrp.h"
 
 /* local definitions */
 #define ETHERNET_HW_LEN		6
@@ -49,13 +51,9 @@ typedef struct _arphdr {
 	unsigned char		__ar_tip[4];		/* Target IP address.  */
 } arphdr_t;
 
-/* Global vars exported */
-extern char *garp_buffer;
-extern int garp_fd;
-
 /* prototypes */
 extern void gratuitous_arp_init(void);
 extern void gratuitous_arp_close(void);
-extern int send_gratuitous_arp(ip_address_t *);
-
+extern void send_gratuitous_arp(vrrp_t *, ip_address_t *);
+extern int send_gratuitous_arp_immediate(interface_t *, ip_address_t *);
 #endif

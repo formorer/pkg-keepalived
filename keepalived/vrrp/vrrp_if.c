@@ -44,6 +44,9 @@ typedef uint8_t u8;
 #ifdef _KRNL_2_4_
 #include <linux/ethtool.h>
 #endif
+#ifndef _HAVE_SOCK_CLOEXEC_
+#include "old_socket.h"
+#endif
 
 /* local include */
 #include "scheduler.h"
@@ -56,9 +59,15 @@ typedef uint8_t u8;
 #include "utils.h"
 #include "logger.h"
 
-/* Global vars */
+/* Local vars */
 static list if_queue;
 static struct ifreq ifr;
+
+static list old_if_queue;
+static list old_garp_delay;
+
+/* Global vars */
+list garp_delay;
 
 /* Helper functions */
 /* Return interface from interface index */
@@ -85,7 +94,22 @@ base_if_get_by_ifindex(const int ifindex)
 {
 	interface_t *ifp = if_get_by_ifindex(ifindex);
 
+#ifdef _HAVE_VRRP_VMAC_
 	return (ifp && ifp->vmac) ? if_get_by_ifindex(ifp->base_ifindex) : ifp;
+#else
+	return ifp;
+#endif
+}
+
+/* Return base interface from interface index incase of VMAC */
+interface_t *
+base_if_get_by_ifp(interface_t *ifp)
+{
+#ifdef _HAVE_VRRP_VMAC_
+	return (ifp && ifp->vmac) ? if_get_by_ifindex(ifp->base_ifindex) : ifp;
+#else
+	return ifp;
+#endif
 }
 
 interface_t *
@@ -112,6 +136,17 @@ get_if_list(void)
 	return if_queue;
 }
 
+void
+reset_interface_queue(void)
+{
+	old_if_queue = if_queue;
+	old_garp_delay = garp_delay;
+
+	if_queue = NULL;
+	garp_delay = NULL;
+}
+
+#ifdef _HAVE_VRRP_VMAC_
 /*
  * Reflect base interface flags on VMAC interfaces.
  * VMAC interfaces should never update it own flags, only be reflected
@@ -132,6 +167,7 @@ if_vmac_reflect_flags(const int ifindex, const unsigned long flags)
 			ifp->flags = flags;
 	}
 }
+#endif
 
 /* MII Transceiver Registers poller functions */
 static int
@@ -203,7 +239,7 @@ if_mii_status(const int fd)
 		return LINK_DOWN;
 }
 
-int
+static int
 if_mii_probe(const char *ifname)
 {
 	uint16_t *data = (uint16_t *) (&ifr.ifr_data);
@@ -213,6 +249,12 @@ if_mii_probe(const char *ifname)
 
 	if (fd < 0)
 		return -1;
+
+#ifndef _HAVE_SOCK_CLOEXEC_
+	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
+		log_message(LOG_INFO, "Unable to set CLOEXEC on mii_probe socket - %s (%d)", strerror(errno), errno);
+#endif
+
 	memset(&ifr, 0, sizeof (struct ifreq));
 	strncpy(ifr.ifr_name, ifname, sizeof (ifr.ifr_name));
 	if (ioctl(fd, SIOCGMIIPHY, &ifr) < 0) {
@@ -254,7 +296,7 @@ if_ethtool_status(const int fd)
 		return -1;
 }
 
-int
+static int
 if_ethtool_probe(const char *ifname)
 {
 	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -262,6 +304,12 @@ if_ethtool_probe(const char *ifname)
 
 	if (fd < 0)
 		return -1;
+
+#ifndef _HAVE_SOCK_CLOEXEC_
+	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
+		log_message(LOG_INFO, "Unable to set CLOEXEC on ethtool_probe socket - %s (%d)", strerror(errno), errno);
+#endif
+
 	memset(&ifr, 0, sizeof (struct ifreq));
 	strncpy(ifr.ifr_name, ifname, sizeof (ifr.ifr_name));
 
@@ -270,13 +318,19 @@ if_ethtool_probe(const char *ifname)
 	return status;
 }
 
-void
+static void
 if_ioctl_flags(interface_t * ifp)
 {
 	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 
 	if (fd < 0)
 		return;
+
+#ifndef _HAVE_SOCK_CLOEXEC_
+	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
+		log_message(LOG_INFO, "Unable to set CLOEXEC on ioctl_flags socket - %s (%d)", strerror(errno), errno);
+#endif
+
 	memset(&ifr, 0, sizeof (struct ifreq));
 	strncpy(ifr.ifr_name, ifp->ifname, sizeof (ifr.ifr_name));
 	if (ioctl(fd, SIOCGIFFLAGS, &ifr) < 0) {
@@ -294,10 +348,60 @@ free_if(void *data)
 	FREE(data);
 }
 
+/* garp_delay facility function */
 void
+alloc_garp_delay(void)
+{
+	if (!LIST_EXISTS(garp_delay))
+		garp_delay = alloc_list(NULL, NULL);
+
+	list_add(garp_delay, MALLOC(sizeof(garp_delay_t)));
+}
+	
+void
+set_default_garp_delay(void)
+{
+	garp_delay_t default_delay;
+	element e;
+	interface_t *ifp;
+	garp_delay_t *delay;
+
+	if (global_data->vrrp_garp_interval) {
+		default_delay.garp_interval.tv_sec = global_data->vrrp_garp_interval / 1000000;
+		default_delay.garp_interval.tv_usec = global_data->vrrp_garp_interval % 1000000;
+		default_delay.have_garp_interval = true;
+	}
+	if (global_data->vrrp_gna_interval) {
+		default_delay.gna_interval.tv_sec = global_data->vrrp_gna_interval / 1000000;
+		default_delay.gna_interval.tv_usec = global_data->vrrp_gna_interval % 1000000;
+		default_delay.have_gna_interval = true;
+	}
+
+	/* Allocate a delay structure to each physical inteface that doesn't have one */
+	for (e = LIST_HEAD(if_queue); e; ELEMENT_NEXT(e)) {
+		ifp = ELEMENT_DATA(e);
+		if (!ifp->garp_delay
+#ifdef _HAVE_VRRP_VMAC_
+				     && !ifp->vmac)
+#else
+)
+#endif
+		{
+			alloc_garp_delay();
+			delay = LIST_TAIL_DATA(garp_delay);
+			*delay = default_delay;
+			ifp->garp_delay = delay;
+		}
+	}
+}
+
+static void
 dump_if(void *data)
 {
-	interface_t *ifp = data, *ifp_u;
+	interface_t *ifp = data;
+#ifdef _HAVE_VRRP_VMAC_
+	interface_t *ifp_u;
+#endif
 	char addr_str[INET6_ADDRSTRLEN];
 
 	log_message(LOG_INFO, "------< NIC >------");
@@ -336,8 +440,10 @@ dump_if(void *data)
 		break;
 	}
 
+#ifdef _HAVE_VRRP_VMAC_
 	if (ifp->vmac && (ifp_u = if_get_by_ifindex(ifp->base_ifindex)))
 		log_message(LOG_INFO, " VMAC underlying interface = %s", ifp_u->ifname);
+#endif
 
 	/* MII channel supported ? */
 	if (IF_MII_SUPPORTED(ifp))
@@ -346,6 +452,20 @@ dump_if(void *data)
 		log_message(LOG_INFO, " NIC support EHTTOOL GLINK interface");
 	else
 		log_message(LOG_INFO, " Enabling NIC ioctl refresh polling");
+
+	if (ifp->garp_delay) {
+		if (ifp->garp_delay->have_garp_interval)
+			log_message(LOG_INFO, " Gratuitous ARP interval %ldms",
+				    ifp->garp_delay->garp_interval.tv_sec * 100 +
+				     ifp->garp_delay->garp_interval.tv_usec / (TIMER_HZ / 100));
+
+		if (ifp->garp_delay->have_gna_interval)
+			log_message(LOG_INFO, " Gratuitous NA interval %ldms",
+				    ifp->garp_delay->gna_interval.tv_sec * 100 +
+				     ifp->garp_delay->gna_interval.tv_usec / (TIMER_HZ / 100));
+		if (ifp->garp_delay->aggregation_group)
+			log_message(LOG_INFO, " Gratuitous ARP aggregation group %d", ifp->garp_delay->aggregation_group);
+	}
 }
 
 static void
@@ -426,9 +546,15 @@ if_linkbeat(const interface_t * ifp)
 void
 free_interface_queue(void)
 {
-	if (!LIST_ISEMPTY(if_queue))
-		free_list(if_queue);
-	if_queue = NULL;
+	free_list(&if_queue);
+	free_list(&garp_delay);
+}
+
+void
+free_old_interface_queue(void)
+{
+	free_list(&old_if_queue);
+	free_list(&old_garp_delay);
 }
 
 void
@@ -689,7 +815,9 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface_t *ifp)
 	ifindex = IF_INDEX(ifp);
 	if ( family == AF_INET)
 	{
-		struct ip_mreqn imr ;
+		struct ip_mreqn imr;
+
+		memset(&imr, 0, sizeof(imr));
 		imr.imr_ifindex = IF_INDEX(ifp);
 		ret = setsockopt(*sd, IPPROTO_IP, IP_MULTICAST_IF, &imr, sizeof(imr));
 	}
@@ -718,25 +846,6 @@ if_setsockopt_priority(int *sd)
 	ret = setsockopt(*sd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
 	if (ret < 0) {
 		log_message(LOG_INFO, "cant set SO_PRIORITY IP option. errno=%d (%m)", errno);
-		close(*sd);
-		*sd = -1;
-	}
-
-	return *sd;
-}
-
-int
-if_setsockopt_sndbuf(int *sd, int val)
-{
-	int ret;
-
-	if (*sd < 0)
-		return -1;
-
-	/* sndbuf option */
-	ret = setsockopt(*sd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val));
-	if (ret < 0) {
-		log_message(LOG_INFO, "cant set SO_SNDBUF IP option. errno=%d (%m)", errno);
 		close(*sd);
 		*sd = -1;
 	}

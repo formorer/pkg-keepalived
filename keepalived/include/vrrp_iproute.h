@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
 
 /* local includes */
 #include "list.h"
@@ -44,7 +45,7 @@ typedef struct _ip_route {
 	int			blackhole;
 	int			scope;
 	unsigned int		table;
-	int			set;
+	bool			set;
 } ip_route_t;
 
 #define IPROUTE_DEL 0
@@ -60,7 +61,6 @@ typedef struct _ip_route {
 			 (X)->index  == (Y)->index)
 
 /* prototypes */
-extern int netlink_route(ip_route_t *, int);
 extern void netlink_rtlist(list, int);
 extern void free_iproute(void *);
 extern void dump_iproute(void *);

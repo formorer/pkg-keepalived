@@ -32,10 +32,10 @@
 #include "include/http.h"
 #include "include/ssl.h"
 
-enum connect_result
+static enum connect_result
 tcp_connect(int fd, REQ * req_obj)
 {
-	struct linger li = { 0 };
+	struct linger li;
 	int long_inet;
 	struct sockaddr_in adr_serv;
 	struct sockaddr_in6 adr_serv6;
@@ -45,8 +45,7 @@ tcp_connect(int fd, REQ * req_obj)
 	/* free the tcp port after closing the socket descriptor */
 	li.l_onoff = 1;
 	li.l_linger = 0;
-	setsockopt(fd, SOL_SOCKET, SO_LINGER, (char *) &li,
-		   sizeof (struct linger));
+	setsockopt(fd, SOL_SOCKET, SO_LINGER, (char *) &li, sizeof (struct linger));
 
 #ifdef _WITH_SO_MARK_
 	if (req->mark) {
@@ -98,7 +97,7 @@ tcp_connect(int fd, REQ * req_obj)
 	return connect_in_progress;
 }
 
-enum connect_result
+static enum connect_result
 tcp_socket_state(int fd, thread_t * thread, char *ipaddress, uint16_t addr_port,
 		 int (*func) (thread_t *))
 {
@@ -147,7 +146,7 @@ tcp_socket_state(int fd, thread_t * thread, char *ipaddress, uint16_t addr_port,
 	return connect_success;
 }
 
-void
+static void
 tcp_connection_state(int fd, enum connect_result status, thread_t * thread,
 		     int (*func) (thread_t *)
 		     , long timeout)
@@ -174,7 +173,7 @@ tcp_connection_state(int fd, enum connect_result status, thread_t * thread,
 	}
 }
 
-int
+static int
 tcp_check_thread(thread_t * thread)
 {
 	SOCK *sock_obj = THREAD_ARG(thread);
@@ -232,10 +231,18 @@ tcp_connect_thread(thread_t * thread)
 	SOCK *sock_obj = THREAD_ARG(thread);
 
 	if ((sock_obj->fd = socket((req->dst && req->dst->ai_family == AF_INET6) ? AF_INET6 : AF_INET,
-				   SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP)) == -1) {
+				   SOCK_STREAM
+#ifdef SOCK_CLOEXEC
+					       | SOCK_CLOEXEC
+#endif
+							     , IPPROTO_TCP)) == -1) {
 		DBG("WEB connection fail to create socket.\n");
 		return 0;
 	}
+
+#ifndef SOCK_CLOEXEC
+	fcntl(sock_obj->fd, F_SETFD, fcntl(sock_obj->fd, F_GETFD) | FD_CLOEXEC);
+#endif
 
 	sock->status = tcp_connect(sock_obj->fd, req);
 

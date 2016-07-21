@@ -22,6 +22,9 @@
 
 #include "libipvs.h"
 #include "memory.h"
+#ifndef _HAVE_SOCK_CLOEXEC_
+#include "old_socket.h"
+#endif
 
 #define SET_CMD(cmd)	(cmd - IP_VS_BASE_CTL)
 #define GET_CMD(cmd)	(cmd - IP_VS_BASE_CTL + 128)
@@ -38,6 +41,11 @@ int ipvs_init(void)
 	len = sizeof(ipvs_info);
 	if ((sockfd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_RAW)) == -1)
 		return -1;
+
+#ifndef _HAVE_SOCK_CLOEXEC_
+	if (set_sock_flags(sockfd, F_SETFD, FD_CLOEXEC))
+		log_message(LOG_INFO, "Unable to set CLOEXEC on ipvs socket - %s (%d)", strerror(errno), errno);
+#endif
 
 	ipvs_cmd = GET_CMD(IP_VS_SO_GET_INFO);
 	if (getsockopt(sockfd, IPPROTO_IP, IP_VS_SO_GET_INFO,
@@ -59,10 +67,12 @@ int ipvs_getinfo(void)
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
 unsigned int ipvs_version(void)
 {
 	return ipvs_info.version;
 }
+#endif
 
 
 int ipvs_command(int cmd, struct ip_vs_rule_user *urule)
@@ -73,6 +83,7 @@ int ipvs_command(int cmd, struct ip_vs_rule_user *urule)
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
 struct ip_vs_get_services *ipvs_get_services(void)
 {
 	struct ip_vs_get_services *get;
@@ -92,6 +103,7 @@ struct ip_vs_get_services *ipvs_get_services(void)
 	}
 	return get;
 }
+#endif
 
 
 struct ip_vs_get_dests *ipvs_get_dests(struct ip_vs_service_user *svc)
@@ -142,6 +154,7 @@ ipvs_get_service(u_int32_t fwmark, u_int16_t protocol, u_int32_t vaddr, u_int16_
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
 struct ip_vs_timeout_user *ipvs_get_timeouts(void)
 {
 	struct ip_vs_timeout_user *u;
@@ -178,7 +191,7 @@ struct ip_vs_daemon_user *ipvs_get_daemon(void)
 	}
 	return u;
 }
-
+#endif
 
 void ipvs_close(void)
 {

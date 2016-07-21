@@ -30,11 +30,15 @@
 #include "parser.h"
 #include "utils.h"
 #include "html.h"
+#ifndef _HAVE_SOCK_CLOEXEC_
+#include "old_socket.h"
+#include "string.h"
+#endif
 
-int http_connect_thread(thread_t *);
+static int http_connect_thread(thread_t *);
 
 /* Configuration stream handling */
-void
+static void
 free_url(void *data)
 {
 	url_t *url = data;
@@ -43,7 +47,7 @@ free_url(void *data)
 	FREE(url);
 }
 
-void
+static void
 dump_url(void *data)
 {
 	url_t *url = data;
@@ -68,14 +72,14 @@ free_http_request(request_t *req)
 	FREE(req);
 }
 
-void
+static void
 free_http_get_check(void *data)
 {
 	http_checker_t *http_get_chk = CHECKER_DATA(data);
 	http_t *http = HTTP_ARG(http_get_chk);
 	request_t *req = HTTP_REQ(http);
 
-	free_list(http_get_chk->url);
+	free_list(&http_get_chk->url);
 	free_http_request(req);
 	FREE(http);
 	FREE_PTR(http_get_chk);
@@ -83,7 +87,7 @@ free_http_get_check(void *data)
 	FREE(data);
 }
 
-void
+static void
 dump_http_get_check(void *data)
 {
 	http_checker_t *http_get_chk = CHECKER_DATA(data);
@@ -114,7 +118,7 @@ alloc_http_get(char *proto)
 	return http_get_chk;
 }
 
-void
+static void
 http_get_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk;
@@ -126,21 +130,21 @@ http_get_handler(vector_t *strvec)
 		      http_connect_thread, http_get_chk, CHECKER_NEW_CO());
 }
 
-void
+static void
 nb_get_retry_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk = CHECKER_GET();
 	http_get_chk->nb_get_retry = CHECKER_VALUE_INT(strvec);
 }
 
-void
+static void
 delay_before_retry_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk = CHECKER_GET();
 	http_get_chk->delay_before_retry = CHECKER_VALUE_INT(strvec) * TIMER_HZ;
 }
 
-void
+static void
 url_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk = CHECKER_GET();
@@ -152,7 +156,7 @@ url_handler(vector_t *strvec)
 	list_add(http_get_chk->url, new);
 }
 
-void
+static void
 path_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk = CHECKER_GET();
@@ -161,7 +165,7 @@ path_handler(vector_t *strvec)
 	url->path = CHECKER_VALUE_STRING(strvec);
 }
 
-void
+static void
 digest_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk = CHECKER_GET();
@@ -170,7 +174,7 @@ digest_handler(vector_t *strvec)
 	url->digest = CHECKER_VALUE_STRING(strvec);
 }
 
-void
+static void
 status_code_handler(vector_t *strvec)
 {
 	http_checker_t *http_get_chk = CHECKER_GET();
@@ -179,10 +183,10 @@ status_code_handler(vector_t *strvec)
 	url->status_code = CHECKER_VALUE_INT(strvec);
 }
 
-void
-install_http_check_keyword(void)
+static void
+install_http_ssl_check_keyword(const char *keyword)
 {
-	install_keyword("HTTP_GET", &http_get_handler);
+	install_keyword(keyword, &http_get_handler);
 	install_sublevel();
 	install_connect_keywords();
 	install_keyword("warmup", &warmup_handler);
@@ -197,23 +201,16 @@ install_http_check_keyword(void)
 	install_sublevel_end();
 }
 
-/* a little code duplication :/ */
+void
+install_http_check_keyword(void)
+{
+	install_http_ssl_check_keyword("HTTP_GET");
+}
+
 void
 install_ssl_check_keyword(void)
 {
-	install_keyword("SSL_GET", &http_get_handler);
-	install_sublevel();
-	install_connect_keywords();
-	install_keyword("warmup", &warmup_handler);
-	install_keyword("nb_get_retry", &nb_get_retry_handler);
-	install_keyword("delay_before_retry", &delay_before_retry_handler);
-	install_keyword("url", &url_handler);
-	install_sublevel();
-	install_keyword("path", &path_handler);
-	install_keyword("digest", &digest_handler);
-	install_keyword("status_code", &status_code_handler);
-	install_sublevel_end();
-	install_sublevel_end();
+	install_http_ssl_check_keyword("SSL_GET");
 }
 
 /*
@@ -250,7 +247,7 @@ install_ssl_check_keyword(void)
  * method == 1 => register a new checker thread
  * method == 2 => register a retry on url checker thread
  */
-int
+static int
 epilog(thread_t * thread, int method, int t, int c)
 {
 	checker_t *checker = THREAD_ARG(thread);
@@ -336,7 +333,7 @@ epilog(thread_t * thread, int method, int t, int c)
 }
 
 int
-timeout_epilog(thread_t * thread, char *debug_msg)
+timeout_epilog(thread_t * thread, const char *debug_msg)
 {
 	checker_t *checker = THREAD_ARG(thread);
 
@@ -353,7 +350,7 @@ timeout_epilog(thread_t * thread, char *debug_msg)
 }
 
 /* return the url pointer of the current url iterator  */
-url_t *
+static url_t *
 fetch_next_url(http_checker_t * http_get_check)
 {
 	http_t *http = HTTP_ARG(http_get_check);
@@ -374,10 +371,11 @@ http_handle_response(thread_t * thread, unsigned char digest[16]
 	char *digest_tmp;
 	url_t *fetched_url = fetch_next_url(http_get_check);
 	enum {
-		none,
-		on_status,
-		on_digest
-	} last_success = none; /* the source of last considered success */
+		NONE,
+		ON_SUCCESS,
+		ON_STATUS,
+		ON_DIGEST
+	} last_success = NONE; /* the source of last considered success */
 
 	/* First check if remote webserver returned data */
 	if (empty_buffer)
@@ -385,12 +383,13 @@ http_handle_response(thread_t * thread, unsigned char digest[16]
 
 	/* Next check the HTTP status code */
 	if (fetched_url->status_code) {
-		if (req->status_code != fetched_url->status_code) {
+		if (req->status_code != fetched_url->status_code)
 			return timeout_epilog(thread, "HTTP status code error to");
-		} else {
-			last_success = on_status;
-		}
+
+		last_success = ON_STATUS;
 	}
+	else if (req->status_code >= 200 && req->status_code <= 299)
+		last_success = ON_SUCCESS;
 
 	/* Continue with MD5SUM */
 	if (fetched_url->digest) {
@@ -404,21 +403,26 @@ http_handle_response(thread_t * thread, unsigned char digest[16]
 
 		if (r)
 			return timeout_epilog(thread, "MD5 digest error to");
-		else
-			last_success = on_digest;
+		last_success = ON_DIGEST;
 	}
 
 	if (!svr_checker_up(checker->id, checker->rs)) {
 		switch (last_success) {
-			case none:
+			case NONE:
 				break;
-			case on_status:
+			case ON_SUCCESS:
+				log_message(LOG_INFO,
+				       "HTTP success to %s url(%d)."
+				       , FMT_HTTP_RS(checker)
+				       , http->url_it + 1);
+				return epilog(thread, 1, 1, 0) + 1;
+			case ON_STATUS:
 				log_message(LOG_INFO,
 				       "HTTP status code success to %s url(%d)."
 				       , FMT_HTTP_RS(checker)
 				       , http->url_it + 1);
 				return epilog(thread, 1, 1, 0) + 1;
-			case on_digest:
+			case ON_DIGEST:
 				log_message(LOG_INFO,
 					"MD5 digest success to %s url(%d)."
 					, FMT_HTTP_RS(checker)
@@ -454,7 +458,7 @@ http_process_response(request_t *req, int r, int do_md5)
 }
 
 /* Asynchronous HTTP stream reader */
-int
+static int
 http_read_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
@@ -526,7 +530,7 @@ http_read_thread(thread_t * thread)
  * Read get result from the remote web server.
  * Apply trigger check to this result.
  */
-int
+static int
 http_response_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
@@ -559,7 +563,7 @@ http_response_thread(thread_t * thread)
 }
 
 /* remote Web server is connected, send it the get url query.  */
-int
+static int
 http_request_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
@@ -736,7 +740,7 @@ http_check_thread(thread_t * thread)
 	return 0;
 }
 
-int
+static int
 http_connect_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
@@ -769,6 +773,11 @@ http_connect_thread(thread_t * thread)
 
 		return 0;
 	}
+
+#ifndef _HAVE_SOCK_CLOEXEC_
+	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
+		log_message(LOG_INFO, "Unable to set CLOEXEC on http_connect socket - %s (%d)", strerror(errno), errno);
+#endif
 
 	status = tcp_bind_connect(fd, co);
 

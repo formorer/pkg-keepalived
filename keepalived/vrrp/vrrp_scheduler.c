@@ -23,18 +23,24 @@
 #include "vrrp_scheduler.h"
 #include "vrrp_ipsecah.h"
 #include "vrrp_if.h"
+#ifdef _HAVE_VRRP_VMAC_
 #include "vrrp_vmac.h"
+#endif
 #include "vrrp.h"
 #include "vrrp_sync.h"
 #include "vrrp_notify.h"
 #include "vrrp_netlink.h"
 #include "vrrp_data.h"
 #include "vrrp_index.h"
+#include "vrrp_arp.h"
+#include "vrrp_ndisc.h"
+#include "vrrp_if.h"
 #include "ipvswrapper.h"
 #include "memory.h"
 #include "notify.h"
 #include "list.h"
 #include "logger.h"
+#include "timer.h"
 #include "main.h"
 #include "smtp.h"
 #include "signals.h"
@@ -42,6 +48,10 @@
 #ifdef _WITH_SNMP_
 #include "vrrp_snmp.h"
 #endif
+
+/* global vars */
+timeval_t garp_next_time;
+thread_t *garp_thread;
 
 /* VRRP FSM (Finite State Machine) design.
  *
@@ -81,9 +91,11 @@ static int vrrp_script_child_timeout_thread(thread_t * thread);
 static int vrrp_script_child_thread(thread_t * thread);
 static int vrrp_script_thread(thread_t * thread);
 
-struct {
+static int vrrp_read_dispatcher_thread(thread_t *);
+
+static struct {
 	void (*read) (vrrp_t *, char *, int);
-	void (*read_to) (vrrp_t *);
+	void (*read_timeout) (vrrp_t *);
 } VRRP_FSM[VRRP_MAX_FSM_STATE + 1] =
 {
 /*    Stream Read Handlers      |    Stream Read_to handlers   *
@@ -132,7 +144,7 @@ struct {
  *    o F->F: To speed up FAULT state transition if group is not already
  *            synced to FAULT state.
  */
-struct {
+static struct {
 	void (*handler) (vrrp_t *);
 } VRRP_TSM[VRRP_MAX_TSM_STATE + 1][VRRP_MAX_TSM_STATE + 1] =
 {
@@ -438,7 +450,7 @@ already_exist_sock(list l, sa_family_t family, int proto, int ifindex, int unica
 	return 0;
 }
 
-void
+static void
 alloc_sock(sa_family_t family, list l, int proto, int ifindex, int unicast)
 {
 	sock_t *new;
@@ -462,7 +474,10 @@ vrrp_create_sockpool(list l)
 
 	for (e = LIST_HEAD(p); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);
-		ifindex = (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
+		ifindex =
+#ifdef _HAVE_VRRP_VMAC_
+			  (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
+#endif
 										    IF_INDEX(vrrp->ifp);
 		unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
 #if defined _WITH_VRRP_AUTH_
@@ -486,7 +501,7 @@ vrrp_open_sockpool(list l)
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		sock = ELEMENT_DATA(e);
-		sock->fd_in = open_vrrp_socket(sock->family, sock->proto,
+		sock->fd_in = open_vrrp_read_socket(sock->family, sock->proto,
 					       sock->ifindex, sock->unicast);
 		if (sock->fd_in == -1)
 			sock->fd_out = -1;
@@ -510,7 +525,10 @@ vrrp_set_fds(list l)
 		sock = ELEMENT_DATA(e_sock);
 		for (e_vrrp = LIST_HEAD(p); e_vrrp; ELEMENT_NEXT(e_vrrp)) {
 			vrrp = ELEMENT_DATA(e_vrrp);
-			ifindex = (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
+			ifindex =
+#ifdef _HAVE_VRRP_VMAC_
+				  (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? IF_BASE_INDEX(vrrp->ifp) :
+#endif
 											    IF_INDEX(vrrp->ifp);
 			unicast = !LIST_ISEMPTY(vrrp->unicast_peer);
 #if defined _WITH_VRRP_AUTH_
@@ -572,7 +590,7 @@ vrrp_dispatcher_init(thread_t * thread)
 void
 vrrp_dispatcher_release(vrrp_data_t *data)
 {
-	free_list(data->vrrp_socket_pool);
+	free_list(&data->vrrp_socket_pool);
 }
 
 static void
@@ -668,7 +686,7 @@ vrrp_leave_fault(vrrp_t * vrrp, char *buffer, int len)
 	if (!VRRP_ISUP(vrrp))
 		return;
 
-	if (vrrp_state_fault_rx(vrrp, buffer, len)) {
+	if (vrrp_state_fault_rx(vrrp, buffer, len) == VRRP_STATE_MAST) {
 		if (!vrrp->sync || vrrp_sync_leave_fault(vrrp)) {
 			log_message(LOG_INFO,
 			       "VRRP_Instance(%s) prio is higher than received advert",
@@ -759,6 +777,20 @@ vrrp_lower_prio_gratuitous_arp_thread(thread_t * thread)
 	return 0;
 }
 
+/* Set effective priorty, issue message on changes */
+void
+vrrp_set_effective_priority(vrrp_t *vrrp, int new_prio)
+{
+	if (vrrp->effective_priority == new_prio)
+		return;
+
+	log_message(LOG_INFO, "VRRP_Instance(%s) Effective priority = %d",
+		    vrrp->iname, new_prio);
+
+	vrrp->effective_priority = new_prio;
+}
+
+
 /* Update VRRP effective priority based on multiple checkers.
  * This is a thread which is executed every adver_int.
  */
@@ -781,7 +813,7 @@ vrrp_update_priority(thread_t * thread)
 
 	if (vrrp->base_priority == VRRP_PRIO_OWNER) {
 		/* we will not run a PRIO_OWNER into a non-PRIO_OWNER */
-		vrrp->effective_priority = VRRP_PRIO_OWNER;
+		vrrp_set_effective_priority(vrrp, VRRP_PRIO_OWNER);
 	} else {
 		/* WARNING! we must compute new_prio on a signed int in order
 		   to detect overflows and avoid wrapping. */
@@ -790,7 +822,7 @@ vrrp_update_priority(thread_t * thread)
 			new_prio = 1;
 		else if (new_prio >= VRRP_PRIO_OWNER)
 			new_prio = VRRP_PRIO_OWNER - 1;
-		vrrp->effective_priority = new_prio;
+		vrrp_set_effective_priority(vrrp, new_prio);
 	}
 
 	/* Register next priority update thread */
@@ -874,14 +906,18 @@ vrrp_fault(vrrp_t * vrrp)
 		if (vrrp->init_state == VRRP_STATE_BACK) {
 			vrrp->state = VRRP_STATE_BACK;
 			notify_instance_exec(vrrp, VRRP_STATE_BACK);
+			if (vrrp->preempt_delay)
+				vrrp->preempt_time = timer_add_long(timer_now(), vrrp->preempt_delay);
 #ifdef _WITH_SNMP_KEEPALIVED_
 			vrrp_snmp_instance_trap(vrrp);
 #endif
 			vrrp->last_transition = timer_now();
+			log_message(LOG_INFO, "VRRP_Instance(%s): Entering BACKUP STATE", vrrp->iname);
 		} else {
 #ifdef _WITH_SNMP_RFCV3_
 			vrrp->stats->master_reason = VRRPV3_MASTER_REASON_PREEMPTED;
 #endif
+			log_message(LOG_INFO, "VRRP_Instance(%s): Transition to MASTER STATE", vrrp->iname);
 			vrrp_goto_master(vrrp);
 		}
 	}
@@ -892,7 +928,7 @@ vrrp_fault(vrrp_t * vrrp)
 
 /* Handle dispatcher read timeout */
 static int
-vrrp_dispatcher_read_to(int fd)
+vrrp_dispatcher_read_timeout(int fd)
 {
 	vrrp_t *vrrp;
 	int vrid = 0;
@@ -982,7 +1018,7 @@ vrrp_dispatcher_read(sock_t * sock)
 }
 
 /* Our read packet dispatcher */
-int
+static int
 vrrp_read_dispatcher_thread(thread_t * thread)
 {
 	long vrrp_timer = 0;
@@ -994,7 +1030,7 @@ vrrp_read_dispatcher_thread(thread_t * thread)
 
 	/* Dispatcher state handler */
 	if (thread->type == THREAD_READ_TIMEOUT || sock->fd_in == -1)
-		fd = vrrp_dispatcher_read_to(sock->fd_in);
+		fd = vrrp_dispatcher_read_timeout(sock->fd_in);
 	else
 		fd = vrrp_dispatcher_read(sock);
 
@@ -1098,6 +1134,99 @@ vrrp_script_child_timeout_thread(thread_t * thread)
 	}
 
 	log_message(LOG_WARNING, "Process [%d] didn't respond to SIGTERM", pid);
+
+	return 0;
+}
+
+/* Delayed ARP/NA thread */
+int
+vrrp_arp_thread(thread_t *thread)
+{
+	element e, a;
+	list l;
+	ip_address_t *ipaddress;
+	timeval_t next_time = {
+		.tv_sec = INT_MAX	/* We're never going to delay this long - I hope! */
+	};
+	interface_t *ifp;
+	vrrp_t *vrrp;
+	enum {
+		VIP,
+		EVIP
+	} i;
+
+	set_time_now();
+
+	for (e = LIST_HEAD(vrrp_data->vrrp); e; ELEMENT_NEXT(e)) {
+		vrrp = ELEMENT_DATA(e);
+
+		if (!vrrp->garp_pending && !vrrp->gna_pending)
+			continue;
+
+		vrrp->garp_pending = false;
+		vrrp->gna_pending = false;
+
+		if (vrrp->state != VRRP_STATE_MAST ||
+		    !vrrp->vipset)
+			continue;
+
+		for (i = VIP; i <= EVIP; i++) {
+			l = (i == VIP) ? vrrp->vip : vrrp->evip;
+
+			if (!LIST_ISEMPTY(l)) {
+				for (a = LIST_HEAD(l); a; ELEMENT_NEXT(a)) {
+					ipaddress = ELEMENT_DATA(a);
+					if (!ipaddress->garp_gna_pending)
+						continue;
+					if (!ipaddress->set) {
+						ipaddress->garp_gna_pending = false;
+						continue;
+					}
+
+					ifp = IF_BASE_IFP(ipaddress->ifp);
+
+					/* This should never happen */
+					if (!ifp->garp_delay) {
+						ipaddress->garp_gna_pending = false;
+						continue;
+					}
+
+					if (!IP_IS6(ipaddress)) {
+						if (timer_cmp(time_now, ifp->garp_delay->garp_next_time) >= 0) {
+							send_gratuitous_arp_immediate(ifp, ipaddress);
+							ipaddress->garp_gna_pending = false;
+						}
+						else {
+							vrrp->garp_pending = true;
+							if (timer_cmp(ifp->garp_delay->garp_next_time, next_time) < 0)
+								next_time = ifp->garp_delay->garp_next_time;
+						}
+					}
+					else {
+						if (timer_cmp(time_now, ifp->garp_delay->gna_next_time) >= 0) {
+							ndisc_send_unsolicited_na_immediate(ifp, ipaddress);
+							ipaddress->garp_gna_pending = false;
+						}
+						else {
+							vrrp->gna_pending = true;
+							if (timer_cmp(ifp->garp_delay->gna_next_time, next_time) < 0)
+								next_time = ifp->garp_delay->gna_next_time;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (next_time.tv_sec != INT_MAX) {
+		/* Register next timer tracker */
+		garp_next_time = next_time;
+
+		garp_thread = thread_add_timer(thread->master, vrrp_arp_thread, NULL,
+						 -timer_long(timer_sub_now(next_time)));
+	}
+	else
+		garp_thread = NULL;
 
 	return 0;
 }

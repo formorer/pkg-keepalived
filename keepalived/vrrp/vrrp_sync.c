@@ -55,7 +55,7 @@ vrrp_init_instance_sands(vrrp_t * vrrp)
 }
 
 /* Instance name lookup */
-vrrp_t *
+static vrrp_t *
 vrrp_get_instance(char *iname)
 {
 	vrrp_t *vrrp;
@@ -76,7 +76,7 @@ vrrp_sync_set_group(vrrp_sgroup_t *vgroup)
 {
 	vrrp_t *vrrp;
 	char *str;
-	int i;
+	unsigned int i;
 	vrrp_t *vrrp_last = NULL;
 
 	/* Can't handle no members of the group */
@@ -111,13 +111,13 @@ vrrp_sync_set_group(vrrp_sgroup_t *vgroup)
 }
 
 /* All interface are UP in the same group */
-int
+static int
 vrrp_sync_group_up(vrrp_sgroup_t * vgroup)
 {
 	vrrp_t *vrrp;
 	element e;
 	list l = vgroup->index_list;
-	int is_up = 0;
+	unsigned int is_up = 0;
 
 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
 		vrrp = ELEMENT_DATA(e);

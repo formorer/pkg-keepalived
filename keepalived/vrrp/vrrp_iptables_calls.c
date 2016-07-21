@@ -20,16 +20,33 @@
  * Copyright (C) 2001-2016 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#ifdef _HAVE_LINUX_NET_IF_H_COLLISION_
+/* The following is a horrible workaround. Linux 4.5 introduced a namespace
+ * collision when including libiptc/libiptc.h due to both net/if.h and linux/if.h
+ * being included.
+ *
+ * See: http://bugzilla.netfilter.org/show_bug.cgi?id=1067
+ *
+ * Defining _LINUX_IF_H stops linux/if.h being included.
+ */
+#define _LINUX_IF_H
+#endif
+
 #include <xtables.h>
 #include <libiptc/libiptc.h>
 #include <libiptc/libip6tc.h>
+#ifdef _HAVE_LIBIPSET_
 #include <linux/netfilter/xt_set.h>
+#endif
 #include <unistd.h>
 #include <signal.h>
 
 #include "vrrp_iptables_calls.h"
 #include "memory.h"
 #include "logger.h"
+#ifndef _HAVE_SOCK_CLOEXEC_
+#include "old_socket.h"
+#endif
 
 /* We sometimes get a resource_busy on iptc_commit. This appears to happen
  * when someone else is also updating it.
@@ -326,17 +343,19 @@ int load_mod_xt_set(void)
 static int
 get_version(unsigned int* version)
 {
-	int res, sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	int res, sockfd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_RAW);
 	struct ip_set_req_version req_version;
 	socklen_t size = sizeof(req_version);
 
 	if (sockfd < 0)
 		log_message(LOG_INFO, "Can't open socket to ipset.");
 
+#ifndef _HAVE_SOCK_CLOEXEC_
 	if (fcntl(sockfd, F_SETFD, FD_CLOEXEC) == -1) {
 		log_message(LOG_INFO, "Could not set close on exec: %s",
 			      strerror(errno));
 	}
+#endif
 
 	req_version.op = IP_SET_OP_VERSION;
 	res = getsockopt(sockfd, SOL_IP, SO_IP_SET, &req_version, &size);

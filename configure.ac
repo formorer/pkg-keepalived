@@ -54,6 +54,10 @@ AC_ARG_ENABLE(libiptc,
   [  --disable-libiptc       compile without libiptc])
 AC_ARG_ENABLE(libipset,
   [  --disable-libipset      compile without libipset])
+AC_ARG_ENABLE(mem-check,
+  [  --enable-mem-check      compile with memory alloc checking])
+AC_ARG_ENABLE(mem-check-log,
+  [  --enable-mem-check-log  compile with memory alloc checking writing to syslog])
 AC_ARG_ENABLE(debug,
   [  --enable-debug          compile with debugging flags])
 AC_ARG_ENABLE(profile,
@@ -80,7 +84,7 @@ AC_CHECK_LIB(nl-3, nl_socket_alloc,
   [
     AC_CHECK_LIB(nl-genl-3, genl_connect,
       [
-        USE_NL="LIBIPVS_USE_NL"
+        IPVS_USE_NL="LIBIPVS_USE_NL"
         CFLAGS="$CFLAGS $(pkg-config --cflags libnl-genl-3.0)"
         LIBS="$LIBS $(pkg-config --libs libnl-genl-3.0)"
       ],
@@ -97,13 +101,13 @@ AC_CHECK_LIB(nl-3, nl_socket_alloc,
   [
     AC_CHECK_LIB(nl, nl_socket_modify_cb,
       [
-        USE_NL="LIBIPVS_USE_NL"
+        IPVS_USE_NL="LIBIPVS_USE_NL"
         USE_NL3="_HAVE_LIBNL1_"
         CFLAGS="$CFLAGS -DFALLBACK_LIBNL1"
         LIBS="$LIBS $(pkg-config --libs libnl-1)"
       ],
       [
-        USE_NL="LIBIPVS_DONTUSE_NL"
+        IPVS_USE_NL="LIBIPVS_DONTUSE_NL"
         AC_MSG_WARN([keepalived will be built without libnl support.])
       ])
   ])
@@ -134,6 +138,26 @@ if test "${USE_NL3}" = "_HAVE_LIBNL3_"; then
 fi
 
 AC_SUBST(IF_H_LINK_H_COLLISION)
+
+dnl ----[Check if have linux/if.h and net/if.h namespace collision]----
+# Linux 4.5 caused <libiptc/libiptc.h> to indirectly include <net/if.h> and <linux/if.h>
+# which causes a namespace collision.
+# This issue was resolved in Linux 4.5.5 and 4.6
+LINUX_NET_IF_H_COLLISION="_WITHOUT_LINUX_NET_IF_H_COLLISION_"
+AC_MSG_CHECKING([for libiptc/libiptc.h linux/if.h and net/if.h namespace collision])
+AC_TRY_COMPILE([
+    #include <libiptc/libiptc.h>
+  ], [
+  ], [], [
+    LINUX_NET_IF_H_COLLISION=_HAVE_LINUX_NET_IF_H_COLLISION_
+  ]);
+if test "$LINUX_NET_IF_H_COLLISION" = "_HAVE_LINUX_NET_IF_H_COLLISION_"; then
+  AC_MSG_RESULT([yes])
+else
+  AC_MSG_RESULT([no])
+fi
+
+AC_SUBST(LINUX_NET_IF_H_COLLISION)
 
 dnl ----[Check have IPV4_DEVCONF defines]----
 IPV4_DEVCONF="_WITHOUT_IPV4_DEVCONF_"
@@ -183,8 +207,20 @@ if test "${USE_LIBIPTC}" = "_HAVE_LIBIPTC_"; then
     LIBS="$LIBS -lipset -lxtables"
     AC_CHECK_LIB(ipset, ipset_session_init,
       [
-        USE_LIBIPSET="_HAVE_LIBIPSET_"
-        SAV_LIBS=$LIBS
+	AC_TRY_COMPILE([
+	    #include <linux/netfilter/xt_set.h>
+	    ip_set_id_t id;
+	  ], [
+	  ], [
+	    IPSET_HEADERS_OK=yes
+	  ], [
+	    IPSET_HEADERS_OK=no
+	  ]);
+
+	if test "$IPSET_HEADERS_OK" = "yes"; then
+          USE_LIBIPSET="_HAVE_LIBIPSET_"
+          SAV_LIBS=$LIBS
+	fi
       ],
       [])
     LIBS=$SAV_LIBS
@@ -303,11 +339,77 @@ if test "$enable_vrrp" != "no"; then
   VRRP_SUPPORT="_WITH_VRRP_"
 fi
 
+dnl ----[ Checks for glibc SOCK_NONBLOCK support ]----
+# Introduced in Linux 2.6.23
+AC_MSG_CHECKING([for SOCK_NONBLOCK support])
+AC_TRY_COMPILE([
+    #include <sys/socket.h>
+    int flags;
+  ], [
+    flags = SOCK_NONBLOCK;
+  ], [
+    SOCK_NONBLOCK_SUPPORT=yes
+  ], []);
+
+  if test "$SOCK_NONBLOCK_SUPPORT" = "yes"; then
+    SOCK_NONBLOCK_SUPPORT="_HAVE_SOCK_NONBLOCK_"
+    AC_MSG_RESULT([yes])
+  else
+    SOCK_NONBLOCK_SUPPORT="_WITHOUT_SOCK_NONBLOCK_"
+    AC_MSG_RESULT([no])
+  fi
+
+AC_SUBST(SOCK_NONBLOCK_SUPPORT)
+
+dnl ----[ Checks for glibc SOCK_CLOEXEC support ]----
+# Introduced in Linux 2.6.23
+AC_MSG_CHECKING([for SOCK_CLOEXEC support])
+AC_TRY_COMPILE([
+    #include <sys/socket.h>
+    int flags;
+  ], [
+    flags = SOCK_CLOEXEC;
+  ], [
+    SOCK_CLOEXEC_SUPPORT=yes
+  ], []);
+
+  if test "$SOCK_CLOEXEC_SUPPORT" = "yes"; then
+    SOCK_CLOEXEC_SUPPORT="_HAVE_SOCK_CLOEXEC_"
+    AC_MSG_RESULT([yes])
+  else
+    SOCK_CLOEXEC_SUPPORT="_WITHOUT_SOCK_CLOEXEC_"
+    AC_MSG_RESULT([no])
+  fi
+
+AC_SUBST(SOCK_CLOEXEC_SUPPORT)
+
+dnl ----[ Checks for FIB routing support ]----
+# Introduced in Linux 2.6.19
+AC_MSG_CHECKING([for SOCK_CLOEXEC support])
+AC_TRY_COMPILE([
+    #include <linux/fib_rules.h>
+    int type;
+  ], [
+    type = FRA_SRC;
+  ], [
+    FIB_ROUTING_SUPPORT=yes
+  ], []);
+
+  if test "$FIB_ROUTING_SUPPORT" = "yes"; then
+    FIB_ROUTING_SUPPORT="_HAVE_FIB_ROUTING_"
+    AC_MSG_RESULT([yes])
+  else
+    FIB_ROUTING_SUPPORT="_WITHOUT_FIB_ROUTING_"
+    AC_MSG_RESULT([no])
+  fi
+
+AC_SUBST(FIB_ROUTING_SUPPORT)
+
 dnl ----[ Checks for kernel VMAC support ]----
 CPPFLAGS="$CPPFLAGS -I$kernelinc"
 AC_MSG_CHECKING([for kernel macvlan support])
 AC_TRY_COMPILE([
-    #include <bits/sockaddr.h>
+    #include <sys/socket.h>
     #include <linux/if_link.h>
     int macvlan;
   ], [
@@ -452,13 +554,23 @@ fi
 AC_SUBST(SHA1_SUPPORT)
 
 dnl ----[ check for SO_MARK support ]----
-if test "${enable_fwmark}" = "no"; then
-  SO_MARK_SUPPORT="_WITHOUT_SO_MARK_"
-else
-  AC_CHECK_DECL(SO_MARK,,AC_MSG_ERROR([No SO_MARK declaration in headers]),
-    #include <sys/socket.h>
-  )
-  SO_MARK_SUPPORT="_WITH_SO_MARK_"
+SO_MARK_SUPPORT="_WITHOUT_SO_MARK_"
+if test "${enable_fwmark}" != "no"; then
+  AC_MSG_CHECKING([for SO_MARK support])
+  AC_TRY_COMPILE([
+      #include <sys/socket.h>
+      int flag;
+    ], [
+      flag = SO_MARK;
+    ], [
+      SO_MARK_SUPPORT="_WITH_SO_MARK_"
+    ], [
+    ]);
+  if test "$SO_MARK_SUPPORT" = "_WITH_SO_MARK_"; then
+    AC_MSG_RESULT([yes])
+  else
+    AC_MSG_RESULT([no])
+  fi
 fi
 
 AC_SUBST(SO_MARK_SUPPORT)
@@ -469,6 +581,19 @@ if test "${enable_debug}" = "yes"; then
   DFLAGS="-D_DEBUG_"
   AC_SUBST(DFLAGS)
 fi
+
+dnl ----[ Memory alloc check or not ? ]----
+MEM_CHECK_LOG=_NO_MEM_CHECK_LOG_
+if test "${enable_mem_check}" = "yes"; then
+  MEM_CHECK=_MEM_CHECK_
+  if test "${enable_mem_check_log}" = "yes"; then
+    MEM_CHECK_LOG=_MEM_CHECK_LOG_
+  fi
+else
+  MEM_CHECK=_NO_MEM_CHECK_
+fi
+AC_SUBST(MEM_CHECK)
+AC_SUBST(MEM_CHECK_LOG)
 
 dnl ----[ check for VRRP authentication support ]----
 VRRP_AUTH_SUPPORT="_WITHOUT_VRRP_AUTH_"
@@ -490,10 +615,10 @@ AC_SUBST(VERSION)
 AC_SUBST(VERSION_DATE)
 AC_SUBST(VERSION_YEAR)
 AC_SUBST(IPVS_SUPPORT)
-AC_SUBST(USE_NL)
+AC_SUBST(IPVS_USE_NL)
 AC_SUBST(VRRP_SUPPORT)
 
-APP_DEFS="-D${KERN} -D${IPVS_SUPPORT} -D${IPVS_SYNCD} -D${VRRP_SUPPORT} -D${VRRP_VMAC} -D${ADDR_GEN_MODE} -D${SNMP_SUPPORT} -D${SNMP_KEEPALIVED_SUPPORT} -D${SNMP_CHECKER_SUPPORT} -D${SNMP_RFC_SUPPORT} -D${SNMP_RFCV2_SUPPORT} -D${SNMP_RFCV3_SUPPORT} -D${USE_NL3} -D${VRRP_AUTH_SUPPORT} -D${SO_MARK_SUPPORT} -D${USE_LIBIPTC} -D${USE_LIBIPSET} -D${IPV4_DEVCONF} -D${IF_H_LINK_H_COLLISION} ${DFLAGS}"
+APP_DEFS="-D${KERN} -D${IPVS_SUPPORT} -D${IPVS_SYNCD} -D${VRRP_SUPPORT} -D${VRRP_VMAC} -D${ADDR_GEN_MODE} -D${SNMP_SUPPORT} -D${SNMP_KEEPALIVED_SUPPORT} -D${SNMP_CHECKER_SUPPORT} -D${SNMP_RFC_SUPPORT} -D${SNMP_RFCV2_SUPPORT} -D${SNMP_RFCV3_SUPPORT} -D${IPVS_USE_NL} -D${USE_NL3} -D${VRRP_AUTH_SUPPORT} -D${SO_MARK_SUPPORT} -D${USE_LIBIPTC} -D${USE_LIBIPSET} -D${IPV4_DEVCONF} -D${IF_H_LINK_H_COLLISION} -D${LINUX_NET_IF_H_COLLISION} -D${SOCK_NONBLOCK_SUPPORT} -D${SOCK_CLOEXEC_SUPPORT} -D${FIB_ROUTING_SUPPORT} -D${MEM_CHECK} -D${MEM_CHECK_LOG} ${DFLAGS}"
 BUILD_OPTS=`echo ${APP_DEFS} | sed -e 's/ "$//' -e 's/.*"//' -e 's/-D//g' -e 's/_ / /g' -e 's/ _/ /g' -e 's/^_//' -e 's/_$//'`
 AC_SUBST(APP_DEFS)
 AC_SUBST(BUILD_OPTS)
@@ -547,7 +672,7 @@ if test "${IPVS_SUPPORT}" = "_WITH_LVS_"; then
   elif test "${IPVS_SYNCD}" = "_WITHOUT_IPVS_SYNCD_"; then
     echo "IPVS sync daemon support : No"
   fi
-  if test "${USE_NL}" = "LIBIPVS_USE_NL"; then
+  if test "${IPVS_USE_NL}" = "LIBIPVS_USE_NL"; then
     echo "IPVS use libnl           : Yes"
   else
     echo "IPVS use libnl           : No"
@@ -607,6 +732,16 @@ if test "${DFLAGS}" = "-D_DEBUG_"; then
   echo "Use Debug flags          : Yes"
 else
   echo "Use Debug flags          : No"
+fi
+if test "${MEM_CHECK}" = "_MEM_CHECK_"; then
+  echo "Memory alloc check       : Yes"
+  if test "${MEM_CHECK_LOG}" = "_MEM_CHECK_LOG_"; then
+    echo "Memory alloc check log   : Yes"
+  else
+    echo "Memory alloc check log   : No"
+  fi
+else
+  echo "Memory alloc check       : No"
 fi
 if test "${USE_NL3}" = "_HAVE_LIBNL3_"; then
   echo "libnl version            : 3"

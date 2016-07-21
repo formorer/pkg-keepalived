@@ -28,8 +28,10 @@
 #include "vrrp_netlink.h"
 #include "vrrp_ipaddress.h"
 #include "vrrp_iptables.h"
-#include "vrrp_iproute.h"
+#ifdef _HAVE_FIB_ROUTING_
 #include "vrrp_iprule.h"
+#include "vrrp_iproute.h"
+#endif
 #include "vrrp_parser.h"
 #include "vrrp_data.h"
 #include "vrrp.h"
@@ -55,6 +57,13 @@
 #include "memory.h"
 #include "parser.h"
 
+/* Forward declarations */
+static int print_vrrp_data(thread_t * thread);
+static int print_vrrp_stats(thread_t * thread);
+static int reload_vrrp_thread(thread_t * thread);
+
+
+
 /* Daemon stop sequence */
 static void
 stop_vrrp(void)
@@ -69,8 +78,10 @@ stop_vrrp(void)
 #endif
 
 	/* Clear static entries */
+#ifdef _HAVE_FIB_ROUTING_
 	netlink_rulelist(vrrp_data->static_rules, IPRULE_DEL, false);
 	netlink_rtlist(vrrp_data->static_routes, IPROUTE_DEL);
+#endif
 	netlink_iplist(vrrp_data->static_addresses, IPADDRESS_DEL);
 
 #ifdef _WITH_SNMP_
@@ -100,6 +111,9 @@ stop_vrrp(void)
 	}
 #endif
 
+	/* We mustn't receive a SIGCHLD after master is destroyed */
+	signal_handler_destroy();
+
 	kernel_netlink_close();
 	thread_destroy_master(master);
 	gratuitous_arp_close();
@@ -110,9 +124,7 @@ stop_vrrp(void)
 	free_vrrp_buffer();
 	free_interface_queue();
 
-	signal_handler_destroy();
-
-#ifdef _DEBUG_
+#ifdef _MEM_CHECK_
 	keepalived_free_final("VRRP Child process");
 #endif
 
@@ -188,18 +200,22 @@ start_vrrp(void)
 
 	if (reload) {
 		clear_diff_saddresses();
+#ifdef _HAVE_FIB_ROUTING_
 		clear_diff_srules();
 		clear_diff_sroutes();
+#endif
 		clear_diff_vrrp();
 		clear_diff_script();
 	}
 	else {
 		/* Clear leftover static entries */
 		netlink_iplist(vrrp_data->static_addresses, IPADDRESS_DEL);
+#ifdef _HAVE_FIB_ROUTING_
 		netlink_rtlist(vrrp_data->static_routes, IPROUTE_DEL);
 		netlink_error_ignore = ENOENT;
 		netlink_rulelist(vrrp_data->static_rules, IPRULE_DEL, true);
 		netlink_error_ignore = 0;
+#endif
 	}
 
 	/* Complete VRRP initialization */
@@ -220,11 +236,11 @@ start_vrrp(void)
 #endif
 
 	/* Set static entries */
-	if (!reload) {
-		netlink_iplist(vrrp_data->static_addresses, IPADDRESS_ADD);
-		netlink_rtlist(vrrp_data->static_routes, IPROUTE_ADD);
-		netlink_rulelist(vrrp_data->static_rules, IPRULE_ADD, false);
-	}
+	netlink_iplist(vrrp_data->static_addresses, IPADDRESS_ADD);
+#ifdef _HAVE_FIB_ROUTING_
+	netlink_rtlist(vrrp_data->static_routes, IPROUTE_ADD);
+	netlink_rulelist(vrrp_data->static_rules, IPRULE_ADD, false);
+#endif
 
 	/* Dump configuration */
 	if (__test_bit(DUMP_CONF_BIT, &debug)) {
@@ -245,15 +261,13 @@ start_vrrp(void)
 			 VRRP_DISPATCHER);
 }
 
-/* Reload handler */
-int reload_vrrp_thread(thread_t * thread);
-void
+static void
 sighup_vrrp(void *v, int sig)
 {
 	thread_add_event(master, reload_vrrp_thread, NULL, 0);
 }
-int print_vrrp_data(thread_t * thread);
-void
+
+static void
 sigusr1_vrrp(void *v, int sig)
 {
 	log_message(LOG_INFO, "Printing VRRP data for process(%d) on signal",
@@ -261,8 +275,7 @@ sigusr1_vrrp(void *v, int sig)
 	thread_add_event(master, print_vrrp_data, NULL, 0);
 }
 
-int print_vrrp_stats(thread_t * thread);
-void
+static void
 sigusr2_vrrp(void *v, int sig)
 {
 	log_message(LOG_INFO, "Printing VRRP stats for process(%d) on signal",
@@ -271,7 +284,7 @@ sigusr2_vrrp(void *v, int sig)
 }
 
 /* Terminate handler */
-void
+static void
 sigend_vrrp(void *v, int sig)
 {
 	if (master)
@@ -279,7 +292,7 @@ sigend_vrrp(void *v, int sig)
 }
 
 /* VRRP Child signal handling */
-void
+static void
 vrrp_signal_init(void)
 {
 	signal_handler_init();
@@ -292,7 +305,7 @@ vrrp_signal_init(void)
 }
 
 /* Reload thread */
-int
+static int
 reload_vrrp_thread(thread_t * thread)
 {
 	/* set the reloading flag */
@@ -301,8 +314,7 @@ reload_vrrp_thread(thread_t * thread)
 	/* Destroy master thread */
 	vrrp_dispatcher_release(vrrp_data);
 	kernel_netlink_close();
-	thread_destroy_master(master);
-	master = thread_make_master();
+	thread_cleanup_master(master);
 #ifdef _HAVE_IPVS_SYNCD_
 	/* TODO - Note: this didn't work if we found ipvs_syndc on vrrp before on old_vrrp */
 	if (global_data->lvs_syncd_if)
@@ -312,7 +324,6 @@ reload_vrrp_thread(thread_t * thread)
 		       global_data->lvs_syncd_syncid, false);
 #endif
 	free_global_data(global_data);
-	free_interface_queue();
 	free_vrrp_buffer();
 	gratuitous_arp_close();
 	ndisc_close();
@@ -327,6 +338,7 @@ reload_vrrp_thread(thread_t * thread)
 	/* Save previous conf data */
 	old_vrrp_data = vrrp_data;
 	vrrp_data = NULL;
+	reset_interface_queue();
 
 	/* Reload the conf */
 #ifdef _DEBUG_
@@ -344,19 +356,20 @@ reload_vrrp_thread(thread_t * thread)
 
 	/* free backup data */
 	free_vrrp_data(old_vrrp_data);
+	free_old_interface_queue();
 	UNSET_RELOAD;
 
 	return 0;
 }
 
-int
+static int
 print_vrrp_data(thread_t * thread)
 {
 	vrrp_print_data();
 	return 0;
 }
 
-int
+static int
 print_vrrp_stats(thread_t * thread)
 {
 	vrrp_print_stats();
@@ -365,7 +378,7 @@ print_vrrp_stats(thread_t * thread)
 
 
 /* VRRP Child respawning thread */
-int
+static int
 vrrp_respawn_thread(thread_t * thread)
 {
 	pid_t pid;
@@ -423,6 +436,10 @@ start_vrrp_child(void)
 	openlog(PROG_VRRP, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
 			 , (log_facility==LOG_DAEMON) ? LOG_LOCAL1 : log_facility);
 
+#ifdef _MEM_CHECK_
+	mem_log_init(PROG_VRRP);
+#endif
+
 	/* Child process part, write pidfile */
 	if (!pidfile_write(vrrp_pidfile, getpid())) {
 		/* Fatal error */
@@ -431,7 +448,7 @@ start_vrrp_child(void)
 	}
 
 	/* Create the new master thread */
-	thread_destroy_master(master);
+	thread_destroy_master(master);	/* This destroys any residual settings from the parent */
 	master = thread_make_master();
 
 	/* change to / dir */

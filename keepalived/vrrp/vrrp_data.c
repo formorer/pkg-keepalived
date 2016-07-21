@@ -25,12 +25,18 @@
 #include "vrrp_index.h"
 #include "vrrp_sync.h"
 #include "vrrp_if.h"
+#ifdef _HAVE_VRRP_VMAC_
 #include "vrrp_vmac.h"
+#endif
 #include "vrrp.h"
 #include "memory.h"
 #include "utils.h"
 #include "logger.h"
 #include "bitops.h"
+#ifdef _HAVE_FIB_ROUTING_
+#include "vrrp_iprule.h"
+#include "vrrp_iproute.h"
+#endif
 
 /* global vars */
 vrrp_data_t *vrrp_data = NULL;
@@ -47,6 +53,7 @@ alloc_saddress(vector_t *strvec)
 	alloc_ipaddress(vrrp_data->static_addresses, strvec, NULL);
 }
 
+#ifdef _HAVE_FIB_ROUTING_
 /* Static routes facility function */
 void
 alloc_sroute(vector_t *strvec)
@@ -64,6 +71,7 @@ alloc_srule(vector_t *strvec)
 		vrrp_data->static_rules = alloc_list(free_iprule, dump_iprule);
 	alloc_rule(vrrp_data->static_rules, strvec);
 }
+#endif
 
 /* VRRP facility functions */
 static void
@@ -73,7 +81,7 @@ free_vgroup(void *data)
 
 	FREE(vgroup->gname);
 	free_strvec(vgroup->iname);
-	free_list(vgroup->index_list);
+	free_list(&vgroup->index_list);
 	FREE_PTR(vgroup->script_backup);
 	FREE_PTR(vgroup->script_master);
 	FREE_PTR(vgroup->script_fault);
@@ -84,7 +92,7 @@ static void
 dump_vgroup(void *data)
 {
 	vrrp_sgroup_t *vgroup = data;
-	int i;
+	unsigned int i;
 	char *str;
 
 	log_message(LOG_INFO, " VRRP Sync Group = %s, %s", vgroup->gname,
@@ -124,7 +132,7 @@ static void
 dump_vscript(void *data)
 {
 	vrrp_script_t *vscript = data;
-	char *str;
+	const char *str;
 
 	log_message(LOG_INFO, " VRRP Script = %s", vscript->sname);
 	log_message(LOG_INFO, "   Command = %s", vscript->script);
@@ -209,18 +217,18 @@ free_vrrp(void *data)
 	if (!LIST_ISEMPTY(vrrp->track_ifp))
 		for (e = LIST_HEAD(vrrp->track_ifp); e; ELEMENT_NEXT(e))
 			FREE(ELEMENT_DATA(e));
-	free_list(vrrp->track_ifp);
+	free_list(&vrrp->track_ifp);
 
 	if (!LIST_ISEMPTY(vrrp->track_script))
 		for (e = LIST_HEAD(vrrp->track_script); e; ELEMENT_NEXT(e))
 			FREE(ELEMENT_DATA(e));
-	free_list(vrrp->track_script);
+	free_list(&vrrp->track_script);
 
-	free_list(vrrp->unicast_peer);
-	free_list(vrrp->vip);
-	free_list(vrrp->evip);
-	free_list(vrrp->vroutes);
-	free_list(vrrp->vrules);
+	free_list(&vrrp->unicast_peer);
+	free_list(&vrrp->vip);
+	free_list(&vrrp->evip);
+	free_list(&vrrp->vroutes);
+	free_list(&vrrp->vrules);
 	FREE(vrrp);
 }
 static void
@@ -323,11 +331,13 @@ dump_vrrp(void *data)
 		log_message(LOG_INFO, "   Generic state transition script = '%s'", vrrp->script);
 	if (vrrp->smtp_alert)
 		log_message(LOG_INFO, "   Using smtp notification");
+#ifdef _HAVE_VRRP_VMAC_
 	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
 		log_message(LOG_INFO, "   Using VRRP VMAC (flags:%s|%s), vmac ifindex %d"
 				    , (__test_bit(VRRP_VMAC_UP_BIT, &vrrp->vmac_flags)) ? "UP" : "DOWN"
 				    , (__test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) ? "xmit_base" : "xmit"
 				    , vrrp->ifp->base_ifindex);
+#endif
 }
 
 void
@@ -344,6 +354,28 @@ alloc_vrrp_sync_group(char *gname)
 	new->global_tracking = 0;
 
 	list_add(vrrp_data->vrrp_sync_group, new);
+}
+
+vrrp_stats *
+alloc_vrrp_stats(void)
+{
+	vrrp_stats *new;
+	new = (vrrp_stats *) MALLOC(sizeof (vrrp_stats));
+	new->become_master = 0;
+	new->release_master = 0;
+	new->invalid_authtype = 0;
+	new->authtype_mismatch = 0;
+	new->packet_len_err = 0;
+	new->advert_rcvd = 0;
+	new->advert_sent = 0;
+	new->advert_interval_err = 0;
+	new->auth_failure = 0;
+	new->ip_ttl_err = 0;
+	new->pri_zero_rcvd = 0;
+	new->pri_zero_sent = 0;
+	new->invalid_type_rcvd = 0;
+	new->addr_list_err = 0;
+	return new;
 }
 
 void
@@ -368,46 +400,23 @@ alloc_vrrp(char *iname)
 	new->version = 0;
 	new->master_priority = 0;
 	new->last_transition = timer_now();
-	new->adver_int = VRRP_ADVER_DFL * TIMER_HZ;
 	new->iname = (char *) MALLOC(size + 1);
 	memcpy(new->iname, iname, size);
 	new->stats = alloc_vrrp_stats();
 	new->quick_sync = 0;
 	new->garp_rep = global_data->vrrp_garp_rep;
+	new->garp_refresh = global_data->vrrp_garp_refresh;
 	new->garp_refresh_rep = global_data->vrrp_garp_refresh_rep;
 	new->garp_delay = global_data->vrrp_garp_delay;
-        new->garp_lower_prio_delay = -1;
-        new->garp_lower_prio_rep = -1;
-        new->lower_prio_no_advert = -1;
+	new->garp_lower_prio_delay = -1;
+	new->garp_lower_prio_rep = -1;
+	new->lower_prio_no_advert = -1;
 
 	new->skip_check_adv_addr = global_data->vrrp_skip_check_adv_addr;
 	new->strict_mode = -1;
 
 	list_add(vrrp_data->vrrp, new);
 }
-
-vrrp_stats *
-alloc_vrrp_stats(void)
-{
-    vrrp_stats *new;
-    new = (vrrp_stats *) MALLOC(sizeof (vrrp_stats));
-    new->become_master = 0;
-    new->release_master = 0;
-    new->invalid_authtype = 0;
-    new->authtype_mismatch = 0;
-    new->packet_len_err = 0;
-    new->advert_rcvd = 0;
-    new->advert_sent = 0;
-    new->advert_interval_err = 0;
-    new->auth_failure = 0;
-    new->ip_ttl_err = 0;
-    new->pri_zero_rcvd = 0;
-    new->pri_zero_sent = 0;
-    new->invalid_type_rcvd = 0;
-    new->addr_list_err = 0;
-    return new;
-}
-
 
 void
 alloc_vrrp_unicast_peer(vector_t *strvec)
@@ -482,6 +491,7 @@ alloc_vrrp_evip(vector_t *strvec)
 	alloc_ipaddress(vrrp->evip, strvec, vrrp->ifp);
 }
 
+#ifdef _HAVE_FIB_ROUTING_
 void
 alloc_vrrp_vroute(vector_t *strvec)
 {
@@ -501,6 +511,7 @@ alloc_vrrp_vrule(vector_t *strvec)
 		vrrp->vrules = alloc_list(free_iprule, dump_iprule);
 	alloc_rule(vrrp->vrules, strvec);
 }
+#endif
 
 void
 alloc_vrrp_script(char *sname)
@@ -557,14 +568,14 @@ alloc_vrrp_data(void)
 void
 free_vrrp_data(vrrp_data_t * data)
 {
-	free_list(data->static_addresses);
-	free_list(data->static_routes);
-	free_list(data->static_rules);
+	free_list(&data->static_addresses);
+	free_list(&data->static_routes);
+	free_list(&data->static_rules);
 	free_mlist(data->vrrp_index, 255+1);
 	free_mlist(data->vrrp_index_fd, 1024+1);
-	free_list(data->vrrp);
-	free_list(data->vrrp_sync_group);
-	free_list(data->vrrp_script);
+	free_list(&data->vrrp);
+	free_list(&data->vrrp_sync_group);
+	free_list(&data->vrrp_script);
 	FREE(data);
 }
 

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
 
 /* local includes */
 #include "list.h"
@@ -39,7 +40,7 @@ typedef struct _ip_rule {
 	ip_address_t	*addr;
 	uint8_t		mask;
 	unsigned int	table;
-	int		set;
+	bool		set;
 } ip_rule_t;
 
 #define IPRULE_DEL 0
@@ -55,7 +56,6 @@ typedef struct _ip_rule {
 						(X)->table  == (Y)->table)
 
 /* prototypes */
-extern int netlink_rule(ip_rule_t *, int);
 extern void netlink_rulelist(list, int, bool);
 extern void free_iprule(void *);
 extern void dump_iprule(void *);

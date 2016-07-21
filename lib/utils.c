@@ -33,7 +33,7 @@ unsigned long debug = 0;
 
 /* Display a buffer into a HEXA formated output */
 void
-dump_buffer(char *buff, int count)
+dump_buffer(char *buff, int count, FILE* fp)
 {
 	int i, j, c;
 	int printnext = 1;
@@ -46,28 +46,28 @@ dump_buffer(char *buff, int count)
 	for (i = 0; i < c; i++) {
 		if (printnext) {
 			printnext--;
-			printf("%.4x ", i & 0xffff);
+			fprintf(fp, "%.4x ", i & 0xffff);
 		}
 		if (i < count)
-			printf("%3.2x", buff[i] & 0xff);
+			fprintf(fp, "%3.2x", buff[i] & 0xff);
 		else
-			printf("   ");
+			fprintf(fp, "   ");
 		if (!((i + 1) % 8)) {
 			if ((i + 1) % 16)
-				printf(" -");
+				fprintf(fp, " -");
 			else {
-				printf("   ");
+				fprintf(fp, "   ");
 				for (j = i - 15; j <= i; j++)
 					if (j < count) {
 						if ((buff[j] & 0xff) >= 0x20
 						    && (buff[j] & 0xff) <= 0x7e)
-							printf("%c",
+							fprintf(fp, "%c",
 							       buff[j] & 0xff);
 						else
-							printf(".");
+							fprintf(fp, ".");
 					} else
-						printf(" ");
-				printf("\n");
+						fprintf(fp, " ");
+				fprintf(fp, "\n");
 				printnext = 1;
 			}
 		}
@@ -122,6 +122,7 @@ inet_ntop2(uint32_t ip)
 	return buf;
 }
 
+#ifdef _INCLUDE_UNUSED_CODE_
 /*
  * IP network to ascii representation. To use
  * for multiple IP address convertion into the same call.
@@ -138,25 +139,22 @@ inet_ntoa2(uint32_t ip, char *buf)
 
 /* IP string to network mask representation. CIDR notation. */
 uint8_t
-inet_stom(char *addr)
+inet_stom(const char *addr)
 {
 	uint8_t mask = 32;
-	char *cp = addr;
+	const char *cp = addr;
 
-	if (!strstr(addr, "/"))
+	if (!(cp = strchr(addr, '/')))
 		return mask;
-	while (*cp != '/' && *cp != '\0')
-		cp++;
-	if (*cp == '/')
-		return atoi(++cp);
-	return mask;
+	return atoi(cp+1);
 }
+#endif
 
 /* IP string to network range representation. */
 uint8_t
-inet_stor(char *addr)
+inet_stor(const char *addr)
 {
-	char *cp = addr;
+	const char *cp = addr;
 
 	if (!strstr(addr, "-"))
 		return 0;
@@ -169,7 +167,7 @@ inet_stor(char *addr)
 
 /* Domain to sockaddr_storage */
 int
-domain_stosockaddr(char *domain, char *port, struct sockaddr_storage *addr)
+domain_stosockaddr(const char *domain, const char *port, struct sockaddr_storage *addr)
 {
 	struct addrinfo *res = NULL;
 
@@ -197,7 +195,7 @@ domain_stosockaddr(char *domain, char *port, struct sockaddr_storage *addr)
 
 /* IP string to sockaddr_storage */
 int
-inet_stosockaddr(char *ip, char *port, struct sockaddr_storage *addr)
+inet_stosockaddr(char *ip, const char *port, struct sockaddr_storage *addr)
 {
 	void *addr_ip;
 	char *cp = ip;
@@ -256,7 +254,7 @@ inet_ip6scopeid(uint32_t scope_id, struct sockaddr_storage *addr)
 }
 
 /* IP network to string representation */
-char *
+static char *
 inet_sockaddrtos2(struct sockaddr_storage *addr, char *addr_str)
 {
 	void *addr_ip;
@@ -335,45 +333,27 @@ inet_sockaddrip6(struct sockaddr_storage *addr, struct in6_addr *ip6)
 int
 inet_inaddrcmp(int family, void *a, void *b)
 {
+	int64_t addr_diff;
+
 	if (family == AF_INET) {
-		if (ntohl(*((const uint32_t *) a)) >
-		    ntohl(*((const uint32_t *) b)))
+		addr_diff = (int64_t)ntohl(*((const uint32_t *) a)) - (int64_t)ntohl(*((const uint32_t *) b));
+		if (addr_diff > 0)
 			return 1;
-		if (ntohl(*((const uint32_t *) a)) <
-		    ntohl(*((const uint32_t *) b)))
+		if (addr_diff < 0)
 			return -1;
 		return 0;
 	}
 
 	if (family == AF_INET6) {
-		if (ntohl(((const uint32_t *) (a))[0]) >
-		    ntohl(((const uint32_t *) (b))[0]))
-			return 1;
-		if (ntohl(((const uint32_t *) (a))[0]) <
-		    ntohl(((const uint32_t *) (b))[0]))
-			return -1;
+		int i;
 
-		if (ntohl(((const uint32_t *) (a))[1]) >
-		    ntohl(((const uint32_t *) (b))[1]))
-			return 1;
-		if (ntohl(((const uint32_t *) (a))[1]) <
-		    ntohl(((const uint32_t *) (b))[1]))
-			return -1;
-
-		if (ntohl(((const uint32_t *) (a))[2]) >
-		    ntohl(((const uint32_t *) (b))[2]))
-			return 1;
-		if (ntohl(((const uint32_t *) (a))[2]) <
-		    ntohl(((const uint32_t *) (b))[2]))
-			return -1;
-
-		if (ntohl(((const uint32_t *) (a))[3]) >
-		    ntohl(((const uint32_t *) (b))[3]))
-			return 1;
-		if (ntohl(((const uint32_t *) (a))[3]) <
-		    ntohl(((const uint32_t *) (b))[3]))
-			return -1;
-
+		for (i = 0; i < 4; i++ ) {
+			addr_diff = (int64_t)ntohl(((const uint32_t *) (a))[i]) - (int64_t)ntohl(((const uint32_t *) (b))[i]);
+			if (addr_diff > 0)
+				return 1;
+			if (addr_diff < 0)
+				return -1;
+		}
 		return 0;
 	}
 
@@ -441,6 +421,7 @@ inet_ston(const char *addr, uint32_t * dst)
 	return 1;
 }
 
+#ifdef _INCLUDE_UNUSED_CODE_
 /*
  * Return broadcast address from network and netmask.
  */
@@ -463,6 +444,7 @@ inet_cidrtomask(uint8_t cidr)
 		mask |= (1 << (31 - b));
 	return ntohl(mask);
 }
+#endif
 
 /* Getting localhost official canonical name */
 char *

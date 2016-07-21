@@ -1,4 +1,4 @@
-.TH KEEPALIVED "8" "November 2012"
+.TH KEEPALIVED "8" "April 2016"
 
 .na
 .nh
@@ -24,16 +24,18 @@ keepalived \- load\-balancing and high\-availability service
 [\fB\-c\fP|\fB\-\-checkers_pid\fP=FILE]
 [\fB\-x\fP|\fB\-\-snmp\fP]
 [\fB\-A\fP|\fB\-\-snmp-agent-socket\fP=FILE]
+[\fB\-m\fP|\fB\-\-core\-dump\fP]
+[\fB\-M\fP|\fB\-\-core\-dump\-format\fP[=PATTERN]]
 [\fB\-v\fP|\fB\-\-version\fP]
 [\fB\-h\fP|\fB\-\-help\fP]
 
 .SH "DESCRIPTION"
 Keepalived provides simple and robust facilities for load\-balancing
-and high\-availability. The load\-balancing framework relies on
+and high\-availability. The load\-balancing framework relies on the
 well\-known and widely used Linux Virtual Server (IPVS) kernel module
 providing Layer4 load\-balancing. Keepalived implements a set of
-checkers to dynamically and adaptively maintain and manage
-load\-balanced server pool according their health. Keepalived also
+checkers to dynamically and adaptively maintain and manage a
+load\-balanced server pool according to their health. Keepalived also
 implements the VRRPv2 and VRRPv3 protocols to achieve high\-availability
 with director failover.
 
@@ -45,7 +47,7 @@ is "/etc/keepalived/keepalived.conf".
 .TP
 \fB -P, --vrrp\fP
 Only run the VRRP subsystem. This is useful for configurations that do
-not use IPVS load balancer.
+not use the IPVS load balancer.
 .TP
 \fB -C, --check\fP
 Only run the healthcheck subsystem. This is useful for configurations
@@ -66,11 +68,11 @@ Drop VIP on transition from signal.
 .TP
 \fB -V, --dont-release-vrrp\fP
 Don't remove VRRP VIPs and VROUTEs on daemon stop. The default
-behavior is to remove all VIPs and VROUTEs when keepalived exits
+behavior is to remove all VIPs and VROUTEs when keepalived exits.
 .TP
 \fB -I, --dont-release-ipvs\fP
 Don't remove IPVS topology on daemon stop. The default behavior it to
-remove all entries from the IPVS virtual server table on when
+remove all entries from the IPVS virtual server table when
 keepalived exits.
 .TP
 \fB -R, --dont-respawn\fP
@@ -85,22 +87,39 @@ run in the foreground.
 Dump the configuration data.
 .TP
 \fB -p, --pid\fP=FILE
-Use specified pidfile for parent keepalived process. The default
+Use the specified pidfile for the parent keepalived process. The default
 pidfile for keepalived is "/var/run/keepalived.pid".
 .TP
 \fB -r, --vrrp_pid\fP=FILE
-Use specified pidfile for VRRP child process. The default pidfile for
-the VRRP child process is "/var/run/keepalived_vrrp.pid".
+Use the specified pidfile for the VRRP child process. The default pidfile
+for the VRRP child process is "/var/run/keepalived_vrrp.pid".
 .TP
 \fB -c, --checkers_pid\fP=FILE
-Use specified pidfile for checkers child process. The default pidfile
+Use the specified pidfile for checkers child process. The default pidfile
 for the checker child process is "/var/run/keepalived_checkers.pid".
 .TP
 \fB -x, --snmp\fP
-Enable SNMP subsystem.
+Enable the SNMP subsystem.
 .TP
 \fB -A, --snmp-agent-socket\fP=FILE
 Use the specified socket for connection to SNMP master agent.
+.TP
+\fB -m, --core-dump\fP
+Override the RLIMIT_CORE hard and soft limits to enable keepalived to
+produce a coredump in the event of a segfault or other failure.
+This is most useful if keepalived has been built with 'make debug'.
+Core dumps will be created in /, unless keepalived is run with the 
+--dont-fork option, in which case they will be created in the directory
+from which keepalived was run, or they will be created in the directory
+of a configuraton file if the fault occurs while reading the file.
+.TP
+\fB -M, --core-dump-pattern\fP[=PATTERN]
+Sets option --core-dump, and also updates /proc/sys/kernel/core_pattern
+to the pattern specified, or 'core' if none specified.
+Provided the parent process doesn't terminate abnormally, it will restore
+/proc/sys/kernel/core_pattern to its original value on exit.
+
+\fBNote:\fP This will also affect any other process producing a core dump while keepalived is running.
 .TP
 \fB -v, --version\fP
 Display the version and exit.
@@ -110,7 +129,7 @@ Display this help message and exit.
 
 .SH SIGNALS
 .B keepalived
-reacts to a set of signals.  You may easily send a signal to
+reacts to a set of signals.  You can send a signal to
 the parent
 .B keepalived
 process using the following:
@@ -130,12 +149,12 @@ kill -HUP $(cat /var/run/keepalived.pid)
 .B HUP
 This causes
 .B keepalived
-to close down all interfaces, reload its configuration, and start up the
-new configuration.
+to close down all interfaces, reload its configuration, and
+start up with the new configuration.
 .TP
 .B TERM, INT
 .B keepalived
-will die.
+will shut down.
 .TP
 .B USR1
 Write configuration data to

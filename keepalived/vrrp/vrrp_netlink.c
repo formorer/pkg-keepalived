@@ -38,20 +38,27 @@
 /* local include */
 #include "check_api.h"
 #include "vrrp_netlink.h"
+#ifdef _HAVE_VRRP_VMAC_
 #include "vrrp_vmac.h"
+#endif
 #include "logger.h"
 #include "memory.h"
 #include "scheduler.h"
 #include "utils.h"
 #include "bitops.h"
+#ifndef _HAVE_SOCK_NONBLOCK
+#include "old_socket.h"
+#endif
 
 /* Global vars */
-nl_handle_t nl_kernel;	/* Kernel reflection channel */
 nl_handle_t nl_cmd;	/* Command channel */
 int netlink_error_ignore; /* If we get this error, ignore it */
 
+/* Static vars */
+static nl_handle_t nl_kernel;	/* Kernel reflection channel */
+
 /* Create a socket to netlink interface_t */
-int
+static int
 netlink_socket(nl_handle_t *nl, int flags, int group, ...)
 {
 	int ret;
@@ -113,6 +120,10 @@ netlink_socket(nl_handle_t *nl, int flags, int group, ...)
 #else
 	socklen_t addr_len;
 	struct sockaddr_nl snl;
+#ifndef _HAVE_SOCK_NONBLOCK_
+	int sock_flags = flags;
+	flags &= ~SOCK_NONBLOCK;
+#endif
 
 	nl->fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC | flags, NETLINK_ROUTE);
 	if (nl->fd < 0) {
@@ -120,6 +131,12 @@ netlink_socket(nl_handle_t *nl, int flags, int group, ...)
 		       strerror(errno));
 		return -1;
 	}
+
+#ifndef _HAVE_SOCK_NONBLOCK_
+	if ((sock_flags & SOCK_NONBLOCK) &&
+	    set_sock_flags(nl->fd, F_SETFL, O_NONBLOCK))
+		return -1;
+#endif
 
 	memset(&snl, 0, sizeof (snl));
 	snl.nl_family = AF_NETLINK;
@@ -184,7 +201,7 @@ netlink_socket(nl_handle_t *nl, int flags, int group, ...)
 }
 
 /* Close a netlink socket */
-int
+static int
 netlink_close(nl_handle_t *nl)
 {
 	/* First of all release pending thread */
@@ -198,7 +215,7 @@ netlink_close(nl_handle_t *nl)
 }
 
 /* Set netlink socket channel as blocking */
-int
+static int
 netlink_set_block(nl_handle_t *nl, int *flags)
 {
 	if ((*flags = fcntl(nl->fd, F_GETFL, 0)) < 0) {
@@ -216,7 +233,7 @@ netlink_set_block(nl_handle_t *nl, int *flags)
 }
 
 /* Set netlink socket channel as non-blocking */
-int
+static int
 netlink_set_nonblock(nl_handle_t *nl, int *flags)
 {
 #ifdef _HAVE_LIBNL3_
@@ -299,13 +316,15 @@ parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta, int len)
 	}
 }
 
+#ifdef _HAVE_VRRP_VMAC_
 static void
 parse_rtattr_nested(struct rtattr **tb, int max, struct rtattr *rta)
 {
         parse_rtattr(tb, max, RTA_DATA(rta), RTA_PAYLOAD(rta));
 }
+#endif
 
-char *
+const char *
 netlink_scope_n2a(int scope)
 {
 	if (scope == RT_SCOPE_UNIVERSE)
@@ -410,10 +429,20 @@ netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
 
 	while (1) {
 		char buf[4096];
-		struct iovec iov = { buf, sizeof buf };
+		struct iovec iov = {
+			.iov_base = buf,
+			.iov_len = sizeof buf
+		};
 		struct sockaddr_nl snl;
-		struct msghdr msg =
-		    { (void *) &snl, sizeof snl, &iov, 1, NULL, 0, 0 };
+		struct msghdr msg = {
+			.msg_name = &snl,
+			.msg_namelen = sizeof(snl),
+			.msg_iov = &iov,
+			.msg_iovlen = 1,
+			.msg_control = NULL,
+			.msg_controllen = 0,
+			.msg_flags = 0
+		};
 		struct nlmsghdr *h;
 
 		status = recvmsg(nl->fd, &msg, 0);
@@ -533,8 +562,19 @@ netlink_talk(nl_handle_t *nl, struct nlmsghdr *n)
 	int status;
 	int ret, flags;
 	struct sockaddr_nl snl;
-	struct iovec iov = { (void *) n, n->nlmsg_len };
-	struct msghdr msg = { (void *) &snl, sizeof snl, &iov, 1, NULL, 0, 0 };
+	struct iovec iov = {
+		.iov_base = n,
+		.iov_len = n->nlmsg_len
+	};
+	struct msghdr msg = {
+		.msg_name = &snl,
+		.msg_namelen = sizeof(snl),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = NULL,
+		.msg_controllen = 0,
+		.msg_flags = 0
+	};
 
 	memset(&snl, 0, sizeof snl);
 	snl.nl_family = AF_NETLINK;
@@ -603,9 +643,11 @@ netlink_if_link_populate(interface_t *ifp, struct rtattr *tb[], struct ifinfomsg
 {
 	char *name;
 	int i;
+#ifdef _HAVE_VRRP_VMAC_
 	struct rtattr* linkinfo[IFLA_INFO_MAX+1];
 	struct rtattr* linkattr[IFLA_MACVLAN_MAX+1];
 	interface_t *ifp_base;
+#endif
 
 	name = (char *) RTA_DATA(tb[IFLA_IFNAME]);
 	/* Fill the interface structure */
@@ -636,6 +678,7 @@ netlink_if_link_populate(interface_t *ifp, struct rtattr *tb[], struct ifinfomsg
 		}
 	}
 
+#ifdef _HAVE_VRRP_VMAC_
 	/* See if this interface is a MACVLAN of ours */
 	if (tb[IFLA_LINKINFO] && tb[IFLA_LINK]){
 		/* If appears that the value of *(int*)RTA_DATA(tb[IFLA_LINKINFO]) is 0x1000c
@@ -662,14 +705,23 @@ netlink_if_link_populate(interface_t *ifp, struct rtattr *tb[], struct ifinfomsg
 		}
 	}
 
-	if (!ifp->vmac) {
+	if (!ifp->vmac)
+#endif
+	{
+#ifdef _HAVE_VRRP_VMAC_
 		if_vmac_reflect_flags(ifi->ifi_index, ifi->ifi_flags);
+#endif
 		ifp->flags = ifi->ifi_flags;
+#ifdef _HAVE_VRRP_VMAC_
 		ifp->base_ifindex = ifi->ifi_index;
-	} else {
+#endif
+	}
+#ifdef _HAVE_VRRP_VMAC_
+	else {
 		if ((ifp_base = if_get_by_ifindex(ifp->base_ifindex)))
 			ifp->flags = ifp_base->flags;
 	}
+#endif
 
 	return 1;
 }
@@ -707,8 +759,13 @@ netlink_if_link_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	/* Skip it if already exist */
 	ifp = if_get_by_ifname(name);
 	if (ifp) {
-		if (!ifp->vmac) {
+#ifdef _HAVE_VRRP_VMAC_
+		if (!ifp->vmac)
+#endif
+		{
+#ifdef _HAVE_VRRP_VMAC_
 			if_vmac_reflect_flags(ifi->ifi_index, ifi->ifi_flags);
+#endif
 			ifp->flags = ifi->ifi_flags;
 		}
 		return 0;
@@ -837,8 +894,13 @@ netlink_reflect_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	 * VMAC interfaces should never update it own flags, only be reflected
 	 * by the base interface flags.
 	 */
-	if (!ifp->vmac) {
+#ifdef _HAVE_VRRP_VMAC_
+	if (!ifp->vmac)
+#endif
+	{
+#ifdef _HAVE_VRRP_VMAC_
 		if_vmac_reflect_flags(ifi->ifi_index, ifi->ifi_flags);
+#endif
 		ifp->flags = ifi->ifi_flags;
 	}
 
@@ -867,7 +929,7 @@ netlink_broadcast_filter(struct sockaddr_nl *snl, struct nlmsghdr *h)
 	return 0;
 }
 
-int
+static int
 kernel_netlink(thread_t * thread)
 {
 	nl_handle_t *nl = THREAD_ARG(thread);

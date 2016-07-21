@@ -58,14 +58,17 @@ static int signal_pipe[2] = { -1, -1 };
 static sigset_t ign_sig;
 static sigset_t dfl_sig;
 
+#ifdef _INCLUDE_UNUSED_CODE_
 /* Local signal test */
-/* Currently unused
 int
 signal_pending(void)
 {
 	fd_set readset;
 	int rc;
-	struct timeval timeout = { 0, 0 };
+	struct timeval timeout = {
+		.tv_sec = 0,
+		.tv_usec = 0
+	};
 
 	FD_ZERO(&readset);
 	FD_SET(signal_pipe[0], &readset);
@@ -74,7 +77,7 @@ signal_pending(void)
 
 	return rc>0?1:0;
 }
-*/
+#endif
 
 /* Signal flag */
 static void
@@ -246,12 +249,6 @@ signal_handlers_clear(void *state)
 	signal_set(SIGCHLD, state, NULL);
 	signal_set(SIGUSR1, state, NULL);
 	signal_set(SIGUSR2, state, NULL);
-}
-
-void
-signal_handler_reset(void)
-{
-	signal_handlers_clear(SIG_DFL);
 }
 
 void

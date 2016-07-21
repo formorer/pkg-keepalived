@@ -22,6 +22,9 @@
 
 #include "libipvs.h"
 #include "memory.h"
+#ifndef _HAVE_SOCK_CLOEXEC_
+#include "old_socket.h"
+#endif
 
 typedef struct ipvs_servicedest_s {
 	struct ip_vs_service_kern	svc;
@@ -172,6 +175,11 @@ int ipvs_init(void)
 	if ((sockfd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_RAW)) == -1)
 		return -1;
 
+#ifndef _HAVE_SOCK_CLOEXEC_
+	if (set_sock_flags(sockfd, F_SETFD, FD_CLOEXEC))
+		return -1;
+#endif
+
 	if (getsockopt(sockfd, IPPROTO_IP, IP_VS_SO_GET_INFO,
 		       (char *)&ipvs_info, &len))
 		return -1;
@@ -221,10 +229,12 @@ int ipvs_getinfo(void)
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
 unsigned int ipvs_version(void)
 {
 	return ipvs_info.version;
 }
+#endif
 
 
 int ipvs_flush(void)
@@ -490,6 +500,8 @@ out_err:
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
+static
 int ipvs_set_timeout(ipvs_timeout_t *to)
 {
 	ipvs_func = ipvs_set_timeout;
@@ -510,6 +522,7 @@ nla_put_failure:
 	return setsockopt(sockfd, IPPROTO_IP, IP_VS_SO_SET_TIMEOUT, (char *)to,
 			  sizeof(*to));
 }
+#endif
 
 
 int ipvs_start_daemon(ipvs_daemon_t *dm)
@@ -681,6 +694,7 @@ static int ipvs_services_parse_cb(struct nl_msg *msg, void *arg)
 }
 #endif
 
+static
 struct ip_vs_get_services *ipvs_get_services(void)
 {
 	struct ip_vs_get_services *get;
@@ -739,6 +753,7 @@ struct ip_vs_get_services *ipvs_get_services(void)
 
 typedef int (*qsort_cmp_t)(const void *, const void *);
 
+#ifdef _INCLUDE_UNUSED_CODE_
 int
 ipvs_cmp_services(ipvs_service_entry_t *s1, ipvs_service_entry_t *s2)
 {
@@ -767,13 +782,13 @@ ipvs_cmp_services(ipvs_service_entry_t *s1, ipvs_service_entry_t *s2)
 	return ntohs(s1->port) - ntohs(s2->port);
 }
 
-
 void
 ipvs_sort_services(struct ip_vs_get_services *s, ipvs_service_cmp_t f)
 {
 	qsort(s->entrytable, s->num_services,
 	      sizeof(ipvs_service_entry_t), (qsort_cmp_t)f);
 }
+#endif
 
 #ifdef LIBIPVS_USE_NL
 static int ipvs_dests_parse_cb(struct nl_msg *msg, void *arg)
@@ -935,6 +950,7 @@ ipvs_nl_dest_failure:
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
 int ipvs_cmp_dests(ipvs_dest_entry_t *d1, ipvs_dest_entry_t *d2)
 {
 	int r = 0, i;
@@ -957,6 +973,7 @@ void ipvs_sort_dests(struct ip_vs_get_dests *d, ipvs_dest_cmp_t f)
 	qsort(d->entrytable, d->num_dests,
 	      sizeof(ipvs_dest_entry_t), (qsort_cmp_t)f);
 }
+#endif
 
 
 ipvs_service_entry_t *
@@ -1036,6 +1053,7 @@ out_err:
 	return NULL;
 }
 
+#ifdef _INCLUDE_UNUSED_CODE_
 #ifdef LIBIPVS_USE_NL
 static int ipvs_timeout_parse_cb(struct nl_msg *msg, void *arg)
 {
@@ -1086,7 +1104,9 @@ ipvs_timeout_t *ipvs_get_timeout(void)
 	}
 	return u;
 }
+#endif
 
+#ifdef _INCLUDE_UNUSED_CODE_
 #ifdef LIBIPVS_USE_NL
 static int ipvs_daemon_parse_cb(struct nl_msg *msg, void *arg)
 {
@@ -1152,7 +1172,7 @@ ipvs_daemon_t *ipvs_get_daemon(void)
 	}
 	return u;
 }
-
+#endif
 
 void ipvs_close(void)
 {
