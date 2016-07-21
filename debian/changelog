@@ -1,7 +1,8 @@
 keepalived (1:1.2.23-1) unstable; urgency=medium
 
   * [94beb84] Imported Upstream version 1.2.23
-    Closes (#821941)
+    (Closes: #821941)
+    - fix some segfaults (Closes: #830955)
 
  -- Alexander Wirt <formorer@debian.org>  Thu, 21 Jul 2016 10:12:06 +0200
 
