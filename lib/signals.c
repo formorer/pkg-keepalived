@@ -21,10 +21,17 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+#include "config.h"
+
+#if defined HAVE_PIPE2 && !defined _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <signal.h>
 #include <string.h>
-#include <unistd.h>
+
 #include <fcntl.h>
+#include <unistd.h>
+
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
@@ -113,9 +120,7 @@ signal_set(int signo, void (*func) (void *, int), void *v)
 		sig.sa_handler = signal_handler;
 	sigemptyset(&sig.sa_mask);
 	sig.sa_flags = 0;
-#ifdef SA_RESTART
 	sig.sa_flags |= SA_RESTART;
-#endif				/* SA_RESTART */
 
 	/* Block the signal we are about to configure, to avoid
 	 * any race conditions while setting the handler and

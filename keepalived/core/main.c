@@ -20,7 +20,12 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
+#include "git-commit.h"
+
 #include <sys/resource.h>
+#include <stdbool.h>
 
 #include "main.h"
 #include "config.h"
@@ -28,21 +33,47 @@
 #include "pidfile.h"
 #include "bitops.h"
 #include "logger.h"
+#include "check_parser.h"
+#include "vrrp_parser.h"
+#include "global_parser.h"
+#if HAVE_DECL_CLONE_NEWNET
+#include "namespaces.h"
+#endif
+
+#define	LOG_FACILITY_MAX	7
+#define	VERSION_STRING		PACKAGE_NAME " v" PACKAGE_VERSION " (" VERSION_DATE ")"
+#define COPYRIGHT_STRING	"Copyright(C) 2001-" COPYRIGHT_YEAR " Alexandre Cassen, <acassen@gmail.com>"
+#define BUILD_OPTIONS		CONFIGURATION_OPTIONS
 
 #define CHILD_WAIT_SECS	5
 
 /* global var */
-char *conf_file = CONF;					/* Configuration file */
+const char *version_string = VERSION_STRING;		/* keepalived version */
+char *conf_file = KEEPALIVED_CONFIG_FILE;		/* Configuration file */
 int log_facility = LOG_DAEMON;				/* Optional logging facilities */
-pid_t vrrp_child = -1;					/* VRRP child process ID */
+char *main_pidfile;					/* overrule default pidfile */
+static bool free_main_pidfile;
+#ifdef _WITH_LVS_
 pid_t checkers_child = -1;				/* Healthcheckers child process ID */
-const char *main_pidfile = KEEPALIVED_PID_FILE;		/* overrule default pidfile */
-const char *checkers_pidfile = CHECKERS_PID_FILE;	/* overrule default pidfile */
-const char *vrrp_pidfile = VRRP_PID_FILE;		/* overrule default pidfile */
-unsigned long daemon_mode = 0;				/* VRRP/CHECK subsystem selection */
+char *checkers_pidfile;					/* overrule default pidfile */
+static bool free_checkers_pidfile;
+#endif
+#ifdef _WITH_VRRP_
+pid_t vrrp_child = -1;					/* VRRP child process ID */
+char *vrrp_pidfile;					/* overrule default pidfile */
+static bool free_vrrp_pidfile;
+#endif
+unsigned long daemon_mode;				/* VRRP/CHECK subsystem selection */
 #ifdef _WITH_SNMP_
-int snmp = 0;						/* Enable SNMP support */
-const char *snmp_socket = NULL;				/* Socket to use for SNMP agent */
+bool snmp;						/* Enable SNMP support */
+const char *snmp_socket;				/* Socket to use for SNMP agent */
+#endif
+static char *syslog_ident;				/* syslog ident if not default */
+char *instance_name;					/* keepalived instance name */
+bool use_pid_dir;					/* Put pid files in /var/run/keepalived */
+
+#if HAVE_DECL_CLONE_NEWNET
+static char *override_namespace;			/* If namespace specified on command line */
 #endif
 
 /* Log facility table */
@@ -59,24 +90,157 @@ static bool create_core_dump = false;
 static const char *core_dump_pattern = "core";
 static char *orig_core_dump_pattern = NULL;
 
+void
+free_parent_mallocs_startup(bool am_child)
+{
+	if (am_child) {
+#if HAVE_DECL_CLONE_NEWNET
+		free_dirname();
+#endif
+#ifndef _MEM_CHECK_LOG_
+		FREE_PTR(syslog_ident);
+#else
+		free(syslog_ident);
+#endif
+	}
+
+	if (free_main_pidfile) {
+		FREE_PTR(main_pidfile);
+		free_main_pidfile = false;
+	}
+}
+
+void
+free_parent_mallocs_exit(void)
+{
+#if HAVE_DECL_CLONE_NEWNET
+	FREE_PTR(network_namespace);
+#endif
+
+#ifdef _WITH_VRRP_
+	if (free_vrrp_pidfile)
+		FREE_PTR(vrrp_pidfile);
+#endif
+#ifdef _WITH_LVS_
+	if (free_checkers_pidfile)
+		FREE_PTR(checkers_pidfile);
+#endif
+
+	FREE_PTR(instance_name);
+}
+
+char *
+make_syslog_ident(const char* name)
+{
+	size_t ident_len = strlen(name) + 1;
+	char *ident;
+
+#if HAVE_DECL_CLONE_NEWNET
+	if (network_namespace)
+		ident_len += strlen(network_namespace) + 1;
+#endif
+	if (instance_name)
+		ident_len += strlen(instance_name) + 1;
+
+	/* If we are writing MALLOC/FREE info to the log, we have
+	 * trouble FREEing the syslog_ident */
+#ifndef _MEM_CHECK_LOG_
+	ident = MALLOC(ident_len);
+#else
+	ident = malloc(ident_len);
+#endif
+
+	if (!ident)
+		return NULL;
+
+	strcpy(ident, name);
+#if HAVE_DECL_CLONE_NEWNET
+	if (network_namespace) {
+		strcat(ident, "_");
+			strcat(ident, network_namespace);
+		}
+#endif
+	if (instance_name) {
+		strcat(ident, "_");
+		strcat(ident, instance_name);
+	}
+
+	return ident;
+}
+
+static char *
+make_pidfile_name(const char* start, const char* instance, const char* extn)
+{
+	size_t len;
+	char *name;
+
+	len = strlen(start) + 1;
+	if (instance)
+		len += strlen(instance) + 1;
+	if (extn)
+		len += strlen(extn);
+
+	name = MALLOC(len);
+	if (!name) {
+		log_message(LOG_INFO, "Unable to make pidfile name for %s", start);
+		return NULL;
+	}
+
+	strcpy(name, start);
+	if (instance) {
+		strcat(name, "_");
+		strcat(name, instance);
+	}
+	if (extn)
+		strcat(name, extn);
+
+	return name;
+}
+
+#if HAVE_DECL_CLONE_NEWNET
+static vector_t *
+global_init_keywords(void)
+{
+	/* global definitions mapping */
+	init_global_keywords(false);
+
+#ifdef _WITH_VRRP_
+	init_vrrp_keywords(false);
+#endif
+#ifdef _WITH_LVS_
+	init_check_keywords(false);
+#endif
+
+	return keywords;
+}
+
+static void
+read_config_file(void)
+{
+	init_data(conf_file, global_init_keywords);
+}
+#endif
+
 /* Daemon stop sequence */
 static void
 stop_keepalived(void)
 {
+#ifndef _DEBUG_
 	/* Just cleanup memory & exit */
 	signal_handler_destroy();
 	thread_destroy_master(master);
 
-	pidfile_rm(main_pidfile);
-
+#ifdef _WITH_VRRP_
 	if (__test_bit(DAEMON_VRRP, &daemon_mode))
 		pidfile_rm(vrrp_pidfile);
+#endif
 
+#ifdef _WITH_LVS_
 	if (__test_bit(DAEMON_CHECKERS, &daemon_mode))
 		pidfile_rm(checkers_pidfile);
+#endif
 
-#ifdef _MEM_CHECK_
-	keepalived_free_final("Parent process");
+	pidfile_rm(main_pidfile);
 #endif
 }
 
@@ -97,14 +261,55 @@ start_keepalived(void)
 }
 
 /* SIGHUP/USR1/USR2 handler */
+#ifndef _DEBUG_
 static void
 propogate_signal(void *v, int sig)
 {
+	bool unsupported_change = false;
+
+	if (sig == SIGHUP) {
+		/* Make sure there isn't an attempt to change the network namespace or instance name */
+#if HAVE_DECL_CLONE_NEWNET
+		char *old_network_namespace = network_namespace;
+		network_namespace = NULL;
+#endif
+		char *old_instance_name = instance_name;
+		instance_name = NULL;
+
+		/* The only parameters handled are net_namespace and instance_name */
+		read_config_file();
+
+#if HAVE_DECL_CLONE_NEWNET
+		if (!!old_network_namespace != !!network_namespace ||
+		    (network_namespace && strcmp(old_network_namespace, network_namespace))) {
+			log_message(LOG_INFO, "Cannot change network namespace at a reload - please restart %s", PACKAGE);
+			unsupported_change = true;
+		}
+		FREE_PTR(network_namespace);
+		network_namespace = old_network_namespace;
+#endif
+
+		if (!!old_instance_name != !!instance_name ||
+		    (instance_name && strcmp(old_instance_name, instance_name))) {
+			log_message(LOG_INFO, "Cannot change instance name at a reload - please restart %s", PACKAGE);
+			unsupported_change = true;
+		}
+		FREE_PTR(instance_name);
+		instance_name = old_instance_name;
+
+		if (unsupported_change)
+			return;
+	}
+
 	/* Signal child process */
+#ifdef _WITH_VRRP_
 	if (vrrp_child > 0)
 		kill(vrrp_child, sig);
+#endif
+#ifdef _WITH_LVS_
 	if (checkers_child > 0 && sig == SIGHUP)
 		kill(checkers_child, sig);
+#endif
 }
 
 /* Terminate handler */
@@ -132,14 +337,18 @@ sigend(void *v, int sig)
 		sigprocmask(SIG_BLOCK, &child_wait, NULL);
 	}
 
+#ifdef _WITH_VRRP_
 	if (vrrp_child > 0) {
 		kill(vrrp_child, SIGTERM);
 		wait_count++;
 	}
+#endif
+#ifdef _WITH_LVS_
 	if (checkers_child > 0) {
 		kill(checkers_child, SIGTERM);
 		wait_count++;
 	}
+#endif
 
 	gettimeofday(&start_time, NULL);
 	while (wait_count) {
@@ -151,15 +360,20 @@ sigend(void *v, int sig)
 				break;
 		}
 
+#ifdef _WITH_VRRP_
 		if (vrrp_child > 0 && vrrp_child == waitpid(vrrp_child, &status, WNOHANG)) {
 			report_child_status(status, vrrp_child, PROG_VRRP);
 			wait_count--;
 		}
+#endif
 
+#ifdef _WITH_LVS_
 		if (checkers_child > 0 && checkers_child == waitpid(checkers_child, &status, WNOHANG)) {
 			report_child_status(status, checkers_child, PROG_CHECK);
 			wait_count--;
 		}
+#endif
+
 		if (wait_count) {
 			gettimeofday(&now, NULL);
 			if (now.tv_usec < start_time.tv_usec) {
@@ -198,11 +412,14 @@ signal_init(void)
 	signal_set(SIGTERM, sigend, NULL);
 	signal_ignore(SIGPIPE);
 }
+#endif
 
 /* To create a core file when abrt is running (a RedHat distribution),
  * and keepalived isn't installed from an RPM package, edit the file
  * “/etc/abrt/abrt.conf”, and change the value of the field
- * “ProcessUnpackaged” to “yes”. */
+ * “ProcessUnpackaged” to “yes”.
+ *
+ * Alternatively, use the -M command line option. */
 static void
 update_core_dump_pattern(const char *pattern_str)
 {
@@ -269,8 +486,10 @@ usage(const char *prog)
 {
 	fprintf(stderr, "Usage: %s [OPTION...]\n", prog);
 	fprintf(stderr, "  -f, --use-file=FILE          Use the specified configuration file\n");
+#if defined _WITH_VRRP_ && defined _WITH_LVS_
 	fprintf(stderr, "  -P, --vrrp                   Only run with VRRP subsystem\n");
 	fprintf(stderr, "  -C, --check                  Only run with Health-checker subsystem\n");
+#endif
 	fprintf(stderr, "  -l, --log-console            Log messages to local console\n");
 	fprintf(stderr, "  -D, --log-detail             Detailed log messages\n");
 	fprintf(stderr, "  -S, --log-facility=[0-7]     Set syslog facility to LOG_LOCAL[0-7]\n");
@@ -281,11 +500,18 @@ usage(const char *prog)
 	fprintf(stderr, "  -n, --dont-fork              Don't fork the daemon process\n");
 	fprintf(stderr, "  -d, --dump-conf              Dump the configuration data\n");
 	fprintf(stderr, "  -p, --pid=FILE               Use specified pidfile for parent process\n");
+#ifdef _WITH_VRRP_
 	fprintf(stderr, "  -r, --vrrp_pid=FILE          Use specified pidfile for VRRP child process\n");
+#endif
+#ifdef _WITH_LVS_
 	fprintf(stderr, "  -c, --checkers_pid=FILE      Use specified pidfile for checkers child process\n");
+#endif
 #ifdef _WITH_SNMP_
 	fprintf(stderr, "  -x, --snmp                   Enable SNMP subsystem\n");
 	fprintf(stderr, "  -A, --snmp-agent-socket=FILE Use the specified socket for master agent\n");
+#endif
+#if HAVE_DECL_CLONE_NEWNET
+	fprintf(stderr, "  -s, --namespace=NAME         Run in network namespace NAME (overrides config)\n");
 #endif
 	fprintf(stderr, "  -m, --core-dump              Produce core dump if terminate abnormally\n");
 	fprintf(stderr, "  -M, --core-dump-pattern=PATN Also set /proc/sys/kernel/core_pattern to PATN (default 'core')\n");
@@ -304,8 +530,10 @@ parse_cmdline(int argc, char **argv)
 
 	struct option long_options[] = {
 		{"use-file",          required_argument, 0, 'f'},
+#if defined _WITH_VRRP_ && defined _WITH_LVS_
 		{"vrrp",              no_argument,       0, 'P'},
 		{"check",             no_argument,       0, 'C'},
+#endif
 		{"log-console",       no_argument,       0, 'l'},
 		{"log-detail",        no_argument,       0, 'D'},
 		{"log-facility",      required_argument, 0, 'S'},
@@ -316,30 +544,52 @@ parse_cmdline(int argc, char **argv)
 		{"dont-fork",         no_argument,       0, 'n'},
 		{"dump-conf",         no_argument,       0, 'd'},
 		{"pid",               required_argument, 0, 'p'},
+#ifdef _WITH_VRRP_
 		{"vrrp_pid",          required_argument, 0, 'r'},
+#endif
+#ifdef _WITH_LVS_
 		{"checkers_pid",      required_argument, 0, 'c'},
- #ifdef _WITH_SNMP_
+#endif
+#ifdef _WITH_SNMP_
 		{"snmp",              no_argument,       0, 'x'},
 		{"snmp-agent-socket", required_argument, 0, 'A'},
- #endif
+#endif
 		{"core-dump",         no_argument,       0, 'm'},
 		{"core-dump-pattern", optional_argument, 0, 'M'},
 #ifdef _MEM_CHECK_LOG_
 		{"mem-check-log",     no_argument,       0, 'L'},
 #endif
+#if HAVE_DECL_CLONE_NEWNET
+		{"namespace",         required_argument, 0, 's'},
+#endif	
 		{"version",           no_argument,       0, 'v'},
 		{"help",              no_argument,       0, 'h'},
 		{0, 0, 0, 0}
 	};
 
-	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:PCp:c:r:mML"
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:p:mM"
+#if defined _WITH_VRRP_ && defined _WITH_LVS_
+					    "PC"
+#endif
+#ifdef _WITH_VRRP_ 
+					    "r:"
+#endif
+#ifdef _WITH_LVS_
+					    "c:"
+#endif
 #ifdef _WITH_SNMP_
 					    "xA:"
 #endif
-									, long_options, NULL)) != EOF) {
+#ifdef _MEM_CHECK_LOG_
+					    "L"
+#endif
+#if HAVE_DECL_CLONE_NEWNET
+					    "s:"
+#endif
+				, long_options, NULL)) != EOF) {
 		switch (c) {
 		case 'v':
-			fprintf(stderr, "%s", VERSION_STRING);
+			fprintf(stderr, "%s", version_string);
 #ifdef GIT_COMMIT
 			fprintf(stderr, ", git commit %s", GIT_COMMIT);
 #endif
@@ -381,6 +631,7 @@ parse_cmdline(int argc, char **argv)
 		case 'f':
 			conf_file = optarg;
 			break;
+#if defined _WITH_VRRP_ && defined _WITH_LVS_
 		case 'P':
 			daemon_mode = 0;
 			__set_bit(DAEMON_VRRP, &daemon_mode);
@@ -389,15 +640,20 @@ parse_cmdline(int argc, char **argv)
 			daemon_mode = 0;
 			__set_bit(DAEMON_CHECKERS, &daemon_mode);
 			break;
+#endif
 		case 'p':
 			main_pidfile = optarg;
 			break;
+#ifdef _WITH_LVS_
 		case 'c':
 			checkers_pidfile = optarg;
 			break;
+#endif
+#ifdef _WITH_VRRP_
 		case 'r':
 			vrrp_pidfile = optarg;
 			break;
+#endif
 #ifdef _WITH_SNMP_
 		case 'x':
 			snmp = 1;
@@ -418,6 +674,12 @@ parse_cmdline(int argc, char **argv)
 			__set_bit(MEM_CHECK_LOG_BIT, &debug);
 			break;
 #endif
+#if HAVE_DECL_CLONE_NEWNET
+		case 's':
+			override_namespace = MALLOC(strlen(optarg) + 1);
+			strcpy(override_namespace, optarg);
+			break;
+#endif
 		default:
 			exit(0);
 			break;
@@ -434,16 +696,20 @@ parse_cmdline(int argc, char **argv)
 
 /* Entry point */
 int
-main(int argc, char **argv)
+keepalived_main(int argc, char **argv)
 {
-	int report_stopped = true;
+	bool report_stopped = true;
 
 	/* Init debugging level */
 	debug = 0;
 
 	/* Initialise daemon_mode */
+#ifdef _WITH_VRRP_
 	__set_bit(DAEMON_VRRP, &daemon_mode);
+#endif
+#ifdef _WITH_LVS_
 	__set_bit(DAEMON_CHECKERS, &daemon_mode);
+#endif
 
 	/*
 	 * Parse command line and set debug level.
@@ -451,34 +717,23 @@ main(int argc, char **argv)
 	 */
 	parse_cmdline(argc, argv);
 
-	openlog(PROG, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
-		    , log_facility);
-#ifdef GIT_COMMIT
-	log_message(LOG_INFO, "Starting %s, git commit %s", VERSION_STRING, GIT_COMMIT);
-#else
-	log_message(LOG_INFO, "Starting %s", VERSION_STRING);
-#endif
-
-#ifdef _MEM_CHECK_
-	mem_log_init(PROG);
-#endif
-
-	/* Handle any core file requirements */
-	core_dump_init();
-
-	/* Check if keepalived is already running */
-	if (keepalived_running(daemon_mode)) {
-		log_message(LOG_INFO, "daemon is already running");
-		report_stopped = false;
-		goto end;
-	}
+	openlog(PACKAGE_NAME, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0) , log_facility);
 
 	if (__test_bit(LOG_CONSOLE_BIT, &debug))
 		enable_console_log();
 
-	/* daemonize process */
-	if (!__test_bit(DONT_FORK_BIT, &debug))
-		xdaemon(0, 0, 0);
+#ifdef GIT_COMMIT
+	log_message(LOG_INFO, "Starting %s, git commit %s", version_string, GIT_COMMIT);
+#else
+	log_message(LOG_INFO, "Starting %s", version_string);
+#endif
+
+#ifdef _MEM_CHECK_
+	mem_log_init(PACKAGE_NAME, "Parent process");
+#endif
+
+	/* Handle any core file requirements */
+	core_dump_init();
 
 	/* Check we can read the configuration file(s).
  	   NOTE: the working directory will be / if we
@@ -489,6 +744,103 @@ main(int argc, char **argv)
  	   depending on whether we forked or not. */
 	if (!check_conf_file(conf_file))
 		goto end;
+
+	read_config_file();
+
+#if HAVE_DECL_CLONE_NEWNET
+	if (override_namespace) {
+		if (network_namespace) {
+			log_message(LOG_INFO, "Overriding config net_namespace '%s' with command line namespace '%s'", network_namespace, override_namespace);
+			FREE(network_namespace);
+		}
+		network_namespace = override_namespace;
+		override_namespace = NULL;
+	}
+#endif
+
+	if (instance_name
+#if HAVE_DECL_CLONE_NEWNET
+			  || network_namespace
+#endif
+					      ) {
+		if ((syslog_ident = make_syslog_ident(PACKAGE_NAME))) {
+			log_message(LOG_INFO, "Changing syslog ident to %s", syslog_ident);
+			closelog();
+			openlog(syslog_ident, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0), log_facility);
+		}
+		else
+			log_message(LOG_INFO, "Unable to change syslog ident");
+
+		use_pid_dir = true;
+	}
+
+	if (use_pid_dir) {
+		/* Create the directory for pid files */
+		create_pid_dir();
+	}
+
+#if HAVE_DECL_CLONE_NEWNET
+	if (network_namespace) {
+		if (network_namespace && !set_namespaces(network_namespace)) {
+			log_message(LOG_ERR, "Unable to set network namespace %s - exiting", network_namespace);
+			goto end;
+		}
+	}
+#endif
+
+	if (instance_name) {
+		if (!main_pidfile && (main_pidfile = make_pidfile_name(KEEPALIVED_PID_DIR KEEPALIVED_PID_FILE, instance_name, PID_EXTENSION)))
+			free_main_pidfile = true;
+#ifdef _WITH_LVS_
+		if (!checkers_pidfile && (checkers_pidfile = make_pidfile_name(KEEPALIVED_PID_DIR CHECKERS_PID_FILE, instance_name, PID_EXTENSION)))
+			free_checkers_pidfile = true;
+#endif
+#ifdef _WITH_VRRP_
+		if (!vrrp_pidfile && (vrrp_pidfile = make_pidfile_name(KEEPALIVED_PID_DIR VRRP_PID_FILE, instance_name, PID_EXTENSION)))
+			free_vrrp_pidfile = true;
+#endif
+	}
+
+	if (use_pid_dir) {
+		if (!main_pidfile)
+			main_pidfile = KEEPALIVED_PID_DIR KEEPALIVED_PID_FILE PID_EXTENSION;
+#ifdef _WITH_LVS_
+		if (!checkers_pidfile)
+			checkers_pidfile = KEEPALIVED_PID_DIR CHECKERS_PID_FILE PID_EXTENSION;
+#endif
+#ifdef _WITH_VRRP_
+		if (!vrrp_pidfile)
+			vrrp_pidfile = KEEPALIVED_PID_DIR VRRP_PID_FILE PID_EXTENSION;
+#endif
+	}
+	else
+	{
+		if (!main_pidfile)
+			main_pidfile = PID_DIR KEEPALIVED_PID_FILE PID_EXTENSION;
+#ifdef _WITH_LVS_
+		if (!checkers_pidfile)
+			checkers_pidfile = PID_DIR CHECKERS_PID_FILE PID_EXTENSION;
+#endif
+#ifdef _WITH_VRRP_
+		if (!vrrp_pidfile)
+			vrrp_pidfile = PID_DIR VRRP_PID_FILE PID_EXTENSION;
+#endif
+	}
+
+	/* Check if keepalived is already running */
+	if (keepalived_running(daemon_mode)) {
+		log_message(LOG_INFO, "daemon is already running");
+		report_stopped = false;
+		goto end;
+	}
+
+	/* daemonize process */
+	if (!__test_bit(DONT_FORK_BIT, &debug))
+		xdaemon(0, 0, 0);
+
+#ifdef _MEM_CHECK_
+	enable_mem_log_termination();
+#endif
 
 	/* write the father's pidfile */
 	if (!pidfile_write(main_pidfile, getpid()))
@@ -508,10 +860,10 @@ main(int argc, char **argv)
 #ifndef _DEBUG_
 	/* Launch the scheduling I/O multiplexer */
 	launch_scheduler();
+#endif
 
 	/* Finish daemon process */
 	stop_keepalived();
-#endif
 
 	/*
 	 * Reached when terminate signal catched.
@@ -520,16 +872,35 @@ main(int argc, char **argv)
 end:
 	if (report_stopped) {
 #ifdef GIT_COMMIT
-		log_message(LOG_INFO, "Stopped %s, git commit %s", VERSION_STRING, GIT_COMMIT);
+		log_message(LOG_INFO, "Stopped %s, git commit %s", version_string, GIT_COMMIT);
 #else
-		log_message(LOG_INFO, "Stopped %s", VERSION_STRING);
+		log_message(LOG_INFO, "Stopped %s", version_string);
 #endif
 	}
+
+#if HAVE_DECL_CLONE_NEWNET
+	if (network_namespace)
+		clear_namespaces();
+#endif
+
+	if (use_pid_dir)
+		remove_pid_dir();
 
 	/* Restore original core_pattern if necessary */
 	if (orig_core_dump_pattern)
 		update_core_dump_pattern(orig_core_dump_pattern);
 
+	free_parent_mallocs_startup(false);
+	free_parent_mallocs_exit();
+
 	closelog();
+
+#ifndef _MEM_CHECK_LOG_
+	FREE_PTR(syslog_ident);
+#else
+	if (syslog_ident)
+		free(syslog_ident);
+#endif
+
 	exit(0);
 }

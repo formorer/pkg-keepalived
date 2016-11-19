@@ -23,9 +23,7 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#include <ctype.h>
-#include <sys/uio.h>
-#include <openssl/md5.h>
+#include "config.h"
 
 /* local include */
 #include "vrrp_arp.h"
@@ -55,7 +53,8 @@
 #include "utils.h"
 #include "notify.h"
 #include "bitops.h"
-#ifndef _HAVE_SOCK_CLOEXEC_
+#include "vrrp_netlink.h"
+#if !HAVE_DECL_SOCK_CLOEXEC
 #include "old_socket.h"
 #endif
 #ifdef _HAVE_FIB_ROUTING_
@@ -63,7 +62,7 @@
 #include "vrrp_iproute.h"
 #endif
 
-#include <net/ethernet.h>
+#include <netinet/ip.h>
 #include <netinet/ip6.h>
 
 /* add/remove Virtual IP addresses */
@@ -498,7 +497,7 @@ vrrp_in_chk(vrrp_t * vrrp, char *buffer, size_t buflen, bool check_vip_addr)
 
 	/*
 	 * MUST verify that the Adver Interval in the packet is the same as
-	 * the locally configured for this virtual router
+	 * the locally configured for this virtual router if VRRPv2
 	 */
 	if (vrrp->version == VRRP_VERSION_2) {
 		adver_int = hd->v2.adver_int * TIMER_HZ;
@@ -508,15 +507,6 @@ vrrp_in_chk(vrrp_t * vrrp, char *buffer, size_t buflen, bool check_vip_addr)
 			/* to prevent concurent VRID running => multiple master in 1 VRID */
 			return VRRP_PACKET_DROP;
 		}
-	}
-	else if (vrrp->version == VRRP_VERSION_3 && vrrp->state == VRRP_STATE_BACK) {
-		/* In v3 we do not drop the packet. Instead, when we are in BACKUP
-		 * state, we set our advertisement interval to match the MASTER's.
-		 */
-		adver_int = (ntohs(hd->v3.adver_int) & 0x0FFF) * TIMER_CENTI_HZ;
-		if (vrrp->master_adver_int != adver_int)
-			log_message(LOG_INFO, "(%s): advertisement interval changed: mine=%d milli-sec, rcved=%d milli-sec",
-				vrrp->iname, vrrp->master_adver_int / (TIMER_HZ / 1000), adver_int / (TIMER_HZ / 1000));
 	}
 
 	if (vrrp->family == AF_INET && ntohs(ip->tot_len) != buflen) {
@@ -659,6 +649,15 @@ vrrp_in_chk(vrrp_t * vrrp, char *buffer, size_t buflen, bool check_vip_addr)
 
 	if (hd->priority == 0)
 		++vrrp->stats->pri_zero_rcvd;
+
+	if (vrrp->version == VRRP_VERSION_3 && vrrp->state == VRRP_STATE_BACK) {
+		/* In v3 when we are in BACKUP state, we set our
+		 * advertisement interval to match the MASTER's. */
+		adver_int = (ntohs(hd->v3.adver_int) & 0x0FFF) * TIMER_CENTI_HZ;
+		if (vrrp->master_adver_int != adver_int)
+			log_message(LOG_INFO, "(%s): advertisement interval changed: mine=%d milli-sec, rcved=%d milli-sec",
+				vrrp->iname, vrrp->master_adver_int / (TIMER_HZ / 1000), adver_int / (TIMER_HZ / 1000));
+	}
 
 	return VRRP_PACKET_OK;
 }
@@ -1041,7 +1040,7 @@ vrrp_alloc_send_buffer(vrrp_t * vrrp)
 	vrrp->send_buffer = MALLOC(VRRP_SEND_BUFFER_SIZE(vrrp));
 }
 
-/* send VRRP advertissement */
+/* send VRRP advertisement */
 int
 vrrp_send_adv(vrrp_t * vrrp, int prio)
 {
@@ -1182,6 +1181,8 @@ vrrp_remove_delayed_arp(vrrp_t *vrrp)
 static void
 vrrp_state_become_master(vrrp_t * vrrp)
 {
+	interface_t *ifp ;
+
 	++vrrp->stats->become_master;
 
 	if (vrrp->version == VRRP_VERSION_3)
@@ -1206,7 +1207,14 @@ vrrp_state_become_master(vrrp_t * vrrp)
 		vrrp_handle_iprules(vrrp, IPRULE_ADD, false);
 #endif
 
+	kernel_netlink_poll();
+
 	/* remotes neighbour update */
+	if (vrrp->family == AF_INET6) {
+		/* Refresh whether we are acting as a router for NA messages */
+		ifp = IF_BASE_IFP(vrrp->ifp);
+		ifp->gna_router = get_ipv6_forwarding(ifp);
+	}
 	vrrp_send_link_update(vrrp, vrrp->garp_rep);
 
 	/* set refresh timer */
@@ -1227,10 +1235,10 @@ vrrp_state_become_master(vrrp_t * vrrp)
 	vrrp_rfcv3_snmp_new_master_notify(vrrp);
 #endif
 
-#ifdef _HAVE_IPVS_SYNCD_
+#ifdef _WITH_LVS_
 	/* Check if sync daemon handling is needed */
-	if (global_data->lvs_syncd_vrrp == vrrp)
-		ipvs_syncd_master(global_data->lvs_syncd_if, global_data->lvs_syncd_syncid);
+	if (global_data->lvs_syncd.vrrp == vrrp)
+		ipvs_syncd_master(&global_data->lvs_syncd);
 #endif
 	vrrp->last_transition = timer_now();
 }
@@ -1316,10 +1324,10 @@ void
 vrrp_state_leave_master(vrrp_t * vrrp)
 {
 	if (VRRP_VIP_ISSET(vrrp)) {
-#ifdef _HAVE_IPVS_SYNCD_
+#ifdef _WITH_LVS_
 		/* Check if sync daemon handling is needed */
-		if (global_data->lvs_syncd_vrrp == vrrp)
-			ipvs_syncd_backup(global_data->lvs_syncd_if, global_data->lvs_syncd_syncid);
+		if (global_data->lvs_syncd.vrrp == vrrp)
+			ipvs_syncd_backup(&global_data->lvs_syncd);
 #endif
 	}
 
@@ -1524,13 +1532,10 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, int buflen)
 		return 0;
 	}
 
-	if (hd->priority == vrrp->effective_priority) {
-		addr_cmp = vrrp_saddr_cmp(&vrrp->pkt_saddr, vrrp);
-		if (addr_cmp == 0)
-			log_message(LOG_INFO, "(%s): WARNING - advert received from remote host with our IP address.", vrrp->iname);
-	}
- 	else
-		addr_cmp = 0; 	/* Avoid compiler warning */
+	addr_cmp = vrrp_saddr_cmp(&vrrp->pkt_saddr, vrrp);
+
+	if (hd->priority == vrrp->effective_priority && addr_cmp == 0)
+			log_message(LOG_INFO, "(%s): WARNING - equal priority advert received from remote host with our IP address.", vrrp->iname);
 
 	if (hd->priority < vrrp->effective_priority ||
 		   (hd->priority == vrrp->effective_priority &&
@@ -1668,7 +1673,7 @@ open_vrrp_send_socket(sa_family_t family, int proto, int idx, int unicast)
 		log_message(LOG_INFO, "cant open raw socket. errno=%d", errno);
 		return -1;
 	}
-#ifndef _HAVE_SOCK_CLOEXEC_
+#if !HAVE_DECL_SOCK_CLOEXEC
 	set_sock_flags(fd, F_SETFD, FD_CLOEXEC);
 #endif
 
@@ -1690,7 +1695,8 @@ open_vrrp_send_socket(sa_family_t family, int proto, int idx, int unicast)
 		if_setsockopt_mcast_loop(family, &fd);
 	}
 
-	if_setsockopt_priority(&fd);
+	if_setsockopt_priority(&fd, family);
+
 	if (fd < 0)
 		return -1;
 
@@ -1715,7 +1721,7 @@ open_vrrp_read_socket(sa_family_t family, int proto, int idx,
 		log_message(LOG_INFO, "cant open raw socket. errno=%d", err);
 		return -1;
 	}
-#ifndef _HAVE_SOCK_CLOEXEC_
+#if !HAVE_DECL_SOCK_CLOEXEC
 	set_sock_flags(fd, F_SETFD, FD_CLOEXEC);
 #endif
 
@@ -1829,19 +1835,17 @@ shutdown_vrrp_instances(void)
 		if (vrrp->script_stop)
 			notify_exec(vrrp->script_stop);
 
-#ifdef _HAVE_IPVS_SYNCD_
+#ifdef _WITH_LVS_
 		/*
 		 * Stop stalled syncd. IPVS syncd state is the
 		 * same as VRRP instance one. We need here to
 		 * stop stalled syncd thread according to last
 		 * VRRP instance state.
 		 */
-		if (global_data->lvs_syncd_vrrp == vrrp)
-			ipvs_syncd_cmd(IPVS_STOPDAEMON, NULL,
-				       (vrrp->state == VRRP_STATE_MAST) ? IPVS_MASTER:
-									  IPVS_BACKUP,
-				       global_data->lvs_syncd_syncid,
-				       false);
+		if (global_data->lvs_syncd.vrrp == vrrp)
+			ipvs_syncd_cmd(IPVS_STOPDAEMON, &global_data->lvs_syncd,
+				       (vrrp->state == VRRP_STATE_MAST) ? IPVS_MASTER: IPVS_BACKUP,
+				       true, false);
 #endif
 	}
 }
@@ -2119,6 +2123,10 @@ vrrp_complete_instance(vrrp_t * vrrp)
 			/* We've found a unique name */
 			strncpy(vrrp->vmac_ifname, ifname, IFNAMSIZ);
 		}
+		if (vrrp->strict_mode && __test_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags)) {
+			log_message(LOG_INFO, "(%s): xmit_base is incompatible with strict mode - resetting", vrrp->iname);
+			__clear_bit(VRRP_VMAC_XMITBASE_BIT, &vrrp->vmac_flags);
+		}
 	}
 	else
 #endif
@@ -2237,6 +2245,11 @@ vrrp_complete_instance(vrrp_t * vrrp)
 		vrrp->vipset = true;	/* Set to force address removal */
 		vrrp_restore_interface(vrrp, false, true);
 	}
+
+	/* If we are adding a large number of interfaces, the netlink socket
+	 * may run out of buffers if we don't receive the netlink messages
+	 * as we progress */
+	kernel_netlink_poll();
 
 	return 1;
 }
@@ -2417,41 +2430,47 @@ vrrp_complete_init(void)
 		}
 	}
 
+#ifdef _WITH_LVS_
 	/* Set up the lvs_syncd vrrp */
-	if (global_data->lvs_syncd_vrrp_name) {
+	if (global_data->lvs_syncd.vrrp_name) {
 		for (e = LIST_HEAD(vrrp_data->vrrp); e; ELEMENT_NEXT(e)) {
 			vrrp = ELEMENT_DATA(e);
-			if (!strcmp(global_data->lvs_syncd_vrrp_name, vrrp->iname)) {
-				global_data->lvs_syncd_vrrp = vrrp;
+			if (!strcmp(global_data->lvs_syncd.vrrp_name, vrrp->iname)) {
+				global_data->lvs_syncd.vrrp = vrrp;
 
 				break;
 			}
 		}
 
-		if (!global_data->lvs_syncd_vrrp) {
-			log_message(LOG_INFO, "Unable to find vrrp instance %s for lvs_syncd - clearing lvs_syncd config", global_data->lvs_syncd_vrrp_name);
-			FREE(global_data->lvs_syncd_if);
-			global_data->lvs_syncd_if = NULL;
+		if (!global_data->lvs_syncd.vrrp) {
+			log_message(LOG_INFO, "Unable to find vrrp instance %s for lvs_syncd - clearing lvs_syncd config", global_data->lvs_syncd.vrrp_name);
+			FREE_PTR(global_data->lvs_syncd.ifname);
+			global_data->lvs_syncd.ifname = NULL;
+			global_data->lvs_syncd.syncid = -1;
+		}
+		else if (global_data->lvs_syncd.syncid == -1) {
+			/* If no syncid configured, use vrid */
+			global_data->lvs_syncd.syncid = global_data->lvs_syncd.vrrp->vrid;
 		}
 
-		FREE(global_data->lvs_syncd_vrrp_name);
-		global_data->lvs_syncd_vrrp_name = NULL;
+		/* vrrp_name is no longer used */
+		FREE_PTR(global_data->lvs_syncd.vrrp_name);
+		global_data->lvs_syncd.vrrp_name = NULL;
 	}
-
-	/* If no sycnid configured, use vrid */
-	if (global_data->lvs_syncd_vrrp && global_data->lvs_syncd_syncid == -1)
-		global_data->lvs_syncd_syncid = global_data->lvs_syncd_vrrp->vrid;
+#endif
 
 	alloc_vrrp_buffer(max_mtu_len);
 
 	return 1;
 }
 
-int
+#ifdef _WITH_LVS_
+bool
 vrrp_ipvs_needed(void)
 {
-	return !!(global_data->lvs_syncd_if);
+	return !!(global_data->lvs_syncd.ifname);
 }
+#endif
 
 /* Try to find a VRRP instance */
 static vrrp_t *
@@ -2500,7 +2519,7 @@ clear_diff_vrrp_vip(vrrp_t *old_vrrp, vrrp_t *vrrp)
 #endif
 	struct ipt_handle *h = NULL;
 
-	if (!old_vrrp->iptable_rules_set)
+	if (!old_vrrp->vipset)
 		return;
 
 #ifdef _HAVE_LIBIPTC_

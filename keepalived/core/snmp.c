@@ -20,10 +20,13 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include "snmp.h"
 #include "logger.h"
 #include "config.h"
 #include "global_data.h"
+#include "main.h"
 
 #include <net-snmp/agent/agent_sysORTable.h>
 
@@ -87,31 +90,34 @@ snmp_header_list_table(struct variable *vp, oid *name, size_t *length,
 	return NULL;
 }
 
-#define SNMP_KEEPALIVEDVERSION 1
-#define SNMP_ROUTERID 2
-#define SNMP_MAIL_SMTPSERVERADDRESSTYPE 3
-#define SNMP_MAIL_SMTPSERVERADDRESS 4
-#define SNMP_MAIL_SMTPSERVERTIMEOUT 5
-#define SNMP_MAIL_EMAILFROM 6
-#define SNMP_MAIL_EMAILADDRESS 7
-#define SNMP_TRAPS 8
-#define SNMP_LINKBEAT 9
-#define SNMP_LVSFLUSH 10
+enum snmp_global_magic {
+	SNMP_KEEPALIVEDVERSION,
+	SNMP_ROUTERID,
+	SNMP_MAIL_SMTPSERVERADDRESSTYPE,
+	SNMP_MAIL_SMTPSERVERADDRESS,
+	SNMP_MAIL_SMTPSERVERTIMEOUT,
+	SNMP_MAIL_EMAILFROM,
+	SNMP_MAIL_EMAILADDRESS,
+	SNMP_TRAPS,
+	SNMP_LINKBEAT,
+	SNMP_LVSFLUSH,
+	SNMP_IPVS_64BIT_STATS,
+	SNMP_NET_NAMESPACE,
+};
 
 static u_char*
 snmp_scalar(struct variable *vp, oid *name, size_t *length,
 		 int exact, size_t *var_len, WriteMethod **write_method)
 {
 	static unsigned long long_ret;
-	static char version[] = VERSION_STRING;
 
 	if (header_generic(vp, name, length, exact, var_len, write_method))
 		return NULL;
 
 	switch (vp->magic) {
 	case SNMP_KEEPALIVEDVERSION:
-		*var_len = sizeof(version) - 1;
-		return (u_char *)version;
+		*var_len = sizeof(version_string) - 1;
+		return (u_char *)version_string;
 	case SNMP_ROUTERID:
 		if (!global_data->router_id) return NULL;
 		*var_len = strlen(global_data->router_id);
@@ -146,6 +152,22 @@ snmp_scalar(struct variable *vp, oid *name, size_t *length,
 	case SNMP_LVSFLUSH:
 		long_ret = global_data->lvs_flush?1:2;
 		return (u_char *)&long_ret;
+	case SNMP_IPVS_64BIT_STATS:
+#ifdef _WITH_LVS_64BIT_STATS_
+		long_ret = 1;
+#else
+		long_ret = 2;
+#endif
+		return (u_char *)&long_ret;
+	case SNMP_NET_NAMESPACE:
+#if HAVE_DECL_CLONE_NEWNET
+		if (network_namespace) {
+			*var_len = strlen(network_namespace);
+			return (u_char *)network_namespace;
+		}
+#endif
+		*var_len = 0;
+		return (u_char *)"";
 	default:
 		break;
 	}
@@ -192,6 +214,11 @@ static struct variable8 global_vars[] = {
 	{SNMP_LINKBEAT, ASN_INTEGER, RONLY, snmp_scalar, 1, {5}},
 	/* lvsFlush */
 	{SNMP_LVSFLUSH, ASN_INTEGER, RONLY, snmp_scalar, 1, {6}},
+#ifdef _WITH_LVS_64BIT_STATS_
+	/* LVS 64-bit stats */
+	{SNMP_IPVS_64BIT_STATS, ASN_INTEGER, RONLY, snmp_scalar, 1, {7}},
+#endif
+	{SNMP_NET_NAMESPACE, ASN_OCTET_STR, RONLY, snmp_scalar, 1, {8}},
 };
 
 static int

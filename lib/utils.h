@@ -50,6 +50,9 @@ extern unsigned long debug;
 
 /* Prototypes defs */
 extern void dump_buffer(char *, int, FILE *);
+#ifdef _WITH_STACKTRACE_
+extern void write_stacktrace(const char *);
+#endif
 extern u_short in_csum(u_short *, int, int, int *);
 extern char *inet_ntop2(uint32_t);
 extern uint8_t inet_stor(const char *);
@@ -65,7 +68,6 @@ extern uint32_t inet_sockaddrip4(struct sockaddr_storage *);
 extern int inet_sockaddrip6(struct sockaddr_storage *, struct in6_addr *);
 extern int inet_inaddrcmp(int, void *, void *);
 extern int inet_sockaddrcmp(struct sockaddr_storage *, struct sockaddr_storage *);
-extern int inet_ston(const char *, uint32_t *);
 extern char *get_local_name(void);
 extern int string_equal(const char *, const char *);
 extern void set_std_fd(int);

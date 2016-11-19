@@ -22,12 +22,28 @@ IMPORTS
         FROM SNMPv2-TC;
 
 keepalived MODULE-IDENTITY
-     LAST-UPDATED "201606290000Z"
+     LAST-UPDATED "201608230000Z"
      ORGANIZATION "Keepalived"
      CONTACT-INFO "http://www.keepalived.org"
      DESCRIPTION
         "This MIB describes objects used by keepalived, both
          for VRRP and health checker."
+     REVISION "201608230000Z"
+     DESCRIPTION "add IPv6 persistence granularity"
+     REVISION "201608030000Z"
+     DESCRIPTION "net-namespace added"
+     REVISION "201607260000Z"
+     DESCRIPTION "64-bit stats added"
+     REVISION "201607100000Z"
+     DESCRIPTION "enhanced virtual rules and routes"
+     REVISION "201607030000Z"
+     DESCRIPTION "change vrrpRuleIndex to unsigned"
+     REVISION "201607021200Z"
+     DESCRIPTION "add lvs timeout parameters"
+     REVISION "201607020000Z"
+     DESCRIPTION
+	"added LVS sync daemon parameters and deprecated
+	 LVS sync daemon objects within VRRP instance"
      REVISION "201606290000Z"
      DESCRIPTION "add lvs_flush"
      REVISION "201606030000Z"
@@ -56,6 +72,52 @@ VrrpState ::= TEXTUAL-CONVENTION
     fault(3),
     unknown(4)
     }
+
+RouteType ::= TEXTUAL-CONVENTION
+    STATUS	current
+    DESCRIPTION
+	"Type of route"
+    SYNTAX	INTEGER { unicast(1),
+			  ecmp(2),
+		          blackhole(3),
+		          anycast(4),
+		          multicast(5),
+		          broadcast(6),
+		          unreachable(7),
+		          prohibit(8),
+			  throw(9),
+		          nat(10),
+		          xresolve(11) }
+
+RuleAction ::= TEXTUAL-CONVENTION
+    STATUS	current
+    DESCRIPTION
+	"Action of rule"
+    SYNTAX	INTEGER { table(1),
+			  goto(2),
+			  nop(3),
+		          blackhole(6),
+		          unreachable(7),
+		          prohibit(8) }
+
+Realm ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d"
+    STATUS	current
+    DESCRIPTION
+	"Route realm."
+    SYNTAX	Unsigned32 (1..65535)
+
+PrefType ::= TEXTUAL-CONVENTION
+    STATUS	current
+    DESCRIPTION
+	"Preference type of route"
+    SYNTAX	INTEGER { low(1), medium(2), high(3) }
+
+EncapType ::= TEXTUAL-CONVENTION
+    STATUS	current
+    DESCRIPTION
+	"Encapsulation type of route"
+    SYNTAX INTEGER { mpls(1), ip(2), ila(3), ip6(4) }
 
 global          OBJECT IDENTIFIER ::= { keepalived 1 }
 vrrp            OBJECT IDENTIFIER ::= { keepalived 2 }
@@ -189,6 +251,22 @@ lvsFlush OBJECT-TYPE
     DESCRIPTION
         "Indicate whether LVS config is flushed at startup."
     ::= { global 6 }
+
+ipvs64BitStats OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "True if 64-bit stats counters are available for ipvs, false otherwise."
+    ::= { global 7 }
+
+netNamespace OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "The name of the net namespace keepalived is running in."
+    ::= { global 8 }
 
 -- ----------------------------------------------------------------------
 -- VRRP part
@@ -526,17 +604,19 @@ vrrpInstanceAuthType OBJECT-TYPE
 vrrpInstanceLvsSyncDaemon OBJECT-TYPE
     SYNTAX INTEGER { enabled(1), disabled(2) }
     MAX-ACCESS read-only
-    STATUS current
+    STATUS deprecated
     DESCRIPTION
-        "Is LVS sync daemon enabled for this VRRP instance?"
+        "Is LVS sync daemon enabled for this VRRP instance?
+	 Deprecated in favour of lvsSyncDaemonEnabled."
     ::= { vrrpInstanceEntry 16 }
 
 vrrpInstanceLvsSyncInterface OBJECT-TYPE
     SYNTAX DisplayString
     MAX-ACCESS read-only
-    STATUS current
+    STATUS deprecated
     DESCRIPTION
-        "If LVS sync daemon is enabled, which interface to use for syncing?"
+        "If LVS sync daemon is enabled, which interface to use for syncing?
+	 Deprecated in favour of lvsSyncDaemonInterface."
     ::= { vrrpInstanceEntry 17 }
 
 vrrpInstanceSyncGroup OBJECT-TYPE
@@ -866,7 +946,47 @@ VrrpRouteEntry ::= SEQUENCE {
     vrrpRouteIfIndex InterfaceIndex,
     vrrpRouteIfName DisplayString,
     vrrpRouteRoutingTable Unsigned32,
-    vrrpRouteStatus INTEGER
+    vrrpRouteStatus INTEGER,
+    vrrpRouteFromAddress InetAddress,
+    vrrpRouteFromAddressMask InetAddressPrefixLength,
+    vrrpRouteTos Unsigned32,
+    vrrpRouteProtocol INTEGER,
+    vrrpRouteECN TruthValue,
+    vrrpRouteQuickAck TruthValue,
+    vrrpRouteExpires Integer32,
+    vrrpRouteMTU Unsigned32,
+    vrrpRouteMTULock TruthValue,
+    vrrpRouteHopLimit Unsigned32,
+    vrrpRouteAdvmss Unsigned32,
+    vrrpRouteAdvmssLock TruthValue,
+    vrrpRouteRTT Unsigned32,
+    vrrpRouteRTTLock TruthValue,
+    vrrpRouteRTTvar Unsigned32,
+    vrrpRouteRTTvarLock TruthValue,
+    vrrpRouteReordering Unsigned32,
+    vrrpRouteReorderingLock TruthValue,
+    vrrpRouteWindow Unsigned32,
+    vrrpRouteCwnd Unsigned32,
+    vrrpRouteCwndLock TruthValue,
+    vrrpRouteSSthresh Unsigned32,
+    vrrpRouteSSthreshLock TruthValue,
+    vrrpRouteRTOMin Unsigned32,
+    vrrpRouteRTOMinLock TruthValue,
+    vrrpRouteInitCwnd Unsigned32,
+    vrrpRouteInitRwnd Unsigned32,
+    vrrpRouteCongCtl DisplayString,
+    vrrpRoutePref PrefType,
+    vrrpRouteRealmDst Realm,
+    vrrpRouteRealmSrc Realm,
+    vrrpRouteEncapType EncapType,
+    vrrpRouteEncapMplsLabels DisplayString,
+    vrrpRouteEncapId Counter64,
+    vrrpRouteEncapDstAddress InetAddress,
+    vrrpRouteEncapSrcAddress InetAddress,
+    vrrpRouteEncapTOS Unsigned32,
+    vrrpRouteEncapTTL Unsigned32,
+    vrrpRouteEncapFlags Unsigned32,
+    vrrpRouteEncapIlaLocator Counter64
 }
 
 vrrpRouteIndex OBJECT-TYPE
@@ -942,7 +1062,7 @@ vrrpRouteScope OBJECT-TYPE
     ::= { vrrpRouteEntry 9 }
 
 vrrpRouteType OBJECT-TYPE
-    SYNTAX INTEGER { normal(1), ecmp(2), blackhole(3) }
+    SYNTAX RouteType
     MAX-ACCESS read-only
     STATUS current
     DESCRIPTION
@@ -981,6 +1101,514 @@ vrrpRouteStatus OBJECT-TYPE
         "Is this route set in the kernel?"
     ::= { vrrpRouteEntry 14 }
 
+vrrpRouteFromAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Source address to use for the route."
+    ::= { vrrpRouteEntry 15 }
+
+vrrpRouteFromAddressMask OBJECT-TYPE
+    SYNTAX InetAddressPrefixLength
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Source address mask."
+    ::= { vrrpRouteEntry 16 }
+
+vrrpRouteTos OBJECT-TYPE
+    SYNTAX Unsigned32 (0..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route TOS value to match."
+    ::= { vrrpRouteEntry 17 }
+
+vrrpRouteProtocol OBJECT-TYPE
+    SYNTAX INTEGER { unspec(1), redirect(2), kernel(3), boot(4), static(5), gated(9), ra(10), mrt(11),
+		      zebra(12), bird(13), dnrouted(14), xorp(15), ntk(16), dhcp(17) }
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route protocol identifier"
+    ::= { vrrpRouteEntry 18 }
+
+vrrpRouteECN OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Explicit congestion notification enabled on route."
+    ::= { vrrpRouteEntry 19 }
+
+vrrpRouteQuickAck OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Quick ack enabled on route."
+    ::= { vrrpRouteEntry 20 }
+
+vrrpRouteExpires OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Lifetime of route."
+    ::= { vrrpRouteEntry 21 }
+
+vrrpRouteMTU OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "MTU for route."
+    ::= { vrrpRouteEntry 22 }
+
+vrrpRouteMTULock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is MTU locked?"
+    ::= { vrrpRouteEntry 23 }
+
+vrrpRouteHopLimit OBJECT-TYPE
+    SYNTAX Unsigned32 (1..256)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Hoplimit for route."
+    ::= { vrrpRouteEntry 24 }
+
+vrrpRouteAdvmss OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Advertised MSS for route."
+    ::= { vrrpRouteEntry 25 }
+
+vrrpRouteAdvmssLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is advertised MSS locked?"
+    ::= { vrrpRouteEntry 26 }
+
+vrrpRouteRTT OBJECT-TYPE
+    SYNTAX Unsigned32 (1..536870)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Retransmission timer in msec for route."
+    ::= { vrrpRouteEntry 27 }
+
+vrrpRouteRTTLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is retransmission timer locked?"
+    ::= { vrrpRouteEntry 28 }
+
+vrrpRouteRTTvar OBJECT-TYPE
+    SYNTAX Unsigned32 (1..1073741)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Retransmission timer var in msec for route."
+    ::= { vrrpRouteEntry 29 }
+
+vrrpRouteRTTvarLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is retransmission timer var locked?"
+    ::= { vrrpRouteEntry 30 }
+
+vrrpRouteReordering OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Reordeering for route."
+    ::= { vrrpRouteEntry 31 }
+
+vrrpRouteReorderingLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is reordering value locked?"
+    ::= { vrrpRouteEntry 32 }
+
+vrrpRouteWindow OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Window for route."
+    ::= { vrrpRouteEntry 33 }
+
+vrrpRouteCwnd OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Congestion window for route."
+    ::= { vrrpRouteEntry 34 }
+
+vrrpRouteCwndLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is congestion window value locked?"
+    ::= { vrrpRouteEntry 35 }
+
+vrrpRouteSSthresh OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "SS threshold window for route."
+    ::= { vrrpRouteEntry 36 }
+
+vrrpRouteSSthreshLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is SS threshold value locked?"
+    ::= { vrrpRouteEntry 37 }
+
+vrrpRouteRTOMin OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Minimum RTO value (ms) for route."
+    ::= { vrrpRouteEntry 38 }
+
+vrrpRouteRTOMinLock OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is minimum RTO value value locked?"
+    ::= { vrrpRouteEntry 39 }
+
+vrrpRouteInitCwnd OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Initial congestion window for route."
+    ::= { vrrpRouteEntry 40 }
+
+vrrpRouteInitRwnd OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Initian R window for route."
+    ::= { vrrpRouteEntry 41 }
+
+vrrpRouteCongCtl OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Congestion control algorithm for route."
+    ::= { vrrpRouteEntry 42 }
+
+vrrpRoutePref OBJECT-TYPE
+    SYNTAX PrefType
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Preference type for IPv6 route"
+    ::= { vrrpRouteEntry 43 }
+
+vrrpRouteRealmDst OBJECT-TYPE
+    SYNTAX Realm
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Realms for route."
+    ::= { vrrpRouteEntry 44 }
+
+vrrpRouteRealmSrc OBJECT-TYPE
+    SYNTAX Realm
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Realms for route."
+    ::= { vrrpRouteEntry 45 }
+
+vrrpRouteEncapType OBJECT-TYPE
+    SYNTAX EncapType
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Encapsulation type."
+    ::= { vrrpRouteEntry 46 }
+
+vrrpRouteEncapMplsLabels OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "MPLS labels for MPLS encapsulation."
+    ::= { vrrpRouteEntry 47 }
+
+vrrpRouteEncapId OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Tunnel ID for IP/IPv6 tunnels."
+    ::= { vrrpRouteEntry 48 }
+
+vrrpRouteEncapDstAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Destination address for IP/IPv6 encapsulation."
+    ::= { vrrpRouteEntry 49 }
+
+vrrpRouteEncapSrcAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Source address for IP/IPv6 encapsulation."
+    ::= { vrrpRouteEntry 50 }
+
+vrrpRouteEncapTOS OBJECT-TYPE
+    SYNTAX Unsigned32 (0..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route next hop TOS/dsfield for IP/IPv6 encapsulation."
+    ::= { vrrpRouteEntry 51 }
+
+vrrpRouteEncapTTL OBJECT-TYPE
+    SYNTAX Unsigned32 (1..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Next hop time to live/hopcount for IP/IPv6 encapsulation."
+    ::= { vrrpRouteEntry 52 }
+
+vrrpRouteEncapFlags OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Flags for this IP/IPv6 encapsulation."
+    ::= { vrrpRouteEntry 53 }
+
+vrrpRouteEncapIlaLocator OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "ILA locator for this encapsulation."
+    ::= { vrrpRouteEntry 54 }
+
+-- Route next hops
+-- see vrrp_iproute.h
+
+vrrpRouteNextHopTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF VrrpRouteNextHopEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION
+        "Table of next hops for static and virtual routes."
+    ::= { vrrp 11 }
+
+vrrpRouteNextHopEntry OBJECT-TYPE
+    SYNTAX VrrpRouteNextHopEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION
+        "Information describing a route next hop. This can be for a static
+         route or a virtual route. In case of a static route, the
+         VRRP instance index is 0."
+    INDEX { vrrpInstanceIndex, vrrpRouteIndex, vrrpRouteNextHopIndex }
+    ::= { vrrpRouteNextHopTable 1 }
+
+VrrpRouteNextHopEntry ::= SEQUENCE {
+    vrrpRouteNextHopIndex Integer32,
+    vrrpRouteNextHopAddressType InetAddressType,
+    vrrpRouteNextHopAddress InetAddress,
+    vrrpRouteNextHopIfIndex InterfaceIndex,
+    vrrpRouteNextHopIfName DisplayString,
+    vrrpRouteNextHopWeight Unsigned32,
+    vrrpRouteNextHopOnlink TruthValue,
+    vrrpRouteNextHopRealmDst Realm,
+    vrrpRouteNextHopRealmSrc Realm,
+    vrrpRouteNextHopEncapType EncapType,
+    vrrpRouteNextHopEncapMplsLabels DisplayString,
+    vrrpRouteNextHopEncapId Counter64,
+    vrrpRouteNextHopEncapDstAddress InetAddress,
+    vrrpRouteNextHopEncapSrcAddress InetAddress,
+    vrrpRouteNextHopEncapTOS Unsigned32,
+    vrrpRouteNextHopEncapTTL Unsigned32,
+    vrrpRouteNextHopEncapFlags Unsigned32,
+    vrrpRouteNextHopEncapIlaLocator Counter64
+}
+
+vrrpRouteNextHopIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION
+        "Route next hop index."
+    ::= { vrrpRouteNextHopEntry 1 }
+
+vrrpRouteNextHopAddressType OBJECT-TYPE
+    SYNTAX InetAddressType
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route next hop internet address type."
+    ::= { vrrpRouteNextHopEntry 2 }
+
+vrrpRouteNextHopAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route next hop address."
+    ::= { vrrpRouteNextHopEntry 3 }
+
+vrrpRouteNextHopIfIndex OBJECT-TYPE
+    SYNTAX InterfaceIndex
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Interface for this next hop."
+    ::= { vrrpRouteNextHopEntry 4 }
+
+vrrpRouteNextHopIfName OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Name of the interface for this next hop."
+    ::= { vrrpRouteNextHopEntry 5 }
+
+vrrpRouteNextHopWeight OBJECT-TYPE
+    SYNTAX Unsigned32 (1..256)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route next hop weight."
+    ::= { vrrpRouteNextHopEntry 6 }
+
+vrrpRouteNextHopOnlink OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Next hop address is specified to be onlink."
+    ::= { vrrpRouteNextHopEntry 7 }
+
+vrrpRouteNextHopRealmDst OBJECT-TYPE
+    SYNTAX Realm
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Destination realm for this next hop."
+    ::= { vrrpRouteNextHopEntry 8 }
+
+vrrpRouteNextHopRealmSrc OBJECT-TYPE
+    SYNTAX Realm
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Source realms for this next hop."
+    ::= { vrrpRouteNextHopEntry 9 }
+
+vrrpRouteNextHopEncapType OBJECT-TYPE
+    SYNTAX EncapType
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION
+        "Encapsulation type."
+    ::= { vrrpRouteNextHopEntry 10 }
+
+vrrpRouteNextHopEncapMplsLabels OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "MPLS labels for MPLS encapsulation."
+    ::= { vrrpRouteNextHopEntry 11 }
+
+vrrpRouteNextHopEncapId OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Tunnel ID for IP/IPv6 tunnels."
+    ::= { vrrpRouteNextHopEntry 12 }
+
+vrrpRouteNextHopEncapDstAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Destination address for IP/IPv6 encapsulation."
+    ::= { vrrpRouteNextHopEntry 13 }
+
+vrrpRouteNextHopEncapSrcAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Source address for IP/IPv6 encapsulation."
+    ::= { vrrpRouteNextHopEntry 14 }
+
+vrrpRouteNextHopEncapTOS OBJECT-TYPE
+    SYNTAX Unsigned32 (0..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Route next hop TOS/dsfield for IP/IPv6 encapsulation."
+    ::= { vrrpRouteNextHopEntry 15 }
+
+vrrpRouteNextHopEncapTTL OBJECT-TYPE
+    SYNTAX Unsigned32 (1..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Next hop time to live/hopcount for IP/IPv6 encapsulation."
+    ::= { vrrpRouteNextHopEntry 16 }
+
+vrrpRouteNextHopEncapFlags OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Flags for this IP/IPv6 encapsulation."
+    ::= { vrrpRouteNextHopEntry 17 }
+
+vrrpRouteNextHopEncapIlaLocator OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "ILA locator for this encapsulation."
+    ::= { vrrpRouteNextHopEntry 18 }
+
 -- Rules
 -- see vrrp_iprule.h
 
@@ -1003,17 +1631,39 @@ vrrpRuleEntry OBJECT-TYPE
     ::= { vrrpRuleTable 1 }
 
 VrrpRuleEntry ::= SEQUENCE {
-    vrrpRuleIndex Integer32,
+    vrrpRuleIndex Unsigned32,
     vrrpRuleDirection DisplayString,
     vrrpRuleAddressType InetAddressType,
     vrrpRuleAddress InetAddress,
     vrrpRuleAddressMask InetAddressPrefixLength,
     vrrpRuleRoutingTable Unsigned32,
-    vrrpRuleStatus INTEGER
+    vrrpRuleStatus INTEGER,
+    vrrpRuleInvert TruthValue,
+    vrrpRuleDestinationAddressType InetAddressType,
+    vrrpRuleDestinationAddress InetAddress,
+    vrrpRuleDestinationAddressMask InetAddressPrefixLength,
+    vrrpRuleSourceAddressType InetAddressType,
+    vrrpRuleSourceAddress InetAddress,
+    vrrpRuleSourceAddressMask InetAddressPrefixLength,
+    vrrpRuleTos Unsigned32,
+    vrrpRuleFwmark Unsigned32,
+    vrrpRuleFwmask Unsigned32,
+    vrrpRuleRealmDst Realm,
+    vrrpRuleRealmSrc Realm,
+    vrrpRuleInInterface DisplayString,
+    vrrpRuleOutInterface DisplayString,
+    vrrpRuleTarget Unsigned32,
+    vrrpRuleAction RuleAction,
+    vrrpRuleTableNo Unsigned32,
+    vrrpRulePreference Unsigned32,
+    vrrpRuleSuppressPrefixLen Unsigned32,
+    vrrpRuleSuppressGroup DisplayString,
+    vrrpRuleTunnelIdHigh Unsigned32,
+    vrrpRuleTunnelIdLow Unsigned32
 }
 
 vrrpRuleIndex OBJECT-TYPE
-    SYNTAX Integer32 (1..2147483647)
+    SYNTAX Unsigned32 (1..4294967295)
     MAX-ACCESS not-accessible
     STATUS current
     DESCRIPTION
@@ -1023,7 +1673,7 @@ vrrpRuleIndex OBJECT-TYPE
 vrrpRuleDirection OBJECT-TYPE
     SYNTAX DisplayString
     MAX-ACCESS read-only
-    STATUS current
+    STATUS obsolete
     DESCRIPTION
         "Traffic direction for this rule."
     ::= { vrrpRuleEntry 2 }
@@ -1031,7 +1681,7 @@ vrrpRuleDirection OBJECT-TYPE
 vrrpRuleAddressType OBJECT-TYPE
     SYNTAX InetAddressType
     MAX-ACCESS read-only
-    STATUS current
+    STATUS obsolete
     DESCRIPTION
         "Rule type of internet address."
     ::= { vrrpRuleEntry 3 }
@@ -1039,7 +1689,7 @@ vrrpRuleAddressType OBJECT-TYPE
 vrrpRuleAddress OBJECT-TYPE
     SYNTAX InetAddress
     MAX-ACCESS read-only
-    STATUS current
+    STATUS obsolete
     DESCRIPTION
         "Rule network address."
     ::= { vrrpRuleEntry 4 }
@@ -1047,7 +1697,7 @@ vrrpRuleAddress OBJECT-TYPE
 vrrpRuleAddressMask OBJECT-TYPE
     SYNTAX InetAddressPrefixLength
     MAX-ACCESS read-only
-    STATUS current
+    STATUS obsolete
     DESCRIPTION
         "Rule network mask."
     ::= { vrrpRuleEntry 5 }
@@ -1067,6 +1717,182 @@ vrrpRuleStatus OBJECT-TYPE
     DESCRIPTION
         "Is this rule set in the kernel?"
     ::= { vrrpRuleEntry 7 }
+
+vrrpRuleInvert OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Invert rule matching sense."
+    ::= { vrrpRuleEntry 8 }
+
+vrrpRuleDestinationAddressType OBJECT-TYPE
+    SYNTAX InetAddressType
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Family of rule destination internet address."
+    ::= { vrrpRuleEntry 9 }
+
+vrrpRuleDestinationAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule destination network address."
+    ::= { vrrpRuleEntry 10 }
+
+vrrpRuleDestinationAddressMask OBJECT-TYPE
+    SYNTAX InetAddressPrefixLength
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule destination address network mask."
+    ::= { vrrpRuleEntry 11 }
+
+vrrpRuleSourceAddressType OBJECT-TYPE
+    SYNTAX InetAddressType
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Family of rule source internet address."
+    ::= { vrrpRuleEntry 12 }
+
+vrrpRuleSourceAddress OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule source network address."
+    ::= { vrrpRuleEntry 13 }
+
+vrrpRuleSourceAddressMask OBJECT-TYPE
+    SYNTAX InetAddressPrefixLength
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule source address network mask."
+    ::= { vrrpRuleEntry 14 }
+
+vrrpRuleTos OBJECT-TYPE
+    SYNTAX Unsigned32 (0..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule TOS value to match."
+    ::= { vrrpRuleEntry 15 }
+
+vrrpRuleFwmark OBJECT-TYPE
+    SYNTAX Unsigned32 (0..4294967295)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule fwmark value to match."
+    ::= { vrrpRuleEntry 16 }
+
+vrrpRuleFwmask OBJECT-TYPE
+    SYNTAX Unsigned32 (0..4294967295)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule fwmask value to match the fwmark."
+    ::= { vrrpRuleEntry 17 }
+
+vrrpRuleRealmDst OBJECT-TYPE
+    SYNTAX Realm
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Destination realm to select if the rule matched."
+    ::= { vrrpRuleEntry 18 }
+
+vrrpRuleRealmSrc OBJECT-TYPE
+    SYNTAX Realm
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Source realm to select if the rule matched."
+    ::= { vrrpRuleEntry 19 }
+
+vrrpRuleInInterface OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule incoming interface to match."
+    ::= { vrrpRuleEntry 20 }
+
+vrrpRuleOutInterface OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule outgoing interface to match."
+    ::= { vrrpRuleEntry 21 }
+
+vrrpRuleTarget OBJECT-TYPE
+    SYNTAX Unsigned32 (0..4294967295)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule goto target."
+    ::= { vrrpRuleEntry 22 }
+
+vrrpRuleAction OBJECT-TYPE
+    SYNTAX RuleAction
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule type."
+    ::= { vrrpRuleEntry 23 }
+
+vrrpRuleTableNo OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Routing table."
+    ::= { vrrpRuleEntry 24 }
+
+vrrpRulePreference OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Routing table."
+    ::= { vrrpRuleEntry 25 }
+
+vrrpRuleSuppressPrefixLen OBJECT-TYPE
+    SYNTAX Unsigned32 (0..128)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule suppress match prefix length."
+    ::= { vrrpRuleEntry 26 }
+
+vrrpRuleSuppressGroup OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule suppress match interface group."
+    ::= { vrrpRuleEntry 27 }
+
+vrrpRuleTunnelIdHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule tunnel-id low 32 bits."
+    ::= { vrrpRuleEntry 28 }
+
+vrrpRuleTunnelIdLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Rule tunnel-id high 32 bits."
+    ::= { vrrpRuleEntry 29 }
 
 -- VRRP scripts
 -- see vrrp_track.h
@@ -1411,7 +2237,21 @@ VirtualServerEntry ::= SEQUENCE {
     virtualServerRateOutPPS Gauge32,
     virtualServerRateInBPS Gauge32,
     virtualServerRateOutBPS Gauge32,
-    virtualServerOPS TruthValue
+    virtualServerOPS TruthValue,
+    virtualServerStatsConns64 Counter64,
+    virtualServerStatsInPkts64 Counter64,
+    virtualServerStatsOutPkts64 Counter64,
+    virtualServerRateCpsLow Unsigned32,
+    virtualServerRateCpsHigh Unsigned32,
+    virtualServerRateInPPSLow Unsigned32,
+    virtualServerRateInPPSHigh Unsigned32,
+    virtualServerRateOutPPSLow Unsigned32,
+    virtualServerRateOutPPSHigh Unsigned32,
+    virtualServerRateInBPSLow Unsigned32,
+    virtualServerRateInBPSHigh Unsigned32,
+    virtualServerRateOutBPSLow Unsigned32,
+    virtualServerRateOutBPSHigh Unsigned32,
+    virtualServerPersistGranularity6 Unsigned32
 }
 
 virtualServerIndex OBJECT-TYPE
@@ -1555,7 +2395,7 @@ virtualServerPersistGranularity OBJECT-TYPE
     MAX-ACCESS read-only
     STATUS current
     DESCRIPTION
-        "Netmask specifying the granularity of the persistence mechanism."
+        "Netmask specifying the granularity of the IPv4 persistence mechanism."
     ::= { virtualServerEntry 15 }
 
 virtualServerDelayLoop OBJECT-TYPE
@@ -1746,6 +2586,142 @@ virtualServerOPS OBJECT-TYPE
         "If set to true(1), One-Packet-Scheduling will be applied."
     ::= { virtualServerEntry 37 }
 
+virtualServerStatsConns64 OBJECT-TYPE
+    SYNTAX Counter64
+    UNITS "connections"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Total number of connections scheduled for this virtual server."
+    ::= { virtualServerEntry 38 }
+
+virtualServerStatsInPkts64 OBJECT-TYPE
+    SYNTAX Counter64
+    UNITS "packets"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Total number of incoming packets for this virtual server."
+    ::= { virtualServerEntry 39 }
+
+virtualServerStatsOutPkts64 OBJECT-TYPE
+    SYNTAX Counter64
+    UNITS "packets"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Total number of outgoing packets for this virtual server."
+    ::= { virtualServerEntry 40 }
+
+virtualServerRateCpsLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "connections/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current connection rate for this virtual server.
+	Together with virtualServerRateCpsHigh composes 64-bit number."
+    ::= { virtualServerEntry 41 }
+
+virtualServerRateCpsHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "connections/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current connection rate for this virtual server.
+	Together with virtualServerRateCpsLow composes 64-bit number."
+    ::= { virtualServerEntry 42 }
+
+virtualServerRateInPPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current in packet rate for this virtual server.
+	Together with virtualServerRateInPPSHigh composes 64-bit number."
+    ::= { virtualServerEntry 43 }
+
+virtualServerRateInPPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current in packet rate for this virtual server.
+	Together with virtualServerRateInPPSLow composes 64-bit number."
+    ::= { virtualServerEntry 44 }
+
+virtualServerRateOutPPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current out packet rate for this virtual server.
+	Together with virtualServerRateOutPPSHigh composes 64-bit number."
+    ::= { virtualServerEntry 45 }
+
+virtualServerRateOutPPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current out packet rate for this virtual server.
+	Together with virtualServerRateOutPPSLow composes 64-bit number."
+    ::= { virtualServerEntry 46 }
+
+virtualServerRateInBPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current incoming rate for this virtual server.
+	Together with virtualServerInBPSHigh composes 64-bit number."
+    ::= { virtualServerEntry 47 }
+
+virtualServerRateInBPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current incoming rate for this virtual server.
+	Together with virtualServerRateInBPSLow composes 64-bit number."
+    ::= { virtualServerEntry 48 }
+
+virtualServerRateOutBPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current outgoing rate for this virtual server.
+	Together with virtualServerRateOutBPSHigh composes 64-bit number."
+    ::= { virtualServerEntry 49 }
+
+virtualServerRateOutBPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current outgoing rate for this virtual server.
+	Together with virtualServerRateOutBPSLow composes 64-bit number."
+    ::= { virtualServerEntry 50 }
+
+virtualServerPersistGranularity6 OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Netmask specifying the granularity of the IPv6 persistence mechanism."
+    ::= { virtualServerEntry 51 }
+
+
 -- real servers
 
 realServerTable OBJECT-TYPE
@@ -1791,7 +2767,20 @@ RealServerEntry ::= SEQUENCE {
     realServerRateInPPS Gauge32,
     realServerRateOutPPS Gauge32,
     realServerRateInBPS Gauge32,
-    realServerRateOutBPS Gauge32
+    realServerRateOutBPS Gauge32,
+    realServerStatsConns64 Counter64,
+    realServerStatsInPkts64 Counter64,
+    realServerStatsOutPkts64 Counter64,
+    realServerRateCpsLow Unsigned32,
+    realServerRateCpsHigh Unsigned32,
+    realServerRateInPPSLow Unsigned32,
+    realServerRateInPPSHigh Unsigned32,
+    realServerRateOutPPSLow Unsigned32,
+    realServerRateOutPPSHigh Unsigned32,
+    realServerRateInBPSLow Unsigned32,
+    realServerRateInBPSHigh Unsigned32,
+    realServerRateOutBPSLow Unsigned32,
+    realServerRateOutBPSHigh Unsigned32
 }
 
 realServerIndex OBJECT-TYPE
@@ -2018,6 +3007,238 @@ realServerRateOutBPS OBJECT-TYPE
         "Current outgoing rate for this real server."
     ::= { realServerEntry 26 }
 
+realServerStatsConns64 OBJECT-TYPE
+    SYNTAX Counter64
+    UNITS "connections"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Total number of connections scheduled for this real server."
+    ::= { realServerEntry 27 }
+
+realServerStatsInPkts64 OBJECT-TYPE
+    SYNTAX Counter64
+    UNITS "packets"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Total number of incoming packets for this real server."
+    ::= { realServerEntry 28 }
+
+realServerStatsOutPkts64 OBJECT-TYPE
+    SYNTAX Counter64
+    UNITS "packets"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Total number of outgoing packets for this real server."
+    ::= { realServerEntry 29 }
+
+realServerRateCpsLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "connections/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current connection rate for this real server.
+	Together with realServerRateCpsHigh composes 64-bit number."
+    ::= { realServerEntry 30 }
+
+realServerRateCpsHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "connections/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current connection rate for this real server.
+	Together with realServerRateCpsLow composes 64-bit number."
+    ::= { realServerEntry 31 }
+
+realServerRateInPPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current in packet rate for this real server.
+	Together with realServerRateInPPSHigh composes 64-bit number."
+    ::= { realServerEntry 32 }
+
+realServerRateInPPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current in packet rate for this real server.
+	Together with realServerRateInPPSLow composes 64-bit number."
+    ::= { realServerEntry 33 }
+
+realServerRateOutPPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current out packet rate for this real server.
+	Together with realServerRateOutPPSHigh composes 64-bit number."
+    ::= { realServerEntry 34 }
+
+realServerRateOutPPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "packets/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current out packet rate for this real server.
+	Together with realServerRateOutPPSLow composes 64-bit number."
+    ::= { realServerEntry 35 }
+
+realServerRateInBPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current incoming rate for this real server.
+	Together with realServerInBPSHigh composes 64-bit number."
+    ::= { realServerEntry 36 }
+
+realServerRateInBPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current incoming rate for this real server.
+	Together with realServerRateInBPSLow composes 64-bit number."
+    ::= { realServerEntry 37 }
+
+realServerRateOutBPSLow OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current outgoing rate for this real server.
+	Together with realServerRateOutBPSHigh composes 64-bit number."
+    ::= { realServerEntry 38 }
+
+realServerRateOutBPSHigh OBJECT-TYPE
+    SYNTAX Unsigned32
+    UNITS "bytes/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Current outgoing rate for this real server.
+	Together with realServerRateOutBPSLow composes 64-bit number."
+    ::= { realServerEntry 39 }
+
+lvsSyncDaemon    OBJECT IDENTIFIER ::= { check 6 }
+
+lvsSyncDaemonEnabled OBJECT-TYPE
+    SYNTAX INTEGER { enabled(1), disabled(2) }
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "Is LVS sync daemon enabled?"
+    ::= { lvsSyncDaemon 1 }
+
+lvsSyncDaemonInterface OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "If LVS sync daemon is enabled, which interface to use for syncing?"
+    ::= { lvsSyncDaemon 2 }
+
+lvsSyncDaemonVrrpInstance OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "If LVS sync daemon is enabled, which VRRP instance is it tracking?"
+    ::= { lvsSyncDaemon 3 }
+
+lvsSyncDaemonSyncId OBJECT-TYPE
+    SYNTAX Integer32 (0..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS sync daemon id?"
+    ::= { lvsSyncDaemon 4 }
+
+lvsSyncDaemonMaxLen OBJECT-TYPE
+    SYNTAX Integer32 (0..65517)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS sync daemon payload maximum length, 0 means default setting.
+	 Only available on Linux >= 4.3."
+    ::= { lvsSyncDaemon 5 }
+
+lvsSyncDaemonPort OBJECT-TYPE
+    SYNTAX Integer32 (0..65535)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS sync daemon UDP port, 0 means default setting.
+	 Only available on Linux >= 4.3."
+    ::= { lvsSyncDaemon 6 }
+
+lvsSyncDaemonTTL OBJECT-TYPE
+    SYNTAX Integer32 (0..255)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS sync daemon packet TTL, 0 means default setting.
+	 Only available on Linux >= 4.3."
+    ::= { lvsSyncDaemon 7 }
+
+lvsSyncDaemonMcastGroupAddrType OBJECT-TYPE
+    SYNTAX InetAddressType
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS sync daemon multicast group address type.
+	 Only available on Linux >= 4.3."
+    ::= { lvsSyncDaemon 8 }
+
+lvsSyncDaemonMcastGroupAddrValue OBJECT-TYPE
+    SYNTAX InetAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS sync daemon multicast group IP address.
+	 Only available on Linux >= 4.3."
+    ::= { lvsSyncDaemon 9 }
+
+lvsTimeouts    OBJECT IDENTIFIER ::= { check 7 }
+
+lvsTimeoutTcp OBJECT-TYPE
+    SYNTAX Integer32 (1..2678400)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS TCP timeout"
+    ::= { lvsTimeouts 1 }
+
+lvsTimeoutTcpFin OBJECT-TYPE
+    SYNTAX Integer32 (1..2678400)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS TCP FIN timeout"
+    ::= { lvsTimeouts 2 }
+
+lvsTimeoutUdp OBJECT-TYPE
+    SYNTAX Integer32 (1..2678400)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION
+        "LVS UDP timeout"
+    ::= { lvsTimeouts 3 }
+
 -- Traps
 
 checkTrap OBJECT IDENTIFIER ::= { check 5 }
@@ -2103,13 +3324,27 @@ checkCompliances MODULE-COMPLIANCE
     virtualServerGroupGroup,
     virtualServerGroup,
     realServerGroup,
-    checkTrapsGroup
+    checkTrapsGroup,
+    lvsSyncDaemonGroup,
+    lvsTimeoutsGroup
     }
     ::= { compliances 3 }
 
+vrrpLvsSyncGroupCompliances MODULE-COMPLIANCE
+    STATUS deprecated
+    DESCRIPTION
+	"The compliance statement for LVS sync group associated
+	 with a VRRP instance. This is deprecated in favour of
+	 lvsSyncDaemonGroup."
+    MODULE -- this module
+    MANDATORY-GROUPS {
+    vrrpLvsSyncGroup
+    }
+    ::= { compliances 4 }
+
 globalGroup OBJECT-GROUP
     OBJECTS {
-        version,
+    version,
     routerId,
     smtpServerAddressType,
     smtpServerAddress,
@@ -2119,7 +3354,9 @@ globalGroup OBJECT-GROUP
     smtpServerPort,
     trapEnable,
     linkBeat,
-    lvsFlush
+    lvsFlush,
+    ipvs64BitStats,
+    netNamespace
     }
     STATUS current
     DESCRIPTION
@@ -2161,8 +3398,6 @@ vrrpInstanceGroup OBJECT-GROUP
     vrrpInstancePreempt,
     vrrpInstancePreemptDelay,
     vrrpInstanceAuthType,
-    vrrpInstanceLvsSyncDaemon,
-    vrrpInstanceLvsSyncInterface,
     vrrpInstanceSyncGroup,
     vrrpInstanceGarpDelay,
     vrrpInstanceSmtpAlert,
@@ -2200,12 +3435,86 @@ vrrpInstanceGroup OBJECT-GROUP
     vrrpRouteIfName,
     vrrpRouteRoutingTable,
     vrrpRouteStatus,
-    vrrpRuleDirection,
-    vrrpRuleAddressType,
-    vrrpRuleAddress,
-    vrrpRuleAddressMask,
+    vrrpRouteFromAddress,
+    vrrpRouteFromAddressMask,
+    vrrpRouteTos,
+    vrrpRouteProtocol,
+    vrrpRouteECN,
+    vrrpRouteQuickAck,
+    vrrpRouteExpires,
+    vrrpRouteMTU,
+    vrrpRouteMTULock,
+    vrrpRouteHopLimit,
+    vrrpRouteAdvmss,
+    vrrpRouteAdvmssLock,
+    vrrpRouteRTT,
+    vrrpRouteRTTLock,
+    vrrpRouteRTTvar,
+    vrrpRouteRTTvarLock,
+    vrrpRouteReordering,
+    vrrpRouteReorderingLock,
+    vrrpRouteWindow,
+    vrrpRouteCwnd,
+    vrrpRouteCwndLock,
+    vrrpRouteSSthresh,
+    vrrpRouteSSthreshLock,
+    vrrpRouteRTOMin,
+    vrrpRouteRTOMinLock,
+    vrrpRouteInitCwnd,
+    vrrpRouteInitRwnd,
+    vrrpRouteCongCtl,
+    vrrpRoutePref,
+    vrrpRouteRealmDst,
+    vrrpRouteRealmSrc,
+    vrrpRouteEncapType,
+    vrrpRouteEncapMplsLabels,
+    vrrpRouteEncapId,
+    vrrpRouteEncapDstAddress,
+    vrrpRouteEncapSrcAddress,
+    vrrpRouteEncapTOS,
+    vrrpRouteEncapTTL,
+    vrrpRouteEncapFlags,
+    vrrpRouteEncapIlaLocator,
+    vrrpRouteNextHopAddressType,
+    vrrpRouteNextHopAddress,
+    vrrpRouteNextHopIfIndex,
+    vrrpRouteNextHopIfName,
+    vrrpRouteNextHopWeight,
+    vrrpRouteNextHopOnlink,
+    vrrpRouteNextHopRealmDst,
+    vrrpRouteNextHopRealmSrc,
+    vrrpRouteNextHopEncapMplsLabels,
+    vrrpRouteNextHopEncapId,
+    vrrpRouteNextHopEncapDstAddress,
+    vrrpRouteNextHopEncapSrcAddress,
+    vrrpRouteNextHopEncapTOS,
+    vrrpRouteNextHopEncapTTL,
+    vrrpRouteNextHopEncapFlags,
+    vrrpRouteNextHopEncapIlaLocator,
     vrrpRuleRoutingTable,
-    vrrpRuleStatus
+    vrrpRuleStatus,
+    vrrpRuleInvert,
+    vrrpRuleDestinationAddressType,
+    vrrpRuleDestinationAddress,
+    vrrpRuleDestinationAddressMask,
+    vrrpRuleSourceAddressType,
+    vrrpRuleSourceAddress,
+    vrrpRuleSourceAddressMask,
+    vrrpRuleTos,
+    vrrpRuleFwmark,
+    vrrpRuleFwmask,
+    vrrpRuleRealmDst,
+    vrrpRuleRealmSrc,
+    vrrpRuleInInterface,
+    vrrpRuleOutInterface,
+    vrrpRuleTarget,
+    vrrpRuleAction,
+    vrrpRuleTableNo,
+    vrrpRulePreference,
+    vrrpRuleSuppressPrefixLen,
+    vrrpRuleSuppressGroup,
+    vrrpRuleTunnelIdHigh,
+    vrrpRuleTunnelIdLow
     }
     STATUS current
     DESCRIPTION
@@ -2236,6 +3545,28 @@ vrrpTrapsGroup NOTIFICATION-GROUP
     DESCRIPTION
         "Conformance group for VRRP traps."
     ::= { vrrpGroups 4 }
+
+vrrpLvsSyncGroup OBJECT-GROUP
+    OBJECTS {
+    vrrpInstanceLvsSyncDaemon,
+    vrrpInstanceLvsSyncInterface
+    }
+    STATUS deprecated
+    DESCRIPTION
+	"The deprecated LVS sync daemon configuration
+	 objects associated with a VRRP instance."
+    ::= { vrrpGroups 5 }
+
+vrrpObsoleteInstanceGroup OBJECT-GROUP
+    OBJECTS {
+    vrrpRuleDirection,
+    vrrpRuleAddressType,
+    vrrpRuleAddress,
+    vrrpRuleAddressMask }
+    STATUS obsolete
+    DESCRIPTION
+        "Obsolete group for VRRP instances."
+    ::= { vrrpGroups 6 }
 
 checkGroups OBJECT IDENTIFIER ::= { groups 3 }
 
@@ -2292,7 +3623,21 @@ virtualServerGroup OBJECT-GROUP
     virtualServerRateOutPPS,
     virtualServerRateInBPS,
     virtualServerRateOutBPS,
-    virtualServerOPS
+    virtualServerOPS,
+    virtualServerStatsConns64,
+    virtualServerStatsInPkts64,
+    virtualServerStatsOutPkts64,
+    virtualServerRateCpsLow,
+    virtualServerRateCpsHigh,
+    virtualServerRateInPPSLow,
+    virtualServerRateInPPSHigh,
+    virtualServerRateOutPPSLow,
+    virtualServerRateOutPPSHigh,
+    virtualServerRateInBPSLow,
+    virtualServerRateInBPSHigh,
+    virtualServerRateOutBPSLow,
+    virtualServerRateOutBPSHigh,
+    virtualServerPersistGranularity6
     }
     STATUS current
     DESCRIPTION
@@ -2325,7 +3670,20 @@ realServerGroup OBJECT-GROUP
     realServerRateInPPS,
     realServerRateOutPPS,
     realServerRateInBPS,
-    realServerRateOutBPS
+    realServerRateOutBPS,
+    realServerStatsConns64,
+    realServerStatsInPkts64,
+    realServerStatsOutPkts64,
+    realServerRateCpsLow,
+    realServerRateCpsHigh,
+    realServerRateInPPSLow,
+    realServerRateInPPSHigh,
+    realServerRateOutPPSLow,
+    realServerRateOutPPSHigh,
+    realServerRateInBPSLow,
+    realServerRateInBPSHigh,
+    realServerRateOutBPSLow,
+    realServerRateOutBPSHigh
     }
     STATUS current
     DESCRIPTION
@@ -2341,5 +3699,33 @@ checkTrapsGroup NOTIFICATION-GROUP
     DESCRIPTION
         "Conformance group for check traps."
     ::= { checkGroups 4 }
+
+lvsSyncDaemonGroup OBJECT-GROUP
+    OBJECTS {
+    lvsSyncDaemonEnabled,
+    lvsSyncDaemonInterface,
+    lvsSyncDaemonVrrpInstance,
+    lvsSyncDaemonSyncId,
+    lvsSyncDaemonMaxLen,
+    lvsSyncDaemonPort,
+    lvsSyncDaemonTTL,
+    lvsSyncDaemonMcastGroupAddrType,
+    lvsSyncDaemonMcastGroupAddrValue
+    }
+    STATUS current
+    DESCRIPTION
+	"Conformance group for LVS sync daemon."
+    ::= { checkGroups 5 }
+
+lvsTimeoutsGroup OBJECT-GROUP
+    OBJECTS {
+    lvsTimeoutTcp,
+    lvsTimeoutTcpFin,
+    lvsTimeoutUdp
+    }
+    STATUS current
+    DESCRIPTION
+	"Conformance group for LVS timeouts."
+    ::= { checkGroups 6 }
 
 END

@@ -41,22 +41,37 @@
 
 /* State flags */
 enum daemon_bits {
+#ifdef _WITH_VRRP_
 	DAEMON_VRRP,
-	DAEMON_CHECKERS
+#endif
+#ifdef _WITH_LVS_
+	DAEMON_CHECKERS,
+#endif
 };
 
 /* Global vars exported */
+extern const char *version_string;	/* keepalived version */
 extern unsigned long daemon_mode;	/* Which child processes are run */
 extern char *conf_file;			/* Configuration file */
 extern int log_facility;		/* Optional logging facilities */
 extern pid_t vrrp_child;		/* VRRP child process ID */
 extern pid_t checkers_child;		/* Healthcheckers child process ID */
-extern const char *main_pidfile;	/* overrule default pidfile */
-extern const char *checkers_pidfile;	/* overrule default pidfile */
-extern const char *vrrp_pidfile;	/* overrule default pidfile */
+extern char *main_pidfile;		/* overrule default pidfile */
+extern char *checkers_pidfile;		/* overrule default pidfile */
+extern char *vrrp_pidfile;		/* overrule default pidfile */
 #ifdef _WITH_SNMP_
-extern int snmp;			/* Enable SNMP support */
+extern bool snmp;			/* Enable SNMP support */
 extern const char *snmp_socket;		/* Socket to use for SNMP agent */
 #endif
+#if HAVE_DECL_CLONE_NEWNET
+extern char *network_namespace;		/* network namespace name */
+#endif
+extern char *instance_name;		/* keepalived instance name */
+extern bool use_pid_dir;		/* pid files in /var/run/keepalived */
 
+extern void free_parent_mallocs_startup(bool);
+extern void free_parent_mallocs_exit(void);
+extern char *make_syslog_ident(const char*);
+
+extern int keepalived_main(int, char**); /* The "real" main function */
 #endif

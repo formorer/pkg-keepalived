@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 /* global include */
 #include <unistd.h>
 #include <string.h>
@@ -35,16 +37,11 @@ typedef uint8_t u8;
 #include <fcntl.h>
 #include <syslog.h>
 #include <ctype.h>
-#ifdef use_linux_libc5
-#include <linux/if_arp.h>
-#include <linux/if_ether.h>
-#endif
+#include <linux/ip.h>
 #include <stdlib.h>
 #include <stdio.h>
-#ifdef _KRNL_2_4_
 #include <linux/ethtool.h>
-#endif
-#ifndef _HAVE_SOCK_CLOEXEC_
+#if !HAVE_DECL_SOCK_CLOEXEC
 #include "old_socket.h"
 #endif
 
@@ -250,7 +247,7 @@ if_mii_probe(const char *ifname)
 	if (fd < 0)
 		return -1;
 
-#ifndef _HAVE_SOCK_CLOEXEC_
+#if !HAVE_DECL_SOCK_CLOEXEC
 	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
 		log_message(LOG_INFO, "Unable to set CLOEXEC on mii_probe socket - %s (%d)", strerror(errno), errno);
 #endif
@@ -282,7 +279,6 @@ if_mii_probe(const char *ifname)
 static int
 if_ethtool_status(const int fd)
 {
-#ifdef ETHTOOL_GLINK
 	struct ethtool_value edata;
 	int err = 0;
 
@@ -292,7 +288,6 @@ if_ethtool_status(const int fd)
 	if (err == 0)
 		return (edata.data) ? 1 : 0;
 	else
-#endif
 		return -1;
 }
 
@@ -305,7 +300,7 @@ if_ethtool_probe(const char *ifname)
 	if (fd < 0)
 		return -1;
 
-#ifndef _HAVE_SOCK_CLOEXEC_
+#if !HAVE_DECL_SOCK_CLOEXEC
 	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
 		log_message(LOG_INFO, "Unable to set CLOEXEC on ethtool_probe socket - %s (%d)", strerror(errno), errno);
 #endif
@@ -326,7 +321,7 @@ if_ioctl_flags(interface_t * ifp)
 	if (fd < 0)
 		return;
 
-#ifndef _HAVE_SOCK_CLOEXEC_
+#if !HAVE_DECL_SOCK_CLOEXEC
 	if (set_sock_flags(fd, F_SETFD, FD_CLOEXEC))
 		log_message(LOG_INFO, "Unable to set CLOEXEC on ioctl_flags socket - %s (%d)", strerror(errno), errno);
 #endif
@@ -726,9 +721,8 @@ if_setsockopt_ipv6_checksum(int *sd)
 int
 if_setsockopt_mcast_all(sa_family_t family, int *sd)
 {
-#ifndef IP_MULTICAST_ALL
-	/* IP_MULTICAST_ALL sockopt is available since Linux 2.6.31.
-	 * It seems reasonable to just skip the calls to if_setsockopt_mcast_all
+#ifndef IP_MULTICAST_ALL	/* Since Linux 2.6.31 */
+	/* It seems reasonable to just skip the calls to if_setsockopt_mcast_all
 	 * if there is no support for that feature in header files */
 	return -1;
 #else
@@ -834,18 +828,27 @@ if_setsockopt_mcast_if(sa_family_t family, int *sd, interface_t *ifp)
 }
 
 int
-if_setsockopt_priority(int *sd)
+if_setsockopt_priority(int *sd, int family)
 {
 	int ret;
-	int priority = 6;
+	int val;
 
 	if (*sd < 0)
 		return -1;
 
-	/* Set SO_PRIORITY for VRRP traffic */
-	ret = setsockopt(*sd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
+	/* Set PRIORITY for VRRP traffic */
+	if (family == AF_INET) {
+		val = IPTOS_PREC_INTERNETCONTROL;
+		ret = setsockopt(*sd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
+	}
+	else {
+		/* set tos to internet network control */
+		val = 0xc0;	/* 192, which translates to DCSP value 48, or cs6 */
+		ret = setsockopt(*sd, IPPROTO_IPV6, IPV6_TCLASS, &val, sizeof(val));
+	}
+
 	if (ret < 0) {
-		log_message(LOG_INFO, "cant set SO_PRIORITY IP option. errno=%d (%m)", errno);
+		log_message(LOG_INFO, "can't set %s option. errno=%d (%m)", (family == AF_INET) ? "IP_TOS" : "IPV6_TCLASS",  errno);
 		close(*sd);
 		*sd = -1;
 	}

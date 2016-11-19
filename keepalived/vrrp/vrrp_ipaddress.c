@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 /* local include */
 #include "vrrp_ipaddress.h"
 #ifdef _HAVE_LIBIPTC_
@@ -32,6 +34,7 @@
 #include "utils.h"
 #include "bitops.h"
 #include "global_data.h"
+#include "rttables.h"
 
 
 #define INFINITY_LIFE_TIME      0xFFFFFFFF
@@ -99,7 +102,7 @@ netlink_ipaddress(ip_address_t *ipaddress, int cmd)
 			 *     without service. HA/VRRP setups have their own "DAD"-like
 			 *     functionality, so it's not really needed from the IPv6 stack.
 			 */
-#ifdef IFA_F_NODAD
+#ifdef IFA_F_NODAD	/* Since Linux 2.6.19 */
 			req.ifa.ifa_flags |= IFA_F_NODAD;
 #endif
 		}
@@ -163,7 +166,7 @@ netlink_iplist(list ip_list, int cmd)
 
 #ifndef _HAVE_LIBIPTC_
 static void
-handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname)
+handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname, bool force)
 {
 	char  *argv[14];
 	unsigned int i = 0;
@@ -195,13 +198,13 @@ handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname)
 	argv[i++] = "ACCEPT";
 	argv[i] = NULL;
 
-	if (fork_exec(argv) < 0)
+	if (fork_exec(argv) < 0 && !force)
 		log_message(LOG_ERR, "Failed to %s ip6table rule to accept NAs sent"
 				     " to vip %s", (cmd) ? "set" : "remove", addr_str);
 
 	argv[type_specifier] = "135";
 
-	if (fork_exec(argv) < 0)
+	if (fork_exec(argv) < 0 && !force)
 		log_message(LOG_ERR, "Failed to %s ip6table rule to accept NSs sent"
 				     " to vip %s", (cmd) ? "set" : "remove", addr_str);
 
@@ -215,21 +218,21 @@ handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname)
 
 	/* Allow NSs to be sent - this should only happen if the underlying interface
 	   doesn't have an IPv6 address */
-	if (fork_exec(argv) < 0)
+	if (fork_exec(argv) < 0 && !force)
 		log_message(LOG_ERR, "Failed to %s ip6table rule to allow NSs to be"
 				     " sent from vip %s", (cmd) ? "set" : "remove", addr_str);
 
 	argv[type_specifier] = "136";
 
 	/* Allow NAs to be sent in reply to an NS */
-	if (fork_exec(argv) < 0)
+	if (fork_exec(argv) < 0 && !force)
 		log_message(LOG_ERR, "Failed to %s ip6table rule to allow NAs to be"
 				     " sent from vip %s", (cmd) ? "set" : "remove", addr_str);
 }
 
 /* add/remove iptable drop rule to VIP */
 static void
-handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, void *unused)
+handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, void *unused, bool force)
 {
 	char  *argv[10];
 	unsigned int i = 0;
@@ -240,7 +243,7 @@ handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, void 
 		return;
 
 	if (IP_IS6(ipaddress)) {
-		handle_iptable_rule_to_NA(ipaddress, cmd, ifname);
+		handle_iptable_rule_to_NA(ipaddress, cmd, ifname, force);
 		argv[i++] = "ip6tables";
 	} else {
 		argv[i++] = "iptables";
@@ -261,9 +264,11 @@ handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, void 
 	argv[i++] = "DROP";
 	argv[i] = NULL;
 
-	if (fork_exec(argv) < 0)
-		log_message(LOG_ERR, "Failed to %s iptable drop rule"
-				     " to vip %s", (cmd) ? "set" : "remove", addr_str);
+	if (fork_exec(argv) < 0) {
+		if (!force)
+			log_message(LOG_ERR, "Failed to %s ip%stable drop rule"
+					     " to vip %s", (cmd) ? "set" : "remove", IP_IS6(ipaddress) ? "6" : "", addr_str);
+	}
 	else
 		ipaddress->iptable_rule_set = (cmd != IPADDRESS_DEL);
 
@@ -275,9 +280,9 @@ handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, void 
 	if (if_specifier >= 0)
 		argv[if_specifier] = "-o";
 
-	if (fork_exec(argv) < 0)
-		log_message(LOG_ERR, "Failed to %s iptable drop rule"
-				     " from vip %s", (cmd) ? "set" : "remove", addr_str);
+	if (fork_exec(argv) < 0 && !force)
+		log_message(LOG_ERR, "Failed to %s ip%stable drop rule"
+				     " from vip %s", (cmd) ? "set" : "remove", IP_IS6(ipaddress) ? "6" : "", addr_str);
 }
 #endif
 
@@ -296,7 +301,7 @@ handle_iptable_rule_to_iplist(struct ipt_handle *h, list ip_list, int cmd, char 
 		ipaddr = ELEMENT_DATA(e);
 		if ((cmd == IPADDRESS_DEL) == ipaddr->iptable_rule_set ||
 		    force)
-			handle_iptable_rule_to_vip(ipaddr, cmd, ifname, h);
+			handle_iptable_rule_to_vip(ipaddr, cmd, ifname, h, force);
 	}
 }
 
@@ -326,7 +331,7 @@ dump_ipaddress(void *if_data)
 			    , ipaddr->ifa.ifa_prefixlen
 			    , broadcast
 			    , IF_NAME(ipaddr->ifp)
-			    , netlink_scope_n2a(ipaddr->ifa.ifa_scope)
+			    , get_rttables_scope(ipaddr->ifa.ifa_scope)
 			    , ipaddr->label ? " label " : ""
 			    , ipaddr->label ? ipaddr->label : "");
 }
@@ -396,7 +401,7 @@ alloc_ipaddress(list ip_list, vector_t *strvec, interface_t *ifp)
 	interface_t *ifp_local;
 	char *str;
 	unsigned int i = 0, addr_idx = 0;
-	int scope;
+	uint32_t scope;
 	int param_avail;
 
 	new = (ip_address_t *) MALLOC(sizeof(ip_address_t));
@@ -439,7 +444,7 @@ alloc_ipaddress(list ip_list, vector_t *strvec, interface_t *ifp)
 			new->ifa.ifa_index = IF_INDEX(ifp_local);
 			new->ifp = ifp_local;
 		} else if (!strcmp(str, "scope")) {
-			scope = netlink_scope_a2n(vector_slot(strvec, ++i));
+			find_rttables_scope(vector_slot(strvec, ++i), &scope);
 			if (scope == -1)
 				log_message(LOG_INFO, "Invalid scope '%s' specified for %s - ignoring", FMT_STR_VSLOT(strvec,i), FMT_STR_VSLOT(strvec, addr_idx));
 			else
@@ -467,16 +472,18 @@ alloc_ipaddress(list ip_list, vector_t *strvec, interface_t *ifp)
 	}
 
 	if (!ifp && !new->ifp) {
-		ifp_local = if_get_by_ifname(DFLT_INT);
-		if (!ifp_local) {
-			log_message(LOG_INFO, "Default interface " DFLT_INT
-				    " does not exist and no interface specified. "
-				    "Skipping static address %s.", FMT_STR_VSLOT(strvec, addr_idx));
-			FREE(new);
-			return;
+		if (!global_data->default_ifp) {
+			global_data->default_ifp = if_get_by_ifname(DFLT_INT);
+			if (!global_data->default_ifp) {
+				log_message(LOG_INFO, "Default interface " DFLT_INT
+					    " does not exist and no interface specified. "
+					    "Skipping static address %s.", FMT_STR_VSLOT(strvec, addr_idx));
+				FREE(new);
+				return;
+			}
 		}
-		new->ifa.ifa_index = IF_INDEX(ifp_local);
-		new->ifp = ifp_local;
+		new->ifa.ifa_index = IF_INDEX(global_data->default_ifp);
+		new->ifp = global_data->default_ifp;
 	}
 
 	if (new->ifa.ifa_family == AF_INET6) {
@@ -557,7 +564,7 @@ clear_diff_address(struct ipt_handle *h, list l, list n)
 #endif
 							 )
 
-				handle_iptable_rule_to_vip(ipaddr, IPADDRESS_DEL, iface_name,h);
+				handle_iptable_rule_to_vip(ipaddr, IPADDRESS_DEL, iface_name, h, false);
 		}
 	}
 

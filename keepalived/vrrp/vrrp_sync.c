@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include "vrrp_sync.h"
 #include "vrrp_if.h"
 #include "vrrp_notify.h"
@@ -40,6 +42,10 @@ vrrp_init_instance_sands(vrrp_t * vrrp)
 	    vrrp->state == VRRP_STATE_GOTO_MASTER ||
 	    vrrp->state == VRRP_STATE_GOTO_FAULT  ||
 	    vrrp->wantstate == VRRP_STATE_GOTO_MASTER) {
+// TIMER  - GOTO_MASTER shouldn't be adver_int. Look at circumstances to set GOTO_MASTER
+// i) backup and expire timer
+// ii) backup and receive prio 0
+// iii) master and receive higher prio advert
 		vrrp->sands = timer_add_long(time_now, vrrp->adver_int);
 		return;
 	}

@@ -32,11 +32,7 @@
 #include <openssl/ssl.h>
 
 #ifdef _WITH_LVS_
-  #ifdef _KRNL_2_4_
-    #include <net/ip_vs.h>
-  #elif _KRNL_2_6_
-    #include "../libipvs-2.6/ip_vs.h"
-  #endif
+  #include "ip_vs.h"
 #endif
 
 /* local includes */
@@ -48,7 +44,6 @@
 typedef unsigned int checker_id_t;
 
 /* Daemon dynamic data structure definition */
-#define MAX_TIMEOUT_LENGTH		5
 #define KEEPALIVED_DEFAULT_DELAY	(60 * TIMER_HZ)
 
 /* SSL specific data */
@@ -70,10 +65,8 @@ typedef struct _real_server {
 	int				iweight;	/* Initial weight */
 	int				pweight;	/* previous weight
 							 * used for reloading */
-#ifdef _KRNL_2_6_
 	uint32_t			u_threshold;   /* Upper connection limit. */
 	uint32_t			l_threshold;   /* Lower connection limit. */
-#endif
 	int				inhibit;	/* Set weight to 0 instead of removing
 							 * the service from IPVS topology.
 							 */
@@ -83,12 +76,16 @@ typedef struct _real_server {
 	list				failed_checkers;/* List of failed checkers */
 	int				set;		/* in the IPVS table */
 	int				reloaded;	/* active state was copied from old config while reloading */
-#if defined(_WITH_SNMP_CHECKER_) && defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+#if defined(_WITH_SNMP_CHECKER_) && defined(_WITH_LVS_)
 	/* Statistics */
 	uint32_t			activeconns;	/* active connections */
 	uint32_t			inactconns;	/* inactive connections */
 	uint32_t			persistconns;	/* persistent connections */
+#ifndef _WITH_LVS_64BIT_STATS_
 	struct ip_vs_stats_user		stats;
+#else
+	struct ip_vs_stats64		stats;
+#endif
 #endif
 } real_server_t;
 
@@ -122,10 +119,12 @@ typedef struct _virtual_server {
 	int				ops;
 #ifdef _WITH_LVS_
 	char				sched[IP_VS_SCHEDNAME_MAXLEN];
-	char				timeout_persistence[MAX_TIMEOUT_LENGTH];
+	uint32_t			persistence_timeout;
+#ifdef IPVS_SVC_ATTR_PE_NAME
 	char				pe_name[IP_VS_PENAME_MAXLEN];
+#endif
 	unsigned			loadbalancing_kind;
-	uint32_t			granularity_persistence;
+	uint32_t			persistence_granularity;
 #endif
 	char				*virtualhost;
 	list				rs;
@@ -139,10 +138,14 @@ typedef struct _virtual_server {
 	long unsigned			hysteresis;	/* up/down events "lag" WRT quorum. */
 	unsigned			quorum_state;	/* Reflects result of the last transition done. */
 	int				reloaded;	/* quorum_state was copied from old config while reloading */
-#if defined(_WITH_SNMP_CHECKER_) && defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+#if defined(_WITH_SNMP_CHECKER_) && defined(_WITH_LVS_)
 	/* Statistics */
 	time_t				lastupdated;
+#ifndef _WITH_LVS_64BIT_STATS_
 	struct ip_vs_stats_user		stats;
+#else
+	struct ip_vs_stats64		stats;
+#endif
 #endif
 } virtual_server_t;
 
@@ -222,12 +225,12 @@ static inline int inaddr_equal(sa_family_t family, void *addr1, void *addr2)
 			 (X)->af                      == (Y)->af                        &&\
 			 (X)->service_type            == (Y)->service_type		&&\
 			 (X)->loadbalancing_kind      == (Y)->loadbalancing_kind	&&\
-			 (X)->granularity_persistence == (Y)->granularity_persistence	&&\
+			 (X)->persistence_granularity == (Y)->persistence_granularity	&&\
 			 (  (!(X)->quorum_up && !(Y)->quorum_up) || \
 			    ((X)->quorum_up && (Y)->quorum_up && !strcmp ((X)->quorum_up, (Y)->quorum_up)) \
 			 ) &&\
 			 !strcmp((X)->sched, (Y)->sched)				&&\
-			 !strcmp((X)->timeout_persistence, (Y)->timeout_persistence)	&&\
+			 (X)->persistence_timeout     == (Y)->persistence_timeout 	&&\
 			 (((X)->vsgname && (Y)->vsgname &&				\
 			   !strcmp((X)->vsgname, (Y)->vsgname)) ||			\
 			  (!(X)->vsgname && !(Y)->vsgname)))

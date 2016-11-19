@@ -22,9 +22,19 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include <netdb.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+#ifdef _WITH_SNMP_
+#include "snmp.h"
+#endif
+
 #include "global_parser.h"
 #include "global_data.h"
+#include "main.h"
 #include "check_data.h"
 #include "parser.h"
 #include "memory.h"
@@ -32,12 +42,18 @@
 #include "utils.h"
 #include "logger.h"
 
+#if HAVE_DECL_CLONE_NEWNET
+#include "namespaces.h"
+#endif
+
+#define LVS_MAX_TIMEOUT		(86400*31)	/* 31 days */
+
 /* data handlers */
 /* Global def handlers */
 static void
 use_polling_handler(vector_t *strvec)
 {
-	global_data->linkbeat_use_polling = 1;
+	global_data->linkbeat_use_polling = true;
 }
 static void
 routerid_handler(vector_t *strvec)
@@ -103,40 +119,201 @@ email_handler(vector_t *strvec)
 
 	free_strvec(email_vec);
 }
+#ifdef _WITH_VRRP_
+static void
+default_interface_handler(vector_t *strvec)
+{
+	interface_t *ifp;
+
+	if (vector_size(strvec) < 2) {
+		log_message(LOG_INFO, "default_interface requires interface name");
+		return;
+	}
+	ifp = if_get_by_ifname(vector_slot(strvec, 1));
+	if (!ifp)
+		log_message(LOG_INFO, "Cannot find default interface %s", FMT_STR_VSLOT(strvec, 1));
+	else
+		global_data->default_ifp = ifp;
+}
+#endif
+#ifdef _WITH_LVS_
+static void
+lvs_timeouts(vector_t *strvec)
+{
+	int val;
+	int i;
+	char *endptr;
+
+	if (vector_size(strvec) < 3) {
+		log_message(LOG_INFO, "lvs_timeouts requires at least one option");
+		return;
+	}
+
+	for (i = 1; i < vector_size(strvec); i++) {
+		if (!strcmp(vector_slot(strvec, i), "tcp")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_timout tcp - ignoring");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 0 || val > LVS_MAX_TIMEOUT)
+				log_message(LOG_INFO, "Invalid lvs_timeout tcp (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_tcp_timeout = val;
+			i++;	/* skip over value */
+			continue;
+		}
+		if (!strcmp(vector_slot(strvec, i), "tcpfin")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_timeout tcpfin - ignoring");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 1 || val > LVS_MAX_TIMEOUT)
+				log_message(LOG_INFO, "Invalid lvs_timeout tcpfin (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_tcpfin_timeout = val;
+			i++;	/* skip over value */
+			continue;
+		}
+		if (!strcmp(vector_slot(strvec, i), "udp")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_timeout udp - ignoring");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 1 || val > LVS_MAX_TIMEOUT)
+				log_message(LOG_INFO, "Invalid lvs_timeout udp (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_udp_timeout = val;
+			i++;	/* skip over value */
+			continue;
+		}
+		log_message(LOG_INFO, "Unknown option %s specified for lvs_timeouts", FMT_STR_VSLOT(strvec, i));
+	}
+}
+#ifdef _WITH_LVS_
 static void
 lvs_syncd_handler(vector_t *strvec)
 {
-	int syncid;
+	int val;
+	int i;
+	char *endptr;
 
-	if (global_data->lvs_syncd_if) {
-		log_message(LOG_INFO, "lvs_sync_daemon has already been specified as %s %s - ignoring", global_data->lvs_syncd_if, global_data->lvs_syncd_vrrp_name);
+	if (global_data->lvs_syncd.ifname) {
+		log_message(LOG_INFO, "lvs_sync_daemon has already been specified as %s %s - ignoring", global_data->lvs_syncd.ifname, global_data->lvs_syncd.vrrp_name);
 		return;
 	}
 
-	if (vector_size(strvec) < 3 || vector_size(strvec) > 4) {
-		log_message(LOG_INFO, "lvs_sync_daemon requires interface, VRRP instance and optional syncid");
+	if (vector_size(strvec) < 3) {
+		log_message(LOG_INFO, "lvs_sync_daemon requires interface, VRRP instance");
 		return;
 	}
 
-	global_data->lvs_syncd_if = set_value(strvec);
+	global_data->lvs_syncd.ifname = set_value(strvec);
 
-	global_data->lvs_syncd_vrrp_name = MALLOC(strlen(vector_slot(strvec, 2)) + 1);
-	if (!global_data->lvs_syncd_vrrp_name)
+	global_data->lvs_syncd.vrrp_name = MALLOC(strlen(vector_slot(strvec, 2)) + 1);
+	if (!global_data->lvs_syncd.vrrp_name)
 		return;
-	strcpy(global_data->lvs_syncd_vrrp_name, vector_slot(strvec, 2));
-	if (vector_size(strvec) >= 4) {
-		syncid = atoi(vector_slot(strvec,3));
-		if (syncid < 0 || syncid > 255)
-			log_message(LOG_INFO, "Invalid syncid - defaulting to vrid");
+	strcpy(global_data->lvs_syncd.vrrp_name, vector_slot(strvec, 2));
+
+	/* This is maintained for backwards compatibility, prior to adding "id" option */
+	if (vector_size(strvec) >= 4 && isdigit(FMT_STR_VSLOT(strvec, 3)[0])) {
+		log_message(LOG_INFO, "Please use keyword \"id\" before lvs_sync_daemon syncid value");
+		val = strtol(vector_slot(strvec,3), &endptr, 10);
+		if (*endptr || val < 0 || val > 255)
+			log_message(LOG_INFO, "Invalid syncid (%s) - defaulting to vrid", FMT_STR_VSLOT(strvec, 3));
 		else
-			global_data->lvs_syncd_syncid = syncid;
+			global_data->lvs_syncd.syncid = val;
+		i = 4;
+	}
+	else
+		i = 3;
+
+	for ( ; i < vector_size(strvec); i++) {
+		if (!strcmp(vector_slot(strvec, i), "id")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_sync_daemon id, defaulting to vrid");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 0 || val > 255)
+				log_message(LOG_INFO, "Invalid syncid (%s) - defaulting to vrid", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_syncd.syncid = val;
+			i++;	/* skip over value */
+			continue;
+		}
+#ifdef _HAVE_IPVS_SYNCD_ATTRIBUTES_
+		if (!strcmp(vector_slot(strvec, i), "maxlen")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_sync_daemon maxlen - ignoring");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 1 || val > 65535 - 20 - 8)
+				log_message(LOG_INFO, "Invalid lvs_sync_daemon maxlen (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_syncd.sync_maxlen = val;
+			i++;	/* skip over value */
+			continue;
+		}
+		if (!strcmp(vector_slot(strvec, i), "port")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_sync_daemon port - ignoring");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 1 || val > 65535)
+				log_message(LOG_INFO, "Invalid lvs_sync_daemon port (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_syncd.mcast_port = val;
+			i++;	/* skip over value */
+			continue;
+		}
+		if (!strcmp(vector_slot(strvec, i), "ttl")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_sync_daemon ttl - ignoring");
+				continue;
+			}
+			val = strtol(vector_slot(strvec, i+1), &endptr, 10);
+			if (*endptr != '\0' || val < 1 || val > 255)
+				log_message(LOG_INFO, "Invalid lvs_sync_daemon ttl (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+			else
+				global_data->lvs_syncd.mcast_ttl = val;
+			i++;	/* skip over value */
+			continue;
+		}
+		if (!strcmp(vector_slot(strvec, i), "group")) {
+			if (i == vector_size(strvec) - 1) {
+				log_message(LOG_INFO, "No value specified for lvs_sync_daemon group - ignoring");
+				continue;
+			}
+
+			if (inet_stosockaddr(vector_slot(strvec, i+1), NULL, &global_data->lvs_syncd.mcast_group) < 0)
+				log_message(LOG_INFO, "Invalid lvs_sync_daemon group (%s) - ignoring", FMT_STR_VSLOT(strvec, i+1));
+
+			if ((global_data->lvs_syncd.mcast_group.ss_family == AF_INET  && !IN_MULTICAST(htonl(((struct sockaddr_in *)&global_data->lvs_syncd.mcast_group)->sin_addr.s_addr))) ||
+			    (global_data->lvs_syncd.mcast_group.ss_family == AF_INET6 && !IN6_IS_ADDR_MULTICAST(&((struct sockaddr_in6 *)&global_data->lvs_syncd.mcast_group)->sin6_addr))) {
+				log_message(LOG_INFO, "lvs_sync_daemon group address %s is not multicast - ignoring", FMT_STR_VSLOT(strvec, i+1));
+				global_data->lvs_syncd.mcast_group.ss_family = AF_UNSPEC;
+			}
+
+			i++;	/* skip over value */
+			continue;
+		}
+#endif
+		log_message(LOG_INFO, "Unknown option %s specified for lvs_sync_daemon", FMT_STR_VSLOT(strvec, i));
 	}
 }
+#endif
 static void
 lvs_flush_handler(vector_t *strvec)
 {
 	global_data->lvs_flush = true;
 }
+#endif
+#ifdef _WITH_VRRP_
 static void
 vrrp_mcast_group4_handler(vector_t *strvec)
 {
@@ -341,6 +518,13 @@ vrrp_prio_handler(vector_t *strvec)
 	global_data->vrrp_process_priority = priority;
 }
 static void
+vrrp_no_swap_handler(vector_t *strvec)
+{
+	global_data->vrrp_no_swap = true;
+}
+#endif
+#ifdef _WITH_LVS_
+static void
 checker_prio_handler(vector_t *strvec)
 {
 	int priority;
@@ -359,15 +543,11 @@ checker_prio_handler(vector_t *strvec)
 	global_data->checker_process_priority = priority;
 }
 static void
-vrrp_no_swap_handler(vector_t *strvec)
-{
-	global_data->vrrp_no_swap = true;
-}
-static void
 checker_no_swap_handler(vector_t *strvec)
 {
 	global_data->checker_no_swap = true;
 }
+#endif
 #ifdef _WITH_SNMP_
 static void
 snmp_socket_handler(vector_t *strvec)
@@ -437,21 +617,86 @@ snmp_checker_handler(vector_t *strvec)
 }
 #endif
 #endif
+#if HAVE_DECL_CLONE_NEWNET
+static void
+net_namespace_handler(vector_t *strvec)
+{
+	/* If we are reloading, there has already been a check that the
+	 * namespace hasn't changed */ 
+	if (!reload) {
+		if (!network_namespace) {
+			network_namespace = set_value(strvec);
+			use_pid_dir = true;
+		}
+		else
+			log_message(LOG_INFO, "Duplicate net_namespace definition %s - ignoring", FMT_STR_VSLOT(strvec, 1));
+	}
+
+#ifdef _WITH_SNMP_
+	/* Multiple instances of keepalived cannot register the same MIB
+	 * with the same instance of snmpd. In order for snmpd to work
+	 * with multiple instances of keepalived, there would need to be
+	 * one instance of snmpd per keepalived instance. Using unix domain
+	 * sockets will not work for this, so set the default snmp_socket
+	 * to udp:localhost:705 which will enable keepalived to communicate
+	 * with its own instance of snmpd running in the same network namespace. */
+	if (global_data && !global_data->snmp_socket) {
+		global_data->snmp_socket = MALLOC(strlen(SNMP_DEFAULT_NETWORK_SOCKET) + 1);
+		if (!global_data->snmp_socket) {
+			log_message(LOG_INFO, "Unable to set default SNMP socket for network namespace");
+			return;
+		}
+		strcpy(global_data->snmp_socket, SNMP_DEFAULT_NETWORK_SOCKET);
+	}
+#endif
+}
+#endif
+
+static void
+instance_handler(vector_t *strvec)
+{
+	if (!reload) {
+		if (!instance_name) {
+			instance_name = set_value(strvec);
+			use_pid_dir = true;
+		}
+		else
+			log_message(LOG_INFO, "Duplicate instance definition %s - ignoring", FMT_STR_VSLOT(strvec, 1));
+	}
+}
+
+static void
+use_pid_dir_handler(vector_t *strvec)
+{
+	use_pid_dir = true;
+}
 
 void
-global_init_keywords(void)
+init_global_keywords(bool global_active)
 {
 	/* global definitions mapping */
-	install_keyword_root("linkbeat_use_polling", use_polling_handler, true);
-	install_keyword_root("global_defs", NULL, true);
+	install_keyword_root("linkbeat_use_polling", use_polling_handler, global_active);
+#if HAVE_DECL_CLONE_NEWNET
+	install_keyword_root("net_namespace", &net_namespace_handler, !global_active);
+#endif
+	install_keyword_root("use_pid_dir", &use_pid_dir_handler, !global_active);
+	install_keyword_root("instance", &instance_handler, !global_active);
+	install_keyword_root("global_defs", NULL, global_active);
 	install_keyword("router_id", &routerid_handler);
 	install_keyword("notification_email_from", &emailfrom_handler);
 	install_keyword("smtp_server", &smtpserver_handler);
 	install_keyword("smtp_helo_name", &smtphelo_handler);
 	install_keyword("smtp_connect_timeout", &smtpto_handler);
 	install_keyword("notification_email", &email_handler);
-	install_keyword("lvs_sync_daemon", &lvs_syncd_handler);
+#ifdef _WITH_VRRP_
+	install_keyword("default_interface", &default_interface_handler);
+#endif
+#ifdef _WITH_LVS_
+	install_keyword("lvs_timeouts", &lvs_timeouts);
 	install_keyword("lvs_flush", &lvs_flush_handler);
+	install_keyword("lvs_sync_daemon", &lvs_syncd_handler);
+#endif
+#ifdef _WITH_VRRP_
 	install_keyword("vrrp_mcast_group4", &vrrp_mcast_group4_handler);
 	install_keyword("vrrp_mcast_group6", &vrrp_mcast_group6_handler);
 	install_keyword("vrrp_garp_master_delay", &vrrp_garp_delay_handler);
@@ -472,9 +717,12 @@ global_init_keywords(void)
 	install_keyword("vrrp_skip_check_adv_addr", &vrrp_check_adv_addr_handler);
 	install_keyword("vrrp_strict", &vrrp_strict_handler);
 	install_keyword("vrrp_priority", &vrrp_prio_handler);
-	install_keyword("checker_priority", &checker_prio_handler);
 	install_keyword("vrrp_no_swap", &vrrp_no_swap_handler);
+#endif
+#ifdef _WITH_LVS_
+	install_keyword("checker_priority", &checker_prio_handler);
 	install_keyword("checker_no_swap", &checker_no_swap_handler);
+#endif
 #ifdef _WITH_SNMP_
 	install_keyword("snmp_socket", &snmp_socket_handler);
 	install_keyword("enable_traps", &trap_handler);

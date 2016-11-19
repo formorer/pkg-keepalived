@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+#include "config.h"
+
 #include <sys/wait.h>
 #include "memory.h"
 #include <unistd.h>
@@ -27,6 +29,13 @@
 #include "utils.h"
 #include "signals.h"
 #include "bitops.h"
+
+#ifdef _WITH_STACKTRACE_
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <execinfo.h>
+#endif
 
 /* global vars */
 unsigned long debug = 0;
@@ -73,6 +82,23 @@ dump_buffer(char *buff, int count, FILE* fp)
 		}
 	}
 }
+
+#ifdef _WITH_STACKTRACE_
+void
+write_stacktrace(const char *file_name)
+{
+	int fd = open(file_name, O_WRONLY | O_APPEND | O_CREAT, 0644);
+	void *buffer[100];
+	int nptrs;
+
+	nptrs = backtrace(buffer, 100);
+	backtrace_symbols_fd(buffer, nptrs, fd);
+	if (write(fd, "\n", 1) != 1) {
+		/* We don't care, but this stops a warning on Ubuntu */
+	}
+	close(fd);
+}
+#endif
 
 /* Compute a checksum */
 u_short
@@ -378,6 +404,7 @@ inet_sockaddrcmp(struct sockaddr_storage *a, struct sockaddr_storage *b)
 }
 
 
+#ifdef _INCLUDE_UNUSED_CODE_
 /*
  * IP string to network representation
  * Highly inspired from Paul Vixie code.
@@ -421,7 +448,6 @@ inet_ston(const char *addr, uint32_t * dst)
 	return 1;
 }
 
-#ifdef _INCLUDE_UNUSED_CODE_
 /*
  * Return broadcast address from network and netmask.
  */

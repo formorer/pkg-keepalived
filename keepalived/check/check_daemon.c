@@ -20,6 +20,10 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
+#include <string.h>
+
 #include "check_daemon.h"
 #include "check_parser.h"
 #include "ipwrapper.h"
@@ -44,9 +48,11 @@
   #include "check_snmp.h"
 #endif
 
+static char *check_syslog_ident;
+
 /* Daemon stop sequence */
 static void
-stop_check(void)
+stop_check(int status)
 {
 	/* Destroy master thread */
 	signal_handler_destroy();
@@ -70,10 +76,7 @@ stop_check(void)
 #ifdef _WITH_VRRP_
 	free_interface_queue();
 #endif
-
-#ifdef _MEM_CHECK_
-	keepalived_free_final("Healthcheck child process");
-#endif
+	free_parent_mallocs_exit();
 
 	/*
 	 * Reached when terminate signal catched.
@@ -82,7 +85,15 @@ stop_check(void)
 	log_message(LOG_INFO, "Stopped");
 
 	closelog();
-	exit(0);
+
+#ifndef _MEM_CHECK_LOG_
+	FREE_PTR(check_syslog_ident);
+#else
+	if (check_syslog_ident)
+		free(check_syslog_ident);
+#endif
+
+	exit(status);
 }
 
 /* Daemon init sequence */
@@ -91,7 +102,7 @@ start_check(void)
 {
 	/* Initialize sub-system */
 	if (ipvs_start() != IPVS_SUCCESS) {
-		stop_check();
+		stop_check(KEEPALIVED_EXIT_FATAL);
 		return;
 	}
 
@@ -104,16 +115,16 @@ start_check(void)
 	/* Parse configuration file */
 	global_data = alloc_global_data();
 	check_data = alloc_check_data();
+	if (!check_data)
+		stop_check(KEEPALIVED_EXIT_FATAL);
+
 	init_data(conf_file, check_init_keywords);
-	if (!check_data) {
-		stop_check();
-		return;
-	}
+
 	init_global_data(global_data);
 
 	/* Post initializations */
-#ifdef _DEBUG_
-	log_message(LOG_INFO, "Configuration is using : %lu Bytes", mem_allocated);
+#ifdef _MEM_CHECK_
+	log_message(LOG_INFO, "Configuration is using : %zu Bytes", mem_allocated);
 #endif
 
 	/* Remove any entries left over from previous invocation */
@@ -126,10 +137,8 @@ start_check(void)
 #endif
 
 	/* SSL load static data & initialize common ctx context */
-	if (!init_ssl_ctx()) {
-		stop_check();
-		return;
-	}
+	if (!init_ssl_ctx())
+		stop_check(KEEPALIVED_EXIT_FATAL);
 
 	/* fill 'vsg' members of the virtual_server_t structure.
 	 * We must do that after parsing config, because
@@ -149,10 +158,8 @@ start_check(void)
 		clear_diff_services();
 
 	/* Initialize IPVS topology */
-	if (!init_services()) {
-		stop_check();
-		return;
-	}
+	if (!init_services())
+		stop_check(KEEPALIVED_EXIT_FATAL);
 
 	/* Dump configuration */
 	if (__test_bit(DUMP_CONF_BIT, &debug)) {
@@ -212,6 +219,7 @@ reload_check_thread(thread_t * thread)
 #endif
 	thread_cleanup_master(master);
 	free_global_data(global_data);
+
 	free_checkers_queue();
 #ifdef _WITH_VRRP_
 	free_interface_queue();
@@ -224,7 +232,7 @@ reload_check_thread(thread_t * thread)
 	check_data = NULL;
 
 	/* Reload the conf */
-#ifdef _DEBUG_
+#ifdef _MEM_CHECK_
 	mem_allocated = 0;
 #endif
 	start_check();
@@ -237,6 +245,7 @@ reload_check_thread(thread_t * thread)
 }
 
 /* CHECK Child respawning thread */
+#ifndef _DEBUG_
 static int
 check_respawn_thread(thread_t * thread)
 {
@@ -262,6 +271,7 @@ check_respawn_thread(thread_t * thread)
 	}
 	return 0;
 }
+#endif
 
 /* Register CHECK thread */
 int
@@ -270,6 +280,7 @@ start_check_child(void)
 #ifndef _DEBUG_
 	pid_t pid;
 	int ret;
+	char *syslog_ident;
 
 	/* Initialize child process */
 	pid = fork();
@@ -289,18 +300,30 @@ start_check_child(void)
 		return 0;
 	}
 
+	if ((instance_name
+#if HAVE_DECL_CLONE_NEWNET
+			   || network_namespace
+#endif
+					       ) &&
+	     (check_syslog_ident = make_syslog_ident(PROG_CHECK)))
+		syslog_ident = check_syslog_ident;
+	else
+		syslog_ident = PROG_CHECK;
+
 	/* Opening local CHECK syslog channel */
-	openlog(PROG_CHECK, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
-			  , (log_facility==LOG_DAEMON) ? LOG_LOCAL2 : log_facility);
+	openlog(syslog_ident, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
+			    , (log_facility==LOG_DAEMON) ? LOG_LOCAL2 : log_facility);
 
 #ifdef _MEM_CHECK_
-        mem_log_init(PROG_CHECK);
+	mem_log_init(PROG_CHECK, "Healthcheck child process");
 #endif
+
+	free_parent_mallocs_startup(true);
 
 	/* Child process part, write pidfile */
 	if (!pidfile_write(checkers_pidfile, getpid())) {
 		log_message(LOG_INFO, "Healthcheck child process: cannot write pidfile");
-		exit(0);
+		exit(KEEPALIVED_EXIT_FATAL);
 	}
 
 	/* Create the new master thread */
@@ -333,6 +356,8 @@ start_check_child(void)
 	launch_scheduler();
 
 	/* Finish healthchecker daemon process */
-	stop_check();
-	exit(0);
+	stop_check(EXIT_SUCCESS);
+
+	/* unreachable */
+	exit(EXIT_SUCCESS);
 }

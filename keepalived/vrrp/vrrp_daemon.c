@@ -20,6 +20,10 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
+#include <string.h>
+
 #include "vrrp_daemon.h"
 #include "vrrp_scheduler.h"
 #include "vrrp_if.h"
@@ -43,6 +47,7 @@
 #include "signals.h"
 #include "process.h"
 #include "bitops.h"
+#include "rttables.h"
 #ifdef _WITH_LVS_
   #include "ipvswrapper.h"
 #endif
@@ -62,11 +67,11 @@ static int print_vrrp_data(thread_t * thread);
 static int print_vrrp_stats(thread_t * thread);
 static int reload_vrrp_thread(thread_t * thread);
 
-
+static char *vrrp_syslog_ident;
 
 /* Daemon stop sequence */
 static void
-stop_vrrp(void)
+stop_vrrp(int status)
 {
 	/* Ensure any interfaces are in backup mode,
 	 * sending a priority 0 vrrp message
@@ -99,7 +104,7 @@ stop_vrrp(void)
 	 * of an IGMP leave group being sent for some reason.
 	 * Since we are about to exit, it doesn't affect anything else
 	 * running. */
-	sleep ( 1 );
+	sleep(1);
 
 	if (!__test_bit(DONT_RELEASE_VRRP_BIT, &debug))
 		shutdown_vrrp_instances();
@@ -123,10 +128,7 @@ stop_vrrp(void)
 	free_vrrp_data(vrrp_data);
 	free_vrrp_buffer();
 	free_interface_queue();
-
-#ifdef _MEM_CHECK_
-	keepalived_free_final("VRRP Child process");
-#endif
+	free_parent_mallocs_exit();
 
 	/*
 	 * Reached when terminate signal catched.
@@ -136,7 +138,14 @@ stop_vrrp(void)
 
 	closelog();
 
-	exit(0);
+#ifndef _MEM_CHECK_LOG_
+	FREE_PTR(vrrp_syslog_ident);
+#else
+	if (vrrp_syslog_ident)
+		free(vrrp_syslog_ident);
+#endif
+
+	exit(status);
 }
 
 /* Daemon init sequence */
@@ -157,11 +166,12 @@ start_vrrp(void)
 
 	/* Parse configuration file */
 	vrrp_data = alloc_vrrp_data();
-	init_data(conf_file, vrrp_init_keywords);
 	if (!vrrp_data) {
-		stop_vrrp();
+		stop_vrrp(KEEPALIVED_EXIT_FATAL);
 		return;
 	}
+	init_data(conf_file, vrrp_init_keywords);
+
 	init_global_data(global_data);
 
 	/* Set the process priority and non swappable if configured */
@@ -184,17 +194,21 @@ start_vrrp(void)
 	if (vrrp_ipvs_needed()) {
 		/* Initialize ipvs related */
 		if (ipvs_start() != IPVS_SUCCESS) {
-			stop_vrrp();
+			stop_vrrp(KEEPALIVED_EXIT_FATAL);
 			return;
 		}
 
-#ifdef _HAVE_IPVS_SYNCD_
+		/* Set LVS timeouts */
+		if (global_data->lvs_tcp_timeout ||
+		    global_data->lvs_tcpfin_timeout ||
+		    global_data->lvs_udp_timeout)
+			ipvs_set_timeouts(global_data->lvs_tcp_timeout, global_data->lvs_tcpfin_timeout, global_data->lvs_udp_timeout);
+
 		/* If we are managing the sync daemon, then stop any
 		 * instances of it that may have been running if
 		 * we terminated abnormally */
-		ipvs_syncd_cmd(IPVS_STOPDAEMON, NULL, IPVS_MASTER, 0, true);
-		ipvs_syncd_cmd(IPVS_STOPDAEMON, NULL, IPVS_BACKUP, 0, true);
-#endif
+		ipvs_syncd_cmd(IPVS_STOPDAEMON, NULL, IPVS_MASTER, true, true);
+		ipvs_syncd_cmd(IPVS_STOPDAEMON, NULL, IPVS_BACKUP, true, true);
 	}
 #endif
 
@@ -220,9 +234,7 @@ start_vrrp(void)
 
 	/* Complete VRRP initialization */
 	if (!vrrp_complete_init()) {
-		if (vrrp_ipvs_needed()) {
-			stop_vrrp();
-		}
+		stop_vrrp(KEEPALIVED_EXIT_CONFIG);
 		return;
 	}
 
@@ -231,8 +243,8 @@ start_vrrp(void)
 #endif
 
 	/* Post initializations */
-#ifdef _DEBUG_
-	log_message(LOG_INFO, "Configuration is using : %lu Bytes", mem_allocated);
+#ifdef _MEM_CHECK_
+	log_message(LOG_INFO, "Configuration is using : %zu Bytes", mem_allocated);
 #endif
 
 	/* Set static entries */
@@ -251,6 +263,8 @@ start_vrrp(void)
 		ifl = get_if_list();
 		if (!LIST_ISEMPTY(ifl))
 			dump_list(ifl);
+
+		clear_rt_names();
 	}
 
 	/* Initialize linkbeat */
@@ -315,14 +329,14 @@ reload_vrrp_thread(thread_t * thread)
 	vrrp_dispatcher_release(vrrp_data);
 	kernel_netlink_close();
 	thread_cleanup_master(master);
-#ifdef _HAVE_IPVS_SYNCD_
-	/* TODO - Note: this didn't work if we found ipvs_syndc on vrrp before on old_vrrp */
-	if (global_data->lvs_syncd_if)
-		ipvs_syncd_cmd(IPVS_STOPDAEMON, NULL,
-		       (global_data->lvs_syncd_vrrp->state == VRRP_STATE_MAST) ? IPVS_MASTER:
+#ifdef _WITH_LVS_
+	if (global_data->lvs_syncd.ifname)
+		ipvs_syncd_cmd(IPVS_STOPDAEMON, &global_data->lvs_syncd,
+		       (global_data->lvs_syncd.vrrp->state == VRRP_STATE_MAST) ? IPVS_MASTER:
 										 IPVS_BACKUP,
-		       global_data->lvs_syncd_syncid, false);
+		       true, false);
 #endif
+
 	free_global_data(global_data);
 	free_vrrp_buffer();
 	gratuitous_arp_close();
@@ -341,17 +355,17 @@ reload_vrrp_thread(thread_t * thread)
 	reset_interface_queue();
 
 	/* Reload the conf */
-#ifdef _DEBUG_
+#ifdef _MEM_CHECK_
 	mem_allocated = 0;
 #endif
 	start_vrrp();
 
-#ifdef _HAVE_IPVS_SYNCD_
-	if (global_data->lvs_syncd_if)
-		ipvs_syncd_cmd(IPVS_STARTDAEMON, NULL,
-			       (global_data->lvs_syncd_vrrp->state == VRRP_STATE_MAST) ? IPVS_MASTER:
+#ifdef _WITH_LVS_
+	if (global_data->lvs_syncd.ifname)
+		ipvs_syncd_cmd(IPVS_STARTDAEMON, &global_data->lvs_syncd,
+			       (global_data->lvs_syncd.vrrp->state == VRRP_STATE_MAST) ? IPVS_MASTER:
 											 IPVS_BACKUP,
-			       global_data->lvs_syncd_syncid, false);
+			       true, false);
 #endif
 
 	/* free backup data */
@@ -376,8 +390,8 @@ print_vrrp_stats(thread_t * thread)
 	return 0;
 }
 
-
 /* VRRP Child respawning thread */
+#ifndef _DEBUG_
 static int
 vrrp_respawn_thread(thread_t * thread)
 {
@@ -403,6 +417,7 @@ vrrp_respawn_thread(thread_t * thread)
 	}
 	return 0;
 }
+#endif
 
 /* Register VRRP thread */
 int
@@ -411,6 +426,7 @@ start_vrrp_child(void)
 #ifndef _DEBUG_
 	pid_t pid;
 	int ret;
+	char *syslog_ident;
 
 	/* Initialize child process */
 	pid = fork();
@@ -433,12 +449,24 @@ start_vrrp_child(void)
 	signal_handler_destroy();
 
 	/* Opening local VRRP syslog channel */
-	openlog(PROG_VRRP, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
-			 , (log_facility==LOG_DAEMON) ? LOG_LOCAL1 : log_facility);
+	if ((instance_name
+#if HAVE_DECL_CLONE_NEWNET
+			   || network_namespace
+#endif
+					       ) &&
+	    (vrrp_syslog_ident = make_syslog_ident(PROG_VRRP)))
+			syslog_ident = vrrp_syslog_ident;
+	else
+		syslog_ident = PROG_VRRP;
+
+	openlog(syslog_ident, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0)
+			    , (log_facility==LOG_DAEMON) ? LOG_LOCAL1 : log_facility);
 
 #ifdef _MEM_CHECK_
-	mem_log_init(PROG_VRRP);
+	mem_log_init(PROG_VRRP, "VRRP Child process");
 #endif
+
+	free_parent_mallocs_startup(true);
 
 	/* Child process part, write pidfile */
 	if (!pidfile_write(vrrp_pidfile, getpid())) {
@@ -476,6 +504,9 @@ start_vrrp_child(void)
 	launch_scheduler();
 
 	/* Finish VRRP daemon process */
-	stop_vrrp();
-	exit(0);
+//TODO - stop_vrrp doesn't return
+	stop_vrrp(EXIT_SUCCESS);
+
+	/* unreachable */
+	exit(EXIT_SUCCESS);
 }

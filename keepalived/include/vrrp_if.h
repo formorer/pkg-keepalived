@@ -36,33 +36,9 @@
 #include "scheduler.h"
 #include "list.h"
 
-/* types definition */
-#ifndef SIOCETHTOOL
-/* should not happen, otherwise we have a broken toolchain */
-#warning "SIOCETHTOOL not defined. Defaulting to 0x8946, which is probably wrong !"
-#define SIOCETHTOOL     0x8946
-#endif
-#ifndef SIOCGMIIPHY
-/* should not happen, otherwise we have a broken toolchain */
-#warning "SIOCGMIIPHY not defined. Defaulting to SIOCDEVPRIVATE, which is probably wrong !"
-#define SIOCGMIIPHY (SIOCDEVPRIVATE)	/* Get the PHY in use. */
-#define SIOCGMIIREG (SIOCGMIIPHY+1)	/* Read a PHY register. */
-#endif
-
-/* ethtool.h cannot be included because old versions use kernel-only types
- * which cannot be included from user-land. We don't need much anyway.
- */
-#ifndef ETHTOOL_GLINK
-#define ETHTOOL_GLINK   0x0000000a
-/* for passing single values */
-struct ethtool_value {
-	uint32_t   cmd;
-	uint32_t   data;
-};
-#endif
 #define LINK_UP   1
 #define LINK_DOWN 0
-#define IF_NAMESIZ    20	/* Max interface lenght size */
+#define IF_NAMESIZ    20	/* Max interface length size */
 #define IF_HWADDR_MAX 20	/* Max MAC address length size */
 #define ARPHRD_ETHER 1
 #define ARPHRD_LOOPBACK 772
@@ -106,6 +82,7 @@ typedef struct _interface {
 							   otherwise the physical interface (i.e. ifindex) */
 #endif
 	garp_delay_t		*garp_delay;		/* Delays for sending gratuitous ARP/NA */
+	bool			gna_router;		/* Router flag for NA messages */
 	int			reset_arp_config;	/* Count of how many vrrps have changed arp parameters on interface */
 	uint32_t		reset_arp_ignore_value;	/* Original value of arp_ignore to be restored */
 	uint32_t		reset_arp_filter_value;	/* Original value of arp_filter to be restored */
@@ -171,7 +148,7 @@ extern int if_setsockopt_mcast_all(sa_family_t, int *);
 extern int if_setsockopt_mcast_loop(sa_family_t, int *);
 extern int if_setsockopt_mcast_hops(sa_family_t, int *);
 extern int if_setsockopt_mcast_if(sa_family_t, int *, interface_t *);
-extern int if_setsockopt_priority(int *);
+extern int if_setsockopt_priority(int *, int);
 extern int if_setsockopt_rcvbuf(int *, int);
 
 #endif
