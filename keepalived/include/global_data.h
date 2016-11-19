@@ -32,8 +32,6 @@
 
 #ifdef HAVE_LINUX_NETFILTER_X_TABLES_H
 #include <linux/netfilter/x_tables.h>
-#else
-#define	XT_EXTENSION_MAXNAMELEN 29
 #endif
 
 #ifdef _HAVE_LIBIPSET_
@@ -44,6 +42,13 @@
 #include "list.h"
 #include "timer.h"
 #include "vrrp.h"
+#ifdef _WITH_LVS_
+#include "ipvswrapper.h"
+#endif
+
+#ifndef _HAVE_LIBIPTC_
+#define	XT_EXTENSION_MAXNAMELEN		29
+#endif
 
 /* constants */
 #define DEFAULT_SMTP_SERVER 0x7f000001
@@ -56,20 +61,26 @@ typedef struct _email {
 
 /* Configuration data root */
 typedef struct _data {
-	int				linkbeat_use_polling;
+	bool				linkbeat_use_polling;
 	char				*router_id;
 	char				*email_from;
 	struct sockaddr_storage		smtp_server;
 	char				*smtp_helo_name;
 	long				smtp_connection_to;
 	list				email;
+	interface_t			*default_ifp;		/* Default interface for static addresses */
+#ifdef _WITH_LVS_
+	int				lvs_tcp_timeout;
+	int				lvs_tcpfin_timeout;
+	int				lvs_udp_timeout;
+#ifdef _WITH_LVS_
+	struct lvs_syncd_config		lvs_syncd;
+#endif
+	bool				lvs_flush;		/* flush any residual LVS config at startup */
+#endif
+#ifdef _WITH_VRRP_
 	struct sockaddr_storage		vrrp_mcast_group4;
 	struct sockaddr_storage		vrrp_mcast_group6;
-	char				*lvs_syncd_if;		/* handle LVS sync daemon state using this */
-	vrrp_t				*lvs_syncd_vrrp;	/* instance FSM & running on specific interface */
-	int				lvs_syncd_syncid;	/* => eth0 for example. */
-	char				*lvs_syncd_vrrp_name;	/* Only used during configuration */
-	bool				lvs_flush;		/* flush any residual LVS config at startup */
 	int				vrrp_garp_delay;
 	timeval_t			vrrp_garp_refresh;
 	int				vrrp_garp_rep;
@@ -82,10 +93,10 @@ typedef struct _data {
 	int				vrrp_version;	/* VRRP version (2 or 3) */
 	char				vrrp_iptables_inchain[XT_EXTENSION_MAXNAMELEN];
 	char				vrrp_iptables_outchain[XT_EXTENSION_MAXNAMELEN];
-	int				block_ipv4;
-	int				block_ipv6;
+	bool				block_ipv4;
+	bool				block_ipv6;
 #ifdef _HAVE_LIBIPSET_
-	int				using_ipsets;
+	bool				using_ipsets;
 	char				vrrp_ipset_address[IPSET_MAXNAMELEN];
 	char				vrrp_ipset_address6[IPSET_MAXNAMELEN];
 	char				vrrp_ipset_address_iface6[IPSET_MAXNAMELEN];
@@ -94,16 +105,23 @@ typedef struct _data {
 	bool				vrrp_skip_check_adv_addr;
 	bool				vrrp_strict;
 	char				vrrp_process_priority;
-	char				checker_process_priority;
 	bool				vrrp_no_swap;
+#endif
+#ifdef _WITH_LVS_
+	char				checker_process_priority;
 	bool				checker_no_swap;
+#endif
 #ifdef _WITH_SNMP_
-	int				enable_traps;
+	bool				enable_traps;
 	char				*snmp_socket;
-	int				enable_snmp_keepalived;
-	int				enable_snmp_rfcv2;
-	int				enable_snmp_rfcv3;
-	int				enable_snmp_checker;
+#ifdef _WITH_VRRP_
+	bool				enable_snmp_keepalived;
+	bool				enable_snmp_rfcv2;
+	bool				enable_snmp_rfcv3;
+#endif
+#ifdef _WITH_LVS_
+	bool				enable_snmp_checker;
+#endif
 #endif
 } data_t;
 

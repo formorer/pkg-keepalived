@@ -1,30 +1,71 @@
-# Makefile for Sphinx documentation
+# Makefile.am
 #
+# Keepalived OpenSource project.
 
-# You can set these variables from the command line.
-SPHINXOPTS    =
-SPHINXBUILD   = sphinx-build
-PAPER         =
-BUILDDIR      = build
+if BUILD_GENHASH
+dist_man1_MANS	= man/man1/genhash.1
+endif
+dist_man5_MANS	= man/man5/keepalived.conf.5
+dist_man8_MANS	= man/man8/keepalived.8
 
-# User-friendly check for sphinx-build
-ifeq ($(shell which $(SPHINXBUILD) >/dev/null 2>&1; echo $$?), 1)
-$(error The '$(SPHINXBUILD)' command was not found. Make sure you have Sphinx installed, then set the SPHINXBUILD environment variable to point to the full path of the '$(SPHINXBUILD)' executable. Alternatively you can add the directory with the executable to your PATH. If you don't have Sphinx installed, grab it from http://sphinx-doc.org/)
+EXTRA_DIST	= source samples keepalived.conf.SYNOPSIS NOTE_vrrp_vmac.txt KEEPALIVED-MIB VRRP-MIB VRRPv3-MIB
+
+sampledir	= $(sysconfdir)/@PACKAGE@/samples
+sample_DATA	= $(srcdir)/samples/*
+
+mibsdir		= $(datarootdir)/snmp/mibs
+mibs_DATA	=
+if SNMP
+mibs_DATA	+= KEEPALIVED-MIB
+endif
+if SNMP_RFCV2
+mibs_DATA	+= VRRP-MIB
+endif
+if SNMP_RFCV3
+mibs_DATA	+= VRRPv3-MIB
 endif
 
+dist-hook:
+	rm -rf `find $(distdir)/doc -type d -name ".git*"`
+
+if !BUILD_DOCS
+
+.PHONY: all help
+
+all:
+	@true
+
+help:
+	@echo "To build the documentation, make sure you have Sphinx installed, then"
+	@echo "run configure with the SPHINXBUILD environment variable pointing to"
+	@echo "the path of the 'sphinx-build' executable. Alternatively you can add"
+	@echo "the directory with the executable to your PATH. If you don't have"
+	@echo "Sphinx installed, either try installing package python-sphinx or"
+	@echo "equivalent, or grab it from http://sphinx-doc.org/."
+endif
+
+if BUILD_DOCS
+
+# You can set these variables from the command line.
+SPHINXOPTS	=
+SPHINXBUILD	= @SPHINXBUILDNAME@
+PAPER		= a4
+BUILDDIR	= build
+
+
 # Internal variables.
-PAPEROPT_a4     = -D latex_paper_size=a4
-PAPEROPT_letter = -D latex_paper_size=letter
-ALLSPHINXOPTS   = -d $(BUILDDIR)/doctrees $(PAPEROPT_$(PAPER)) $(SPHINXOPTS) source
+PAPEROPT	= -D latex_paper_size=$(PAPER)
+ALLSPHINXOPTS   = -d $(BUILDDIR)/doctrees $(PAPEROPT) $(SPHINXOPTS) source
 # the i18n builder cannot share the environment and doctrees with the others
-I18NSPHINXOPTS  = $(PAPEROPT_$(PAPER)) $(SPHINXOPTS) source
+I18NSPHINXOPTS  = $(PAPEROPT) $(SPHINXOPTS) source
 
 .PHONY: help clean html dirhtml singlehtml pickle json htmlhelp qthelp devhelp epub latex latexpdf text man changes linkcheck doctest gettext
+
+default: man
 
 help:
 	@echo "Please use \`make <target>' where <target> is one of"
 	@echo "  html       to make standalone HTML files"
-	@echo "  dirhtml    to make HTML files named index.html in directories"
 	@echo "  singlehtml to make a single large HTML file"
 	@echo "  pickle     to make pickle files"
 	@echo "  json       to make JSON files"
@@ -47,7 +88,7 @@ help:
 	@echo "  doctest    to run all doctests embedded in the documentation (if enabled)"
 
 clean:
-	rm -rf $(BUILDDIR)/*
+	rm -rf $(BUILDDIR)
 
 html:
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
@@ -175,3 +216,4 @@ pseudoxml:
 	$(SPHINXBUILD) -b pseudoxml $(ALLSPHINXOPTS) $(BUILDDIR)/pseudoxml
 	@echo
 	@echo "Build finished. The pseudo-XML files are in $(BUILDDIR)/pseudoxml."
+endif

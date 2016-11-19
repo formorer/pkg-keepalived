@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include "check_data.h"
 #include "check_snmp.h"
 #include "list.h"
@@ -32,75 +34,121 @@
 /* CHECK SNMP defines */
 #define CHECK_OID KEEPALIVED_OID, 3
 
-#define CHECK_SNMP_VSGROUPNAME 1
-#define CHECK_SNMP_VSGROUPMEMBERTYPE 3
-#define CHECK_SNMP_VSGROUPMEMBERFWMARK 4
-#define CHECK_SNMP_VSGROUPMEMBERADDRTYPE 5
-#define CHECK_SNMP_VSGROUPMEMBERADDRESS 6
-#define CHECK_SNMP_VSGROUPMEMBERADDR1 7
-#define CHECK_SNMP_VSGROUPMEMBERADDR2 8
-#define CHECK_SNMP_VSGROUPMEMBERPORT 9
-#define CHECK_SNMP_VSTYPE 10
-#define CHECK_SNMP_VSNAMEGROUP 14
-#define CHECK_SNMP_VSFWMARK 11
-#define CHECK_SNMP_VSADDRTYPE 12
-#define CHECK_SNMP_VSADDRESS 13
-#define CHECK_SNMP_VSPORT 16
-#define CHECK_SNMP_VSPROTOCOL 17
-#define CHECK_SNMP_VSLOADBALANCINGALGO 18
-#define CHECK_SNMP_VSLOADBALANCINGKIND 19
-#define CHECK_SNMP_VSSTATUS 20
-#define CHECK_SNMP_VSVIRTUALHOST 21
-#define CHECK_SNMP_VSPERSIST 22
-#define CHECK_SNMP_VSPERSISTTIMEOUT 23
-#define CHECK_SNMP_VSPERSISTGRANULARITY 24
-#define CHECK_SNMP_VSDELAYLOOP 25
-#define CHECK_SNMP_VSHASUSPEND 26
-#define CHECK_SNMP_VSALPHA 27
-#define CHECK_SNMP_VSOMEGA 28
-#define CHECK_SNMP_VSQUORUM 29
-#define CHECK_SNMP_VSQUORUMSTATUS 30
-#define CHECK_SNMP_VSQUORUMUP 31
-#define CHECK_SNMP_VSQUORUMDOWN 32
-#define CHECK_SNMP_VSHYSTERESIS 33
-#define CHECK_SNMP_VSREALTOTAL 34
-#define CHECK_SNMP_VSREALUP 35
-#define CHECK_SNMP_VSSTATSCONNS 61
-#define CHECK_SNMP_VSSTATSINPKTS 62
-#define CHECK_SNMP_VSSTATSOUTPKTS 63
-#define CHECK_SNMP_VSSTATSINBYTES 64
-#define CHECK_SNMP_VSSTATSOUTBYTES 65
-#define CHECK_SNMP_VSRATECPS 66
-#define CHECK_SNMP_VSRATEINPPS 67
-#define CHECK_SNMP_VSRATEOUTPPS 68
-#define CHECK_SNMP_VSRATEINBPS 69
-#define CHECK_SNMP_VSRATEOUTBPS 70
-#define CHECK_SNMP_RSTYPE 36
-#define CHECK_SNMP_RSADDRTYPE 37
-#define CHECK_SNMP_RSADDRESS 38
-#define CHECK_SNMP_RSPORT 39
-#define CHECK_SNMP_RSSTATUS 40
-#define CHECK_SNMP_RSWEIGHT 41
-#define CHECK_SNMP_RSUPPERCONNECTIONLIMIT 42
-#define CHECK_SNMP_RSLOWERCONNECTIONLIMIT 43
-#define CHECK_SNMP_RSACTIONWHENDOWN 44
-#define CHECK_SNMP_RSNOTIFYUP 45
-#define CHECK_SNMP_RSNOTIFYDOWN 46
-#define CHECK_SNMP_RSFAILEDCHECKS 47
-#define CHECK_SNMP_RSSTATSCONNS 48
-#define CHECK_SNMP_RSSTATSACTIVECONNS 49
-#define CHECK_SNMP_RSSTATSINACTIVECONNS 50
-#define CHECK_SNMP_RSSTATSPERSISTENTCONNS 51
-#define CHECK_SNMP_RSSTATSINPKTS 52
-#define CHECK_SNMP_RSSTATSOUTPKTS 53
-#define CHECK_SNMP_RSSTATSINBYTES 54
-#define CHECK_SNMP_RSSTATSOUTBYTES 55
-#define CHECK_SNMP_RSRATECPS 56
-#define CHECK_SNMP_RSRATEINPPS 57
-#define CHECK_SNMP_RSRATEOUTPPS 58
-#define CHECK_SNMP_RSRATEINBPS 59
-#define CHECK_SNMP_RSRATEOUTBPS 60
-#define CHECK_SNMP_VSOPS 71
+enum check_snmp_vsgroup_magic {
+	CHECK_SNMP_VSGROUPNAME = 2
+};
+
+enum check_snmp_vsgroupmember_magic {
+	CHECK_SNMP_VSGROUPMEMBERTYPE = 2,
+	CHECK_SNMP_VSGROUPMEMBERFWMARK,
+	CHECK_SNMP_VSGROUPMEMBERADDRTYPE,
+	CHECK_SNMP_VSGROUPMEMBERADDRESS,
+	CHECK_SNMP_VSGROUPMEMBERADDR1,
+	CHECK_SNMP_VSGROUPMEMBERADDR2,
+	CHECK_SNMP_VSGROUPMEMBERPORT
+};
+
+enum check_snmp_virtualserver_magic {
+	CHECK_SNMP_VSTYPE = 2,
+	CHECK_SNMP_VSNAMEGROUP,
+	CHECK_SNMP_VSFWMARK,
+	CHECK_SNMP_VSADDRTYPE,
+	CHECK_SNMP_VSADDRESS,
+	CHECK_SNMP_VSPORT,
+	CHECK_SNMP_VSPROTOCOL,
+	CHECK_SNMP_VSLOADBALANCINGALGO,
+	CHECK_SNMP_VSLOADBALANCINGKIND,
+	CHECK_SNMP_VSSTATUS,
+	CHECK_SNMP_VSVIRTUALHOST,
+	CHECK_SNMP_VSPERSIST,
+	CHECK_SNMP_VSPERSISTTIMEOUT,
+	CHECK_SNMP_VSPERSISTGRANULARITY,
+	CHECK_SNMP_VSPERSISTGRANULARITY6,
+	CHECK_SNMP_VSDELAYLOOP,
+	CHECK_SNMP_VSHASUSPEND,
+	CHECK_SNMP_VSOPS,
+	CHECK_SNMP_VSALPHA,
+	CHECK_SNMP_VSOMEGA,
+	CHECK_SNMP_VSQUORUM,
+	CHECK_SNMP_VSQUORUMSTATUS,
+	CHECK_SNMP_VSQUORUMUP,
+	CHECK_SNMP_VSQUORUMDOWN,
+	CHECK_SNMP_VSHYSTERESIS,
+	CHECK_SNMP_VSREALTOTAL,
+	CHECK_SNMP_VSREALUP,
+#ifdef _WITH_LVS_
+	CHECK_SNMP_VSSTATSCONNS,
+	CHECK_SNMP_VSSTATSINPKTS,
+	CHECK_SNMP_VSSTATSOUTPKTS,
+	CHECK_SNMP_VSSTATSINBYTES,
+	CHECK_SNMP_VSSTATSOUTBYTES,
+	CHECK_SNMP_VSRATECPS,
+	CHECK_SNMP_VSRATEINPPS,
+	CHECK_SNMP_VSRATEOUTPPS,
+	CHECK_SNMP_VSRATEINBPS,
+	CHECK_SNMP_VSRATEOUTBPS,
+#ifdef _WITH_LVS_64BIT_STATS_
+	CHECK_SNMP_VSSTATSCONNS64,
+	CHECK_SNMP_VSSTATSINPKTS64,
+	CHECK_SNMP_VSSTATSOUTPKTS64,
+	CHECK_SNMP_VSRATECPSLOW,
+	CHECK_SNMP_VSRATECPSHIGH,
+	CHECK_SNMP_VSRATEINPPSLOW,
+	CHECK_SNMP_VSRATEINPPSHIGH,
+	CHECK_SNMP_VSRATEOUTPPSLOW,
+	CHECK_SNMP_VSRATEOUTPPSHIGH,
+	CHECK_SNMP_VSRATEINBPSLOW,
+	CHECK_SNMP_VSRATEINBPSHIGH,
+	CHECK_SNMP_VSRATEOUTBPSLOW,
+	CHECK_SNMP_VSRATEOUTBPSHIGH,
+#endif
+#endif
+};
+
+enum check_snmp_realserver_magic {
+	CHECK_SNMP_RSTYPE,
+	CHECK_SNMP_RSADDRTYPE,
+	CHECK_SNMP_RSADDRESS,
+	CHECK_SNMP_RSPORT,
+	CHECK_SNMP_RSSTATUS,
+	CHECK_SNMP_RSWEIGHT,
+	CHECK_SNMP_RSUPPERCONNECTIONLIMIT,
+	CHECK_SNMP_RSLOWERCONNECTIONLIMIT,
+	CHECK_SNMP_RSACTIONWHENDOWN,
+	CHECK_SNMP_RSNOTIFYUP,
+	CHECK_SNMP_RSNOTIFYDOWN,
+	CHECK_SNMP_RSFAILEDCHECKS,
+#ifdef _WITH_LVS_
+	CHECK_SNMP_RSSTATSCONNS,
+	CHECK_SNMP_RSSTATSACTIVECONNS,
+	CHECK_SNMP_RSSTATSINACTIVECONNS,
+	CHECK_SNMP_RSSTATSPERSISTENTCONNS,
+	CHECK_SNMP_RSSTATSINPKTS,
+	CHECK_SNMP_RSSTATSOUTPKTS,
+	CHECK_SNMP_RSSTATSINBYTES,
+	CHECK_SNMP_RSSTATSOUTBYTES,
+	CHECK_SNMP_RSRATECPS,
+	CHECK_SNMP_RSRATEINPPS,
+	CHECK_SNMP_RSRATEOUTPPS,
+	CHECK_SNMP_RSRATEINBPS,
+	CHECK_SNMP_RSRATEOUTBPS,
+#ifdef _WITH_LVS_64BIT_STATS_
+	CHECK_SNMP_RSSTATSCONNS64,
+	CHECK_SNMP_RSSTATSINPKTS64,
+	CHECK_SNMP_RSSTATSOUTPKTS64,
+	CHECK_SNMP_RSRATECPSLOW,
+	CHECK_SNMP_RSRATECPSHIGH,
+	CHECK_SNMP_RSRATEINPPSLOW,
+	CHECK_SNMP_RSRATEINPPSHIGH,
+	CHECK_SNMP_RSRATEOUTPPSLOW,
+	CHECK_SNMP_RSRATEOUTPPSHIGH,
+	CHECK_SNMP_RSRATEINBPSLOW,
+	CHECK_SNMP_RSRATEINBPSHIGH,
+	CHECK_SNMP_RSRATEOUTBPSLOW,
+	CHECK_SNMP_RSRATEOUTBPSHIGH
+#endif
+#endif
+};
 
 #define STATE_VSGM_FWMARK 1
 #define STATE_VSGM_ADDRESS 2
@@ -111,6 +159,28 @@
 #define STATE_RS_REGULAR_FIRST 2
 #define STATE_RS_REGULAR_NEXT 3
 #define STATE_RS_END 4
+
+#ifdef _WITH_LVS_
+enum check_snmp_lvs_sync_daemon {
+	CHECK_SNMP_LVSSYNCDAEMONENABLED,
+	CHECK_SNMP_LVSSYNCDAEMONINTERFACE,
+	CHECK_SNMP_LVSSYNCDAEMONVRRPINSTANCE,
+	CHECK_SNMP_LVSSYNCDAEMONSYNCID,
+#ifdef _HAVE_IPVS_SYNCD_ATTRIBUTES_
+	CHECK_SNMP_LVSSYNCDAEMONMAXLEN,
+	CHECK_SNMP_LVSSYNCDAEMONPORT,
+	CHECK_SNMP_LVSSYNCDAEMONTTL,
+	CHECK_SNMP_LVSSYNCDAEMONMCASTGROUPADDRTYPE,
+	CHECK_SNMP_LVSSYNCDAEMONMCASTGROUPADDRVALUE,
+#endif
+};
+#endif
+
+enum check_snmp_lvs_timeouts {
+	CHECK_SNMP_LVSTIMEOUTTCP,
+	CHECK_SNMP_LVSTIMEOUTTCPFIN,
+	CHECK_SNMP_LVSTIMEOUTUDP,
+};
 
 /* Macro */
 #define RETURN_IP46ADDRESS(entity)					\
@@ -309,9 +379,7 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 			 int exact, size_t *var_len, WriteMethod **write_method)
 {
 	static unsigned long long_ret;
-#ifdef _KRNL_2_6_
 	static struct counter64 counter64_ret;
-#endif
 	virtual_server_t *v;
 	element e;
 
@@ -404,17 +472,20 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 		*var_len = strlen(v->virtualhost);
 		return (u_char*)v->virtualhost;
 	case CHECK_SNMP_VSPERSIST:
-		long_ret = (atol(v->timeout_persistence) > 0)?1:2;
+		long_ret = (v->persistence_timeout)?1:2;
 		return (u_char*)&long_ret;
 	case CHECK_SNMP_VSPERSISTTIMEOUT:
-		if (atol(v->timeout_persistence) <= 0) break;
-		long_ret = atol(v->timeout_persistence);
+		if (!v->persistence_timeout) break;
+		long_ret = v->persistence_timeout;
 		return (u_char*)&long_ret;
 	case CHECK_SNMP_VSPERSISTGRANULARITY:
-		if (atol(v->timeout_persistence) <= 0) break;
-		if (!v->granularity_persistence) break;
-		*var_len = 4;
-		return (u_char*)&v->granularity_persistence;
+		if (!v->persistence_granularity || v->addr.ss_family == AF_INET6) break;
+		*var_len = sizeof(v->persistence_granularity);
+		return (u_char*)&v->persistence_granularity;
+	case CHECK_SNMP_VSPERSISTGRANULARITY6:
+		if (!v->persistence_granularity || v->addr.ss_family == AF_INET) break;
+		*var_len = sizeof(v->persistence_granularity);
+		return (u_char*)&v->persistence_granularity;
 	case CHECK_SNMP_VSDELAYLOOP:
 		if (v->delay_loop >= TIMER_MAX_SEC)
 			long_ret = v->delay_loop/TIMER_HZ;
@@ -463,7 +534,7 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 				if (((real_server_t *)ELEMENT_DATA(e))->alive)
 					long_ret++;
 		return (u_char*)&long_ret;
-#if defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+#ifdef _WITH_LVS_
 	case CHECK_SNMP_VSSTATSCONNS:
 		ipvs_update_stats(v);
 		long_ret = v->stats.conns;
@@ -507,6 +578,66 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 	case CHECK_SNMP_VSRATEOUTBPS:
 		ipvs_update_stats(v);
 		long_ret = v->stats.outbps;
+		return (u_char*)&long_ret;
+#endif
+#ifdef _WITH_LVS_64BIT_STATS_
+	case CHECK_SNMP_VSSTATSCONNS64:
+		ipvs_update_stats(v);
+		counter64_ret.low = v->stats.conns & 0xffffffff;
+		counter64_ret.high = v->stats.conns >> 32;
+		*var_len = sizeof(struct counter64);
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSSTATSINPKTS64:
+		ipvs_update_stats(v);
+		counter64_ret.low = v->stats.inpkts & 0xffffffff;
+		counter64_ret.high = v->stats.inpkts >> 32;
+		*var_len = sizeof(struct counter64);
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSSTATSOUTPKTS64:
+		ipvs_update_stats(v);
+		counter64_ret.low = v->stats.outpkts & 0xffffffff;
+		counter64_ret.high = v->stats.outpkts >> 32;
+		*var_len = sizeof(struct counter64);
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSRATECPSLOW:
+		ipvs_update_stats(v);
+		long_ret = v->stats.cps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSRATECPSHIGH:
+		ipvs_update_stats(v);
+		long_ret = v->stats.cps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_VSRATEINPPSLOW:
+		ipvs_update_stats(v);
+		long_ret = v->stats.inpps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSRATEINPPSHIGH:
+		ipvs_update_stats(v);
+		long_ret = v->stats.inpps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_VSRATEOUTPPSLOW:
+		ipvs_update_stats(v);
+		long_ret = v->stats.outpps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSRATEOUTPPSHIGH:
+		ipvs_update_stats(v);
+		long_ret = v->stats.outpps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_VSRATEINBPSLOW:
+		ipvs_update_stats(v);
+		long_ret = v->stats.inbps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSRATEINBPSHIGH:
+		ipvs_update_stats(v);
+		long_ret = v->stats.inbps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_VSRATEOUTBPSLOW:
+		ipvs_update_stats(v);
+		long_ret = v->stats.outbps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_VSRATEOUTBPSHIGH:
+		ipvs_update_stats(v);
+		long_ret = v->stats.outbps >> 32;
 		return (u_char*)&long_ret;
 #endif
 	default:
@@ -578,9 +709,7 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		      int exact, size_t *var_len, WriteMethod **write_method)
 {
 	static unsigned long long_ret;
-#ifdef _KRNL_2_6_
 	static struct counter64 counter64_ret;
-#endif
 	oid *target, current[2], best[2];
 	int result, target_len;
 	int curvirtual = 0, curreal;
@@ -708,7 +837,6 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		long_ret = be->weight;
 		*write_method = check_snmp_realserver_weight;
 		return (u_char*)&long_ret;
-#ifdef _KRNL_2_6_
 	case CHECK_SNMP_RSUPPERCONNECTIONLIMIT:
 		if (btype == STATE_RS_SORRY) break;
 		if (!be->u_threshold) break;
@@ -719,7 +847,6 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		if (!be->l_threshold) break;
 		long_ret = be->l_threshold;
 		return (u_char*)&long_ret;
-#endif
 	case CHECK_SNMP_RSACTIONWHENDOWN:
 		if (btype == STATE_RS_SORRY) break;
 		long_ret = be->inhibit?2:1;
@@ -741,7 +868,7 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		else
 			long_ret = LIST_SIZE(be->failed_checkers);
 		return (u_char*)&long_ret;
-#if defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+#ifdef _WITH_LVS_
 	case CHECK_SNMP_RSSTATSCONNS:
 		ipvs_update_stats(bvs);
 		long_ret = be->stats.conns;
@@ -798,6 +925,66 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		ipvs_update_stats(bvs);
 		long_ret = be->stats.outbps;
 		return (u_char*)&long_ret;
+#ifdef _WITH_LVS_64BIT_STATS_
+	case CHECK_SNMP_RSSTATSCONNS64:
+		ipvs_update_stats(bvs);
+		counter64_ret.low = be->stats.conns & 0xffffffff;
+		counter64_ret.high = be->stats.conns >> 32;
+		*var_len = sizeof(struct counter64);
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSSTATSINPKTS64:
+		ipvs_update_stats(bvs);
+		counter64_ret.low = be->stats.inpkts & 0xffffffff;
+		counter64_ret.high = be->stats.inpkts >> 32;
+		*var_len = sizeof(struct counter64);
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSSTATSOUTPKTS64:
+		ipvs_update_stats(bvs);
+		counter64_ret.low = be->stats.outpkts & 0xffffffff;
+		counter64_ret.high = be->stats.outpkts >> 32;
+		*var_len = sizeof(struct counter64);
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSRATECPSLOW:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.cps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSRATECPSHIGH:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.cps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_RSRATEINPPSLOW:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.inpps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSRATEINPPSHIGH:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.inpps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_RSRATEOUTPPSLOW:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.outpps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSRATEOUTPPSHIGH:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.outpps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_RSRATEINBPSLOW:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.inbps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSRATEINBPSHIGH:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.inbps >> 32;
+		return (u_char*)&long_ret;
+	case CHECK_SNMP_RSRATEOUTBPSLOW:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.outbps & 0xffffffff;
+		return (u_char*)&counter64_ret;
+	case CHECK_SNMP_RSRATEOUTBPSHIGH:
+		ipvs_update_stats(bvs);
+		long_ret = be->stats.outbps >> 32;
+		return (u_char*)&long_ret;
+#endif
 #endif
 	default:
 		return NULL;
@@ -807,6 +994,103 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 	if (!exact && (name[*length-1] < MAX_SUBID))
 		return check_snmp_realserver(vp, name, length,
 					     exact, var_len, write_method);
+	return NULL;
+}
+
+#ifdef _WITH_LVS_
+static u_char*
+check_snmp_lvs_sync_daemon(struct variable *vp, oid *name, size_t *length,
+				 int exact, size_t *var_len, WriteMethod **write_method)
+{
+	static unsigned long long_ret;
+
+	if (header_generic(vp, name, length, exact, var_len, write_method))
+		return NULL;
+
+	switch (vp->magic) {
+	case CHECK_SNMP_LVSSYNCDAEMONENABLED:
+		long_ret = global_data->lvs_syncd.syncid != -1 ? 1 : 2;
+		return (u_char *)&long_ret;
+	case CHECK_SNMP_LVSSYNCDAEMONINTERFACE:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		*var_len = strlen(global_data->lvs_syncd.ifname);
+		return (u_char *)global_data->lvs_syncd.ifname;
+	case CHECK_SNMP_LVSSYNCDAEMONVRRPINSTANCE:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		*var_len = strlen(global_data->lvs_syncd.vrrp_name);
+		return (u_char *)global_data->lvs_syncd.vrrp_name;
+	case CHECK_SNMP_LVSSYNCDAEMONSYNCID:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		long_ret = global_data->lvs_syncd.syncid;
+		return (u_char *)&long_ret;
+#ifdef _HAVE_IPVS_SYNCD_ATTRIBUTES_
+	case CHECK_SNMP_LVSSYNCDAEMONMAXLEN:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		long_ret = global_data->lvs_syncd.sync_maxlen;
+		return (u_char *)&long_ret;
+	case CHECK_SNMP_LVSSYNCDAEMONPORT:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		long_ret = global_data->lvs_syncd.mcast_port;
+		return (u_char *)&long_ret;
+	case CHECK_SNMP_LVSSYNCDAEMONTTL:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		long_ret = global_data->lvs_syncd.mcast_ttl;
+		return (u_char *)&long_ret;
+	case CHECK_SNMP_LVSSYNCDAEMONMCASTGROUPADDRTYPE:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		long_ret = (global_data->lvs_syncd.mcast_group.ss_family == AF_INET6) ? 2:1;
+		return (u_char *)&long_ret;
+	case CHECK_SNMP_LVSSYNCDAEMONMCASTGROUPADDRVALUE:
+		if (global_data->lvs_syncd.syncid == -1)
+			return NULL;
+		if (global_data->lvs_syncd.mcast_group.ss_family == AF_INET6) {
+			struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&global_data->lvs_syncd.mcast_group;
+			*var_len = 16;
+			return (u_char *)&addr6->sin6_addr;
+		} else {
+			struct sockaddr_in *addr4 = (struct sockaddr_in *)&global_data->lvs_syncd.mcast_group;
+			*var_len = 4;
+			return (u_char *)&addr4->sin_addr;
+		}
+#endif
+	}
+	return NULL;
+}
+#endif
+
+static u_char*
+check_snmp_lvs_timeouts(struct variable *vp, oid *name, size_t *length,
+				 int exact, size_t *var_len, WriteMethod **write_method)
+{
+	static unsigned long long_ret;
+
+	if (header_generic(vp, name, length, exact, var_len, write_method))
+		return NULL;
+
+	switch (vp->magic) {
+	case CHECK_SNMP_LVSTIMEOUTTCP:
+		if (!global_data->lvs_tcp_timeout)
+			return NULL;
+		long_ret = global_data->lvs_tcp_timeout;
+		return (u_char *)&long_ret;
+	case CHECK_SNMP_LVSTIMEOUTTCPFIN:
+		if (!global_data->lvs_tcpfin_timeout)
+			return NULL;
+		long_ret = global_data->lvs_tcpfin_timeout;
+		return (u_char *)long_ret;
+	case CHECK_SNMP_LVSTIMEOUTUDP:
+		if (!global_data->lvs_udp_timeout)
+			return NULL;
+		long_ret = global_data->lvs_udp_timeout;
+		return (u_char *)long_ret;
+	}
 	return NULL;
 }
 
@@ -883,7 +1167,7 @@ static struct variable8 check_vars[] = {
 	 check_snmp_virtualserver, 3, {3, 1, 25}},
 	{CHECK_SNMP_VSHYSTERESIS, ASN_UNSIGNED, RONLY,
 	 check_snmp_virtualserver, 3, {3, 1, 26}},
-#if defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+#ifdef _WITH_LVS_
 	{CHECK_SNMP_VSSTATSCONNS, ASN_GAUGE, RONLY,
 	 check_snmp_virtualserver, 3, {3, 1, 27}},
 	{CHECK_SNMP_VSSTATSINPKTS, ASN_COUNTER, RONLY,
@@ -904,7 +1188,37 @@ static struct variable8 check_vars[] = {
 	 check_snmp_virtualserver, 3, {3, 1, 35}},
 	{CHECK_SNMP_VSRATEOUTBPS, ASN_GAUGE, RONLY,
 	 check_snmp_virtualserver, 3, {3, 1, 36}},
+#ifdef _WITH_LVS_64BIT_STATS_
+	{CHECK_SNMP_VSSTATSCONNS64, ASN_COUNTER64, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 38}},
+	{CHECK_SNMP_VSSTATSINPKTS64, ASN_COUNTER64, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 39}},
+	{CHECK_SNMP_VSSTATSOUTPKTS64, ASN_COUNTER64, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 40}},
+	{CHECK_SNMP_VSRATECPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 41}},
+	{CHECK_SNMP_VSRATECPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 42}},
+	{CHECK_SNMP_VSRATEINPPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 43}},
+	{CHECK_SNMP_VSRATEINPPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 44}},
+	{CHECK_SNMP_VSRATEOUTPPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 45}},
+	{CHECK_SNMP_VSRATEOUTPPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 46}},
+	{CHECK_SNMP_VSRATEINBPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 47}},
+	{CHECK_SNMP_VSRATEINBPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 48}},
+	{CHECK_SNMP_VSRATEOUTBPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 49}},
+	{CHECK_SNMP_VSRATEOUTBPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 50}},
 #endif
+#endif
+	{CHECK_SNMP_VSPERSISTGRANULARITY6, ASN_UNSIGNED, RONLY,
+	 check_snmp_virtualserver, 3, {3, 1, 51}},
 	/* realServerTable */
 	{CHECK_SNMP_RSTYPE, ASN_INTEGER, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 2}},
@@ -918,12 +1232,10 @@ static struct variable8 check_vars[] = {
 	 check_snmp_realserver, 3, {4, 1, 6}},
 	{CHECK_SNMP_RSWEIGHT, ASN_INTEGER, RWRITE,
 	 check_snmp_realserver, 3, {4, 1, 7}},
-#ifdef _KRNL_2_6_
 	{CHECK_SNMP_RSUPPERCONNECTIONLIMIT, ASN_UNSIGNED, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 8}},
 	{CHECK_SNMP_RSLOWERCONNECTIONLIMIT, ASN_UNSIGNED, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 9}},
-#endif
 	{CHECK_SNMP_RSACTIONWHENDOWN, ASN_INTEGER, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 10}},
 	{CHECK_SNMP_RSNOTIFYUP, ASN_OCTET_STR, RONLY,
@@ -932,7 +1244,7 @@ static struct variable8 check_vars[] = {
 	 check_snmp_realserver, 3, {4, 1, 12}},
 	{CHECK_SNMP_RSFAILEDCHECKS, ASN_UNSIGNED, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 13}},
-#if defined(_KRNL_2_6_) && defined(_WITH_LVS_)
+#ifdef _WITH_LVS_
 	{CHECK_SNMP_RSSTATSCONNS, ASN_GAUGE, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 14}},
 	{CHECK_SNMP_RSSTATSACTIVECONNS, ASN_GAUGE, RONLY,
@@ -959,7 +1271,65 @@ static struct variable8 check_vars[] = {
 	 check_snmp_realserver, 3, {4, 1, 25}},
 	{CHECK_SNMP_RSRATEOUTBPS, ASN_GAUGE, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 26}},
+#ifdef _WITH_LVS_64BIT_STATS_
+	{CHECK_SNMP_RSSTATSCONNS64, ASN_COUNTER64, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 27}},
+	{CHECK_SNMP_RSSTATSINPKTS64, ASN_COUNTER64, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 28}},
+	{CHECK_SNMP_RSSTATSOUTPKTS64, ASN_COUNTER64, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 29}},
+	{CHECK_SNMP_RSRATECPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 30}},
+	{CHECK_SNMP_RSRATECPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 31}},
+	{CHECK_SNMP_RSRATEINPPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 32}},
+	{CHECK_SNMP_RSRATEINPPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 33}},
+	{CHECK_SNMP_RSRATEOUTPPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 34}},
+	{CHECK_SNMP_RSRATEOUTPPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 35}},
+	{CHECK_SNMP_RSRATEINBPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 36}},
+	{CHECK_SNMP_RSRATEINBPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 37}},
+	{CHECK_SNMP_RSRATEOUTBPSLOW, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 38}},
+	{CHECK_SNMP_RSRATEOUTBPSHIGH, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 39}},
 #endif
+#endif
+#ifdef _WITH_LVS_
+	/* LVS sync daemon configuration */
+	{CHECK_SNMP_LVSSYNCDAEMONENABLED, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 1}},
+	{CHECK_SNMP_LVSSYNCDAEMONINTERFACE, ASN_OCTET_STR, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 2}},
+	{CHECK_SNMP_LVSSYNCDAEMONVRRPINSTANCE, ASN_OCTET_STR, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 3}},
+	{CHECK_SNMP_LVSSYNCDAEMONSYNCID, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 4}},
+#ifdef _HAVE_IPVS_SYNCD_ATTRIBUTES_
+	{CHECK_SNMP_LVSSYNCDAEMONMAXLEN, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 5}},
+	{CHECK_SNMP_LVSSYNCDAEMONPORT, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 6}},
+	{CHECK_SNMP_LVSSYNCDAEMONTTL, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 7}},
+	{CHECK_SNMP_LVSSYNCDAEMONMCASTGROUPADDRTYPE, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 8}},
+	{CHECK_SNMP_LVSSYNCDAEMONMCASTGROUPADDRVALUE, ASN_OCTET_STR, RONLY,
+	 check_snmp_lvs_sync_daemon, 2, {6, 9}},
+#endif
+#endif
+	/* LVS timeouts */
+	{CHECK_SNMP_LVSTIMEOUTTCP, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_timeouts, 2, {7, 1}},
+	{CHECK_SNMP_LVSTIMEOUTTCPFIN, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_timeouts, 2, {7, 2}},
+	{CHECK_SNMP_LVSTIMEOUTUDP, ASN_INTEGER, RONLY,
+	 check_snmp_lvs_timeouts, 2, {7, 3}},
 };
 
 void

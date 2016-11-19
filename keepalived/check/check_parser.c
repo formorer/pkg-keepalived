@@ -22,6 +22,10 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
+#include <errno.h>
+
 #include "check_parser.h"
 #include "check_data.h"
 #include "check_api.h"
@@ -136,15 +140,24 @@ static void
 pto_handler(vector_t *strvec)
 {
 	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
-	char *str = vector_slot(strvec, 1);
-	int size = sizeof (vs->timeout_persistence);
-	int str_len = strlen(str);
+	char *endptr;
+	unsigned long timeout;
 
-	if (size > str_len)
-		size = str_len;
+	if (vector_size(strvec) < 2) {
+		vs->persistence_timeout = IPVS_SVC_PERSISTENT_TIMEOUT;
+		return;
+	}
 
-	memcpy(vs->timeout_persistence, str, size);
+	errno = 0;
+	timeout = strtoul(vector_slot(strvec, 1), &endptr, 10);
+	if (errno || *endptr || timeout > UINT32_MAX || timeout == 0) {
+		log_message(LOG_INFO, "persistent_timeout invalid");
+		return;
+	}
+
+	vs->persistence_timeout = timeout;
 }
+#ifdef IPVS_SVC_ATTR_PE_NAME
 static void
 pengine_handler(vector_t *strvec)
 {
@@ -155,14 +168,25 @@ pengine_handler(vector_t *strvec)
 	strncpy(vs->pe_name, str, size - 1);
 	vs->pe_name[size - 1] = '\0';
 }
+#endif
 static void
 pgr_handler(vector_t *strvec)
 {
+	struct in_addr addr;
+
 	virtual_server_t *vs = LIST_TAIL_DATA(check_data->vs);
 	if (vs->addr.ss_family == AF_INET6)
-		vs->granularity_persistence = atoi(vector_slot(strvec, 1));
-	else
-		inet_ston(vector_slot(strvec, 1), &vs->granularity_persistence);
+		vs->persistence_granularity = atoi(vector_slot(strvec, 1));
+	else {
+		if (inet_aton(vector_slot(strvec, 1), &addr)) {
+			log_message(LOG_INFO, "Invalid persistence_timeout specified - %s", FMT_STR_VSLOT(strvec, 1));
+			return;
+		}
+		vs->persistence_granularity = addr.s_addr;
+	}
+
+	if (!vs->persistence_timeout)
+		vs->persistence_timeout = IPVS_SVC_PERSISTENT_TIMEOUT;
 }
 static void
 proto_handler(vector_t *strvec)
@@ -228,7 +252,6 @@ weight_handler(vector_t *strvec)
 	rs->weight = atoi(vector_slot(strvec, 1));
 	rs->iweight = rs->weight;
 }
-#ifdef _KRNL_2_6_
 static void
 uthreshold_handler(vector_t *strvec)
 {
@@ -243,7 +266,6 @@ lthreshold_handler(vector_t *strvec)
 	real_server_t *rs = LIST_TAIL_DATA(vs->rs);
 	rs->l_threshold = atoi(vector_slot(strvec, 1));
 }
-#endif
 static void
 inhibit_handler(vector_t *strvec)
 {
@@ -336,7 +358,9 @@ init_check_keywords(bool active)
 	install_keyword("lvs_sched", &lbalgo_handler);
 	install_keyword("lb_kind", &lbkind_handler);
 	install_keyword("lvs_method", &lbkind_handler);
+#ifdef IPVS_SVC_ATTR_PE_NAME
 	install_keyword("persistence_engine", &pengine_handler);
+#endif
 	install_keyword("persistence_timeout", &pto_handler);
 	install_keyword("persistence_granularity", &pgr_handler);
 	install_keyword("protocol", &proto_handler);
@@ -358,10 +382,8 @@ init_check_keywords(bool active)
 	install_keyword("real_server", &rs_handler);
 	install_sublevel();
 	install_keyword("weight", &weight_handler);
-#ifdef _KRNL_2_6_
 	install_keyword("uthreshold", &uthreshold_handler);
 	install_keyword("lthreshold", &lthreshold_handler);
-#endif
 	install_keyword("inhibit_on_failure", &inhibit_handler);
 	install_keyword("notify_up", &notify_up_handler);
 	install_keyword("notify_down", &notify_down_handler);
@@ -377,7 +399,7 @@ vector_t *
 check_init_keywords(void)
 {
 	/* global definitions mapping */
-	global_init_keywords();
+	init_global_keywords(true);
 
 	init_check_keywords(true);
 #ifdef _WITH_VRRP_

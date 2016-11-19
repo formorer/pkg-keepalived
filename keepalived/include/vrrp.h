@@ -83,6 +83,7 @@ typedef struct {
 #define VRRP_ADVER_DFL		1		/* advert. interval (in sec) -- rfc2338.5.3.7 */
 #define VRRP_GARP_DELAY		(5 * TIMER_HZ)	/* Default delay to launch gratuitous arp */
 #define VRRP_GARP_REP		5		/* Default repeat value for MASTER state gratuitous arp */
+#define VRRP_GARP_REFRESH	0		/* Default interval for refresh gratuitous arp (0 = none) */
 #define VRRP_GARP_REFRESH_REP	1		/* Default repeat value for refresh gratuitous arp */
 
 /*
@@ -287,7 +288,8 @@ typedef struct _vrrp_t {
 #define VRRP_SEND_BUFFER(V)		((V)->send_buffer)
 #define VRRP_SEND_BUFFER_SIZE(V)	((V)->send_buffer_size)
 
-#define VRRP_TIMER_SKEW(svr)	((svr)->version == VRRP_VERSION_3 ? (((256-(svr)->base_priority) * (svr)->adver_int)/256) : ((256-(svr)->base_priority) * TIMER_HZ/256))
+/* We have to do some reduction of the calculation for VRRPv3 in order not to overflow a uint32; 625 / 16 == TIMER_CENTI_HZ / 256 */
+#define VRRP_TIMER_SKEW(svr)	((svr)->version == VRRP_VERSION_3 ? (((256-(svr)->base_priority) * ((svr)->adver_int / TIMER_CENTI_HZ) * 625) / 16) : ((256-(svr)->base_priority) * TIMER_HZ/256))
 #define VRRP_VIP_ISSET(V)	((V)->vipset)
 
 #define VRRP_MIN(a, b)	((a) < (b)?(a):(b))
@@ -317,7 +319,9 @@ extern void vrrp_state_backup(vrrp_t *, char *, int);
 extern void vrrp_state_goto_master(vrrp_t *);
 extern void vrrp_state_leave_master(vrrp_t *);
 extern int vrrp_complete_init(void);
-extern int vrrp_ipvs_needed(void);
+#ifdef _WITH_LVS_
+extern bool vrrp_ipvs_needed(void);
+#endif
 extern void restore_vrrp_interfaces(void);
 extern void shutdown_vrrp_instances(void);
 extern void clear_diff_vrrp(void);

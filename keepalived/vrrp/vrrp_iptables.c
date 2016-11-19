@@ -38,6 +38,8 @@
  *   some documentation
 */
 
+#include "config.h"
+
 #ifdef _HAVE_LINUX_NET_IF_H_COLLISION_
 /* The following is a horrible workaround. Linux 4.5 introduced a namespace
  * collision when including libiptc/libiptc.h due to both net/if.h and linux/if.h
@@ -117,18 +119,30 @@ void add_del_rules(int cmd, bool ignore_errors)
 		h6 = ip6tables_open("filter");
 
 		if (global_data->vrrp_iptables_inchain[0]) {
+#ifdef HAVE_IPSET_ATTR_IFACE
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_TWO, IPSET_DIM_TWO_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 135, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_TWO, IPSET_DIM_TWO_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 136, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_TWO, IPSET_DIM_TWO_SRC, XTC_LABEL_DROP, global_data->vrrp_ipset_address_iface6, IPPROTO_NONE, 0, cmd, ignore_errors);
+#else
+			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_ONE, 0, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 135, cmd, ignore_errors);
+			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_ONE, 0, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 136, cmd, ignore_errors);
+			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_ONE, 0, XTC_LABEL_DROP, global_data->vrrp_ipset_address_iface6, IPPROTO_NONE, 0, cmd, ignore_errors);
+#endif
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_ONE, 0, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address6, IPPROTO_ICMPV6, 135, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_ONE, 0, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address6, IPPROTO_ICMPV6, 136, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_inchain, -1, IPSET_DIM_ONE, 0, XTC_LABEL_DROP, global_data->vrrp_ipset_address6, IPPROTO_NONE, 0, cmd, ignore_errors);
 		}
 
 		if (global_data->vrrp_iptables_outchain[0]) {
+#ifdef HAVE_IPSET_ATTR_IFACE
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_TWO, IPSET_DIM_ONE_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 135, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_TWO, IPSET_DIM_ONE_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 136, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_TWO, IPSET_DIM_ONE_SRC, XTC_LABEL_DROP, global_data->vrrp_ipset_address_iface6, IPPROTO_NONE, 0, cmd, ignore_errors);
+#else
+			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_ONE, IPSET_DIM_ONE_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 135, cmd, ignore_errors);
+			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_ONE, IPSET_DIM_ONE_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address_iface6, IPPROTO_ICMPV6, 136, cmd, ignore_errors);
+			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_ONE, IPSET_DIM_ONE_SRC, XTC_LABEL_DROP, global_data->vrrp_ipset_address_iface6, IPPROTO_NONE, 0, cmd, ignore_errors);
+#endif
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_ONE, IPSET_DIM_ONE_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address6, IPPROTO_ICMPV6, 135, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_ONE, IPSET_DIM_ONE_SRC, XTC_LABEL_ACCEPT, global_data->vrrp_ipset_address6, IPPROTO_ICMPV6, 136, cmd, ignore_errors);
 			ip6tables_add_rules(h6, global_data->vrrp_iptables_outchain, -1, IPSET_DIM_ONE, IPSET_DIM_ONE_SRC, XTC_LABEL_DROP, global_data->vrrp_ipset_address6, IPPROTO_NONE, 0, cmd, ignore_errors);
@@ -208,7 +222,7 @@ static int check_chains_exist(void)
 	return status;
 }
 
-static int iptables_entry(struct ipt_handle* h, const char* chain_name, int rulenum, char* target_name, const ip_address_t* src_ip_address, const ip_address_t* dst_ip_address, const char* in_iface, const char* out_iface, uint16_t protocol, uint16_t type, int cmd)
+static int iptables_entry(struct ipt_handle* h, const char* chain_name, int rulenum, char* target_name, const ip_address_t* src_ip_address, const ip_address_t* dst_ip_address, const char* in_iface, const char* out_iface, uint16_t protocol, uint16_t type, int cmd, bool force)
 {
 	int res;
 
@@ -217,7 +231,7 @@ static int iptables_entry(struct ipt_handle* h, const char* chain_name, int rule
 		if (!h->h4)
 			h->h4 = ip4tables_open ("filter");
 
-		res = ip4tables_process_entry( h->h4, chain_name, rulenum, target_name, src_ip_address, dst_ip_address, in_iface, out_iface, protocol, type, cmd);
+		res = ip4tables_process_entry( h->h4, chain_name, rulenum, target_name, src_ip_address, dst_ip_address, in_iface, out_iface, protocol, type, cmd, force);
 		if (!res)
 			h->updated_v4 = true ;
 		return res;
@@ -227,7 +241,7 @@ static int iptables_entry(struct ipt_handle* h, const char* chain_name, int rule
 		if (!h->h6)
 			h->h6 = ip6tables_open ("filter");
 
-		res = ip6tables_process_entry( h->h6, chain_name, rulenum, target_name, src_ip_address, dst_ip_address, in_iface, out_iface, protocol, type, cmd);
+		res = ip6tables_process_entry( h->h6, chain_name, rulenum, target_name, src_ip_address, dst_ip_address, in_iface, out_iface, protocol, type, cmd, force);
 		if (!res)
 			h->updated_v6 = true;
 		return res;
@@ -237,7 +251,7 @@ static int iptables_entry(struct ipt_handle* h, const char* chain_name, int rule
 }
 
 static void
-handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname, void *h)
+handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname, void *h, bool force)
 {
 	if (global_data->vrrp_iptables_inchain[0] == '\0')
 		return;
@@ -245,11 +259,11 @@ handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname, void *
 	iptables_entry(h, global_data->vrrp_iptables_inchain, -1,
 			XTC_LABEL_ACCEPT, NULL, ipaddress,
 			ifname, NULL,
-			IPPROTO_ICMPV6, 135, cmd);
+			IPPROTO_ICMPV6, 135, cmd, force);
 	iptables_entry(h, global_data->vrrp_iptables_inchain, -1,
 			XTC_LABEL_ACCEPT, NULL, ipaddress,
 			ifname, NULL,
-			IPPROTO_ICMPV6, 136, cmd);
+			IPPROTO_ICMPV6, 136, cmd, force);
 
 	if (global_data->vrrp_iptables_outchain[0] == '\0')
 		return;
@@ -257,15 +271,15 @@ handle_iptable_rule_to_NA(ip_address_t *ipaddress, int cmd, char *ifname, void *
 	iptables_entry(h, global_data->vrrp_iptables_outchain, -1,
 			XTC_LABEL_ACCEPT, ipaddress, NULL,
 			NULL, ifname,
-			IPPROTO_ICMPV6, 135, cmd);
+			IPPROTO_ICMPV6, 135, cmd, force);
 	iptables_entry(h, global_data->vrrp_iptables_outchain, -1,
 			XTC_LABEL_ACCEPT, ipaddress, NULL,
 			NULL, ifname,
-			IPPROTO_ICMPV6, 136, cmd);
+			IPPROTO_ICMPV6, 136, cmd, force);
 }
 
 void
-handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, struct ipt_handle *h)
+handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, struct ipt_handle *h, bool force)
 {
 	char *my_ifname = NULL;
 
@@ -292,13 +306,13 @@ handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, struc
 		if (IN6_IS_ADDR_LINKLOCAL(&ipaddress->u.sin6_addr))
 			my_ifname = ifname;
 
-		handle_iptable_rule_to_NA(ipaddress, cmd, my_ifname, h);
+		handle_iptable_rule_to_NA(ipaddress, cmd, my_ifname, h, force);
 	}
 
 	iptables_entry(h, global_data->vrrp_iptables_inchain, -1,
 			XTC_LABEL_DROP, NULL, ipaddress,
 			my_ifname, NULL,
-			IPPROTO_NONE, 0, cmd);
+			IPPROTO_NONE, 0, cmd, force);
 
 	ipaddress->iptable_rule_set = (cmd != IPADDRESS_DEL);
 
@@ -308,7 +322,7 @@ handle_iptable_rule_to_vip(ip_address_t *ipaddress, int cmd, char *ifname, struc
 	iptables_entry(h, global_data->vrrp_iptables_outchain, -1,
 			XTC_LABEL_DROP, ipaddress, NULL,
 			NULL, my_ifname,
-			IPPROTO_NONE, 0, cmd);
+			IPPROTO_NONE, 0, cmd, force);
 }
 
 static void

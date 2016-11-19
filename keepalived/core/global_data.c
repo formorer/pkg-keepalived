@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include <syslog.h>
 #include <unistd.h>
 #include <pwd.h>
@@ -73,6 +75,7 @@ set_default_smtp_connection_timeout(data_t * data)
 	data->smtp_connection_to = DEFAULT_SMTP_CONNECTION_TIMEOUT;
 }
 
+#ifdef _WITH_VRRP_
 static void
 set_default_mcast_group(data_t * data)
 {
@@ -84,6 +87,7 @@ static void
 set_vrrp_defaults(data_t * data)
 {
 	data->vrrp_garp_rep = VRRP_GARP_REP;
+	data->vrrp_garp_refresh.tv_sec = VRRP_GARP_REFRESH;
 	data->vrrp_garp_refresh_rep = VRRP_GARP_REFRESH_REP;
 	data->vrrp_garp_delay = VRRP_GARP_DELAY;
 	data->vrrp_garp_lower_prio_delay = -1;
@@ -91,10 +95,10 @@ set_vrrp_defaults(data_t * data)
 	data->vrrp_lower_prio_no_advert = false;
 	data->vrrp_version = VRRP_VERSION_2;
 	strcpy(data->vrrp_iptables_inchain, "INPUT");
-	data->block_ipv4 = 0;
-	data->block_ipv6 = 0;
+	data->block_ipv4 = false;
+	data->block_ipv6 = false;
 #ifdef _HAVE_LIBIPSET_
-	data->using_ipsets = 1;
+	data->using_ipsets = true;
 	strcpy(data->vrrp_ipset_address, "keepalived");
 	strcpy(data->vrrp_ipset_address6, "keepalived6");
 	strcpy(data->vrrp_ipset_address_iface6, "keepalived_if6");
@@ -103,6 +107,7 @@ set_vrrp_defaults(data_t * data)
 	data->vrrp_skip_check_adv_addr = false;
 	data->vrrp_strict = false;
 }
+#endif
 
 /* email facility functions */
 static void
@@ -138,8 +143,10 @@ alloc_global_data(void)
 	new = (data_t *) MALLOC(sizeof(data_t));
 	new->email = alloc_list(free_email, dump_email);
 
+#ifdef _WITH_VRRP_
 	set_default_mcast_group(new);
 	set_vrrp_defaults(new);
+#endif
 
 #ifdef _WITH_SNMP_
 	if (snmp) {
@@ -156,7 +163,10 @@ alloc_global_data(void)
 		new->enable_snmp_checker = true;
 #endif
 	}
-	new->lvs_syncd_syncid = -1;
+	new->lvs_syncd.syncid = -1;
+#ifdef _HAVE_IPVS_SYNCD_ATTRIBUTES_
+	new->lvs_syncd.mcast_group.ss_family = AF_UNSPEC;
+#endif
 
 	if (snmp_socket) {
 		new->snmp_socket = MALLOC(strlen(snmp_socket + 1));
@@ -209,8 +219,14 @@ free_global_data(data_t * data)
 #ifdef _WITH_SNMP_
 	FREE_PTR(data->snmp_socket);
 #endif
-	FREE_PTR(data->lvs_syncd_if);
-	FREE_PTR(data->lvs_syncd_vrrp_name);
+#ifdef _WITH_LVS_
+	FREE_PTR(data->lvs_syncd.ifname);
+	FREE_PTR(data->lvs_syncd.vrrp_name);
+#endif
+#if HAVE_DECL_CLONE_NEWNET
+	if (!reload)
+		FREE_PTR(network_namespace);
+#endif
 	FREE(data);
 }
 
@@ -238,16 +254,38 @@ dump_global_data(data_t * data)
 				    , data->email_from);
 		dump_list(data->email);
 	}
-	if (data->lvs_syncd_vrrp) {
+	log_message(LOG_INFO, " Default interface = %s", data->default_ifp ? data->default_ifp->ifname : DFLT_INT);
+#ifdef _WITH_LVS_
+	if (data->lvs_tcp_timeout)
+		log_message(LOG_INFO, " LVS TCP timeout = %d", data->lvs_tcp_timeout);
+	if (data->lvs_tcpfin_timeout)
+		log_message(LOG_INFO, " LVS TCP FIN timeout = %d", data->lvs_tcpfin_timeout);
+	if (data->lvs_udp_timeout)
+		log_message(LOG_INFO, " LVS TCP timeout = %d", data->lvs_udp_timeout);
+#ifdef _WITH_LVS_
+	if (data->lvs_syncd.vrrp) {
 		log_message(LOG_INFO, " LVS syncd vrrp instance = %s"
-				    , data->lvs_syncd_vrrp->iname);
-		if (data->lvs_syncd_if)
+				    , data->lvs_syncd.vrrp->iname);
+		if (data->lvs_syncd.ifname)
 			log_message(LOG_INFO, " LVS syncd interface = %s"
-				    , data->lvs_syncd_if);
+				    , data->lvs_syncd.ifname);
 		log_message(LOG_INFO, " LVS syncd syncid = %d"
-				    , data->lvs_syncd_syncid);
+				    , data->lvs_syncd.syncid);
+#ifdef _HAVE_IPVS_SYNCD_ATTRIBUTES_
+		if (data->lvs_syncd.sync_maxlen)
+			log_message(LOG_INFO, " LVS syncd maxlen = %d", data->lvs_syncd.sync_maxlen);
+		if (data->lvs_syncd.mcast_group.ss_family != AF_UNSPEC)
+			log_message(LOG_INFO, " LVS mcast group %s", inet_sockaddrtos(&data->lvs_syncd.mcast_group));
+		if (data->lvs_syncd.mcast_port)
+			log_message(LOG_INFO, " LVS syncd mcast port = %d", data->lvs_syncd.mcast_port);
+		if (data->lvs_syncd.mcast_ttl)
+			log_message(LOG_INFO, " LVS syncd mcast ttl = %d", data->lvs_syncd.mcast_ttl);
+#endif
 	}
-	log_message(LOG_INFO, "LVS flush = %s", data->lvs_flush ? "true" : "false");
+#endif
+	log_message(LOG_INFO, " LVS flush = %s", data->lvs_flush ? "true" : "false");
+#endif
+#ifdef _WITH_VRRP_
 	if (data->vrrp_mcast_group4.ss_family) {
 		log_message(LOG_INFO, " VRRP IPv4 mcast group = %s"
 				    , inet_sockaddrtos(&data->vrrp_mcast_group4));
@@ -286,9 +324,12 @@ dump_global_data(data_t * data)
 	log_message(LOG_INFO, " VRRP skip check advert addresses = %s", data->vrrp_skip_check_adv_addr ? "true" : "false");
 	log_message(LOG_INFO, " VRRP strict mode = %s", data->vrrp_strict ? "true" : "false");
 	log_message(LOG_INFO, " VRRP process priority = %d", data->vrrp_process_priority);
-	log_message(LOG_INFO, " Checker process priority = %d", data->checker_process_priority);
 	log_message(LOG_INFO, " VRRP don't swap = %s", data->vrrp_no_swap ? "true" : "false");
+#endif
+#ifdef _WITH_LVS_
+	log_message(LOG_INFO, " Checker process priority = %d", data->checker_process_priority);
 	log_message(LOG_INFO, " Checker don't swap = %s", data->checker_no_swap ? "true" : "false");
+#endif
 #ifdef _WITH_SNMP_KEEPALIVED_
 	log_message(LOG_INFO, " SNMP keepalived %s", data->enable_snmp_keepalived ? "enabled" : "disabled");
 #endif
@@ -303,6 +344,9 @@ dump_global_data(data_t * data)
 #endif
 #ifdef _WITH_SNMP_
 	log_message(LOG_INFO, " SNMP traps %s", data->enable_traps ? "enabled" : "disabled");
-	log_message(LOG_INFO, " SNMP socket = %s", data->snmp_socket ? data->snmp_socket : "default (127.0.0.1:161)");
+	log_message(LOG_INFO, " SNMP socket = %s", data->snmp_socket ? data->snmp_socket : "default (unix:/var/agentx/master)");
+#endif
+#if HAVE_DECL_CLONE_NEWNET
+	log_message(LOG_INFO, " Network namespace = %s", network_namespace ? network_namespace : "(default)");
 #endif
 }

@@ -22,6 +22,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include "vrrp_parser.h"
 #include "vrrp_data.h"
 #include "vrrp_sync.h"
@@ -451,22 +453,24 @@ vrrp_smtp_handler(vector_t *strvec)
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	vrrp->smtp_alert = 1;
 }
+#ifdef _WITH_LVS_
 static void
 vrrp_lvs_syncd_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 
 	log_message(LOG_INFO, "(%s): Specifying lvs_sync_daemon_interface against a vrrp is deprecated.", vrrp->iname);  /* Deprecated after v1.2.19 */
-	log_message(LOG_INFO, "      %*sPlease use global lvs_sync_daemon_interface and lvs_sync_daemon_vrrp", (int)strlen(vrrp->iname) - 2, "");
+	log_message(LOG_INFO, "      %*sPlease use global lvs_sync_daemon", (int)strlen(vrrp->iname) - 2, "");
 
-	if (global_data->lvs_syncd_if) {
-		log_message(LOG_INFO, "(%s): lvs_sync_daemon_interface has already been specified as %s - ignoring", vrrp->iname, global_data->lvs_syncd_if);
+	if (global_data->lvs_syncd.ifname) {
+		log_message(LOG_INFO, "(%s): lvs_sync_daemon_interface has already been specified as %s - ignoring", vrrp->iname, global_data->lvs_syncd.ifname);
 		return;
 	}
 
-	global_data->lvs_syncd_if = set_value(strvec);
-	global_data->lvs_syncd_vrrp = vrrp;
+	global_data->lvs_syncd.ifname = set_value(strvec);
+	global_data->lvs_syncd.vrrp = vrrp;
 }
+#endif
 static void
 vrrp_garp_delay_handler(vector_t *strvec)
 {
@@ -480,6 +484,7 @@ vrrp_garp_refresh_handler(vector_t *strvec)
 {
 	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
 	vrrp->garp_refresh.tv_sec = atoi(vector_slot(strvec, 1));
+	vrrp->garp_refresh.tv_usec = 0;
 }
 static void
 vrrp_garp_rep_handler(vector_t *strvec)
@@ -859,7 +864,9 @@ init_vrrp_keywords(bool active)
 	install_keyword("notify_stop", &vrrp_notify_stop_handler);
 	install_keyword("notify", &vrrp_notify_handler);
 	install_keyword("smtp_alert", &vrrp_smtp_handler);
+#ifdef _WITH_LVS_
 	install_keyword("lvs_sync_daemon_interface", &vrrp_lvs_syncd_handler);
+#endif
 	install_keyword("garp_master_delay", &vrrp_garp_delay_handler);
 	install_keyword("garp_master_refresh", &vrrp_garp_refresh_handler);
 	install_keyword("garp_master_repeat", &vrrp_garp_rep_handler);
@@ -887,7 +894,7 @@ vector_t *
 vrrp_init_keywords(void)
 {
 	/* global definitions mapping */
-	global_init_keywords();
+	init_global_keywords(true);
 
 	init_vrrp_keywords(true);
 #ifdef _WITH_LVS_

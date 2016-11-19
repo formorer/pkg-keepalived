@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include "config.h"
+
 #include "vrrp_scheduler.h"
 #include "vrrp_ipsecah.h"
 #include "vrrp_if.h"
@@ -48,6 +50,7 @@
 #ifdef _WITH_SNMP_
 #include "vrrp_snmp.h"
 #endif
+#include <netinet/ip.h>
 
 /* global vars */
 timeval_t garp_next_time;
@@ -245,13 +248,14 @@ vrrp_init_state(list l)
 
 		if (vrrp->wantstate == VRRP_STATE_MAST
 			|| vrrp->wantstate == VRRP_STATE_GOTO_MASTER) {
-#ifdef _HAVE_IPVS_SYNCD_
+#ifdef _WITH_LVS_
 			/* Check if sync daemon handling is needed */
-			if (global_data->lvs_syncd_if)
+			if (global_data->lvs_syncd.ifname &&
+			    global_data->lvs_syncd.vrrp == vrrp)
 				ipvs_syncd_cmd(IPVS_STARTDAEMON,
-					       global_data->lvs_syncd_if,
+					       &global_data->lvs_syncd,
 					       IPVS_MASTER,
-					       global_data->lvs_syncd_syncid,
+					       false,
 					       false);
 #endif
 #ifdef _WITH_SNMP_RFCV3_
@@ -261,14 +265,14 @@ vrrp_init_state(list l)
 		} else {
 			vrrp->ms_down_timer = 3 * vrrp->adver_int
 			    + VRRP_TIMER_SKEW(vrrp);
-#ifdef _HAVE_IPVS_SYNCD_
+#ifdef _WITH_LVS_
 			/* Check if sync daemon handling is needed */
-			if (global_data->lvs_syncd_if &&
-			    global_data->lvs_syncd_vrrp == vrrp)
+			if (global_data->lvs_syncd.ifname &&
+			    global_data->lvs_syncd.vrrp == vrrp)
 				ipvs_syncd_cmd(IPVS_STARTDAEMON,
-					       global_data->lvs_syncd_if,
+					       &global_data->lvs_syncd,
 					       IPVS_BACKUP,
-					       global_data->lvs_syncd_syncid,
+					       false,
 					       false);
 #endif
 			log_message(LOG_INFO, "VRRP_Instance(%s) Entering BACKUP STATE",
@@ -733,24 +737,26 @@ vrrp_goto_master(vrrp_t * vrrp)
 		vrrp_snmp_instance_trap(vrrp);
 #endif
 		vrrp->last_transition = timer_now();
-	} else {
+
+		return;
+	}
+
 #if defined _WITH_VRRP_AUTH_
-		/* If becoming MASTER in IPSEC AH AUTH, we reset the anti-replay */
-		if (vrrp->version == VRRP_VERSION_2 && vrrp->ipsecah_counter->cycle) {
-			vrrp->ipsecah_counter->cycle = 0;
-			vrrp->ipsecah_counter->seq_number = 0;
-		}
+	/* If becoming MASTER in IPSEC AH AUTH, we reset the anti-replay */
+	if (vrrp->version == VRRP_VERSION_2 && vrrp->ipsecah_counter->cycle) {
+		vrrp->ipsecah_counter->cycle = 0;
+		vrrp->ipsecah_counter->seq_number = 0;
+	}
 #endif
 
 #ifdef _WITH_SNMP_RFCV3_
-		if ((vrrp->version == VRRP_VERSION_2 && vrrp->ms_down_timer >= 3 * vrrp->adver_int) ||
-		    (vrrp->version == VRRP_VERSION_3 && vrrp->ms_down_timer >= 3 * vrrp->master_adver_int))
-			vrrp->stats->master_reason = VRRPV3_MASTER_REASON_MASTER_NO_RESPONSE;
+	if ((vrrp->version == VRRP_VERSION_2 && vrrp->ms_down_timer >= 3 * vrrp->adver_int) ||
+	    (vrrp->version == VRRP_VERSION_3 && vrrp->ms_down_timer >= 3 * vrrp->master_adver_int))
+		vrrp->stats->master_reason = VRRPV3_MASTER_REASON_MASTER_NO_RESPONSE;
 #endif
-		/* handle master state transition */
-		vrrp->wantstate = VRRP_STATE_MAST;
-		vrrp_state_goto_master(vrrp);
-	}
+	/* handle master state transition */
+	vrrp->wantstate = VRRP_STATE_MAST;
+	vrrp_state_goto_master(vrrp);
 }
 
 /* Delayed gratuitous ARP thread */

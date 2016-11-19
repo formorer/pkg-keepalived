@@ -20,6 +20,8 @@
  * Copyright (C) 2001-2012 Alexandre Cassen, <acassen@linux-vs.org>
  */
 
+#include "config.h"
+
 #include <stdio.h>
 #include "logger.h"
 
@@ -35,7 +37,7 @@ enable_console_log(void)
 void
 vlog_message(const int facility, const char* format, va_list args)
 {
-	char buf[256];
+	char buf[MAX_LOG_MSG+1];
 
 	vsnprintf(buf, sizeof(buf), format, args);
 
