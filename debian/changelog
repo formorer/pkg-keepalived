@@ -1,3 +1,9 @@
+keepalived (1:1.2.24-1) unstable; urgency=medium
+
+  * [d378a6f] New upstream version 1.2.24
+
+ -- Alexander Wirt <formorer@debian.org>  Sat, 19 Nov 2016 08:20:39 +0100
+
 keepalived (1:1.2.23-1) unstable; urgency=medium
 
   * [94beb84] Imported Upstream version 1.2.23
