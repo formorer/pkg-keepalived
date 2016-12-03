@@ -24,6 +24,8 @@
 
 #include "git-commit.h"
 
+#include <stdlib.h>
+#include <sys/utsname.h>
 #include <sys/resource.h>
 #include <stdbool.h>
 
@@ -33,12 +35,15 @@
 #include "pidfile.h"
 #include "bitops.h"
 #include "logger.h"
+#include "parser.h"
+#include "notify.h"
 #include "check_parser.h"
 #include "vrrp_parser.h"
 #include "global_parser.h"
 #if HAVE_DECL_CLONE_NEWNET
 #include "namespaces.h"
 #endif
+#include "vrrp_netlink.h"
 
 #define	LOG_FACILITY_MAX	7
 #define	VERSION_STRING		PACKAGE_NAME " v" PACKAGE_VERSION " (" VERSION_DATE ")"
@@ -71,8 +76,16 @@ const char *snmp_socket;				/* Socket to use for SNMP agent */
 static char *syslog_ident;				/* syslog ident if not default */
 char *instance_name;					/* keepalived instance name */
 bool use_pid_dir;					/* Put pid files in /var/run/keepalived */
+size_t getpwnam_buf_len;				/* Buffer length needed for getpwnam_r/getgrname_r */
+uid_t default_script_uid;				/* Default user/group for script execution */
+gid_t default_script_gid;
+unsigned os_major;					/* Kernel version */
+unsigned os_minor;
+unsigned os_release;
 
 #if HAVE_DECL_CLONE_NEWNET
+char *network_namespace;				/* The network namespace we are running in */
+bool namespace_with_ipsets;				/* Override for using namespaces and ipsets with Linux < 3.13 */
 static char *override_namespace;			/* If namespace specified on command line */
 #endif
 
@@ -197,6 +210,24 @@ make_pidfile_name(const char* start, const char* instance, const char* extn)
 	return name;
 }
 
+static bool
+find_keepalived_child(pid_t pid, char const **prog_name)
+{
+#ifdef _WITH_LVS_
+	if (pid == checkers_child) {
+		*prog_name = PROG_CHECK;
+		return true;
+	}
+#endif
+#ifdef _WITH_VRRP_
+	if (pid == vrrp_child) {
+		*prog_name = PROG_VRRP;
+		return true;
+	}
+#endif
+	return false;
+}
+
 #if HAVE_DECL_CLONE_NEWNET
 static vector_t *
 global_init_keywords(void)
@@ -263,7 +294,7 @@ start_keepalived(void)
 /* SIGHUP/USR1/USR2 handler */
 #ifndef _DEBUG_
 static void
-propogate_signal(void *v, int sig)
+propogate_signal(__attribute__((unused)) void *v, int sig)
 {
 	bool unsupported_change = false;
 
@@ -314,7 +345,7 @@ propogate_signal(void *v, int sig)
 
 /* Terminate handler */
 static void
-sigend(void *v, int sig)
+sigend(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
 {
 	int status;
 	int ret;
@@ -404,7 +435,7 @@ sigend(void *v, int sig)
 static void
 signal_init(void)
 {
-	signal_handler_init();
+	signal_handler_init(1);
 	signal_set(SIGHUP, propogate_signal, NULL);
 	signal_set(SIGUSR1, propogate_signal, NULL);
 	signal_set(SIGUSR2, propogate_signal, NULL);
@@ -518,6 +549,7 @@ usage(const char *prog)
 #ifdef _MEM_CHECK_LOG_
 	fprintf(stderr, "  -L, --mem-check-log          Log malloc/frees to syslog\n");
 #endif
+	fprintf(stderr, "  -i, --config_id id           Skip any configuration lines beginning '@' that don't match id\n");
 	fprintf(stderr, "  -v, --version                Display the version number\n");
 	fprintf(stderr, "  -h, --help                   Display this help message\n");
 }
@@ -562,12 +594,13 @@ parse_cmdline(int argc, char **argv)
 #if HAVE_DECL_CLONE_NEWNET
 		{"namespace",         required_argument, 0, 's'},
 #endif	
+		{"config-id",         required_argument, 0, 'i'},
 		{"version",           no_argument,       0, 'v'},
 		{"help",              no_argument,       0, 'h'},
 		{0, 0, 0, 0}
 	};
 
-	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:p:mM"
+	while ((c = getopt_long(argc, argv, "vhlndVIDRS:f:p:i:mM"
 #if defined _WITH_VRRP_ && defined _WITH_LVS_
 					    "PC"
 #endif
@@ -680,6 +713,9 @@ parse_cmdline(int argc, char **argv)
 			strcpy(override_namespace, optarg);
 			break;
 #endif
+		case 'i':
+			config_id = optarg;
+			break;
 		default:
 			exit(0);
 			break;
@@ -699,9 +735,15 @@ int
 keepalived_main(int argc, char **argv)
 {
 	bool report_stopped = true;
+	struct utsname uname_buf;
+	char *end;
+	size_t buf_len;
 
 	/* Init debugging level */
 	debug = 0;
+
+	/* Initialise pointer to child finding function */
+	set_child_finder(find_keepalived_child);
 
 	/* Initialise daemon_mode */
 #ifdef _WITH_VRRP_
@@ -735,13 +777,43 @@ keepalived_main(int argc, char **argv)
 	/* Handle any core file requirements */
 	core_dump_init();
 
+	netlink_set_recv_buf_size();
+
+	set_default_script_user(&default_script_uid, &default_script_gid);
+
+	/* Get buffer length needed for getpwnam_r/getgrnam_r */
+	getpwnam_buf_len = (size_t)sysconf(_SC_GETPW_R_SIZE_MAX);
+	if ((buf_len = (size_t)sysconf(_SC_GETGR_R_SIZE_MAX)) > getpwnam_buf_len)
+		getpwnam_buf_len = buf_len;
+
+	/* Some functionality depends on kernel version, so get the version here */
+	if (uname(&uname_buf))
+		log_message(LOG_INFO, "Unable to get uname() information - error %d", errno);
+	else {
+		os_major = (unsigned)strtoul(uname_buf.release, &end, 10);
+		if (*end != '.')
+			os_major = 0;
+		else {
+			os_minor = (unsigned)strtoul(end + 1, &end, 10);
+			if (*end != '.')
+				os_major = 0;
+			else {
+				os_release = (unsigned)strtoul(end + 1, &end, 10);
+				if (*end && *end != '-')
+					os_major = 0;
+			}
+		}
+		if (!os_major)
+			log_message(LOG_INFO, "Unable to parse kernel version %s", uname_buf.release);
+	}
+
 	/* Check we can read the configuration file(s).
- 	   NOTE: the working directory will be / if we
- 	   forked, but will be the current working directory
- 	   when keepalived was run if we haven't forked.
- 	   This means that if any config file names are not
- 	   absolute file names, the behaviour will be different
- 	   depending on whether we forked or not. */
+	   NOTE: the working directory will be / if we
+	   forked, but will be the current working directory
+	   when keepalived was run if we haven't forked.
+	   This means that if any config file names are not
+	   absolute file names, the behaviour will be different
+	   depending on whether we forked or not. */
 	if (!check_conf_file(conf_file))
 		goto end;
 
@@ -837,6 +909,9 @@ keepalived_main(int argc, char **argv)
 	/* daemonize process */
 	if (!__test_bit(DONT_FORK_BIT, &debug))
 		xdaemon(0, 0, 0);
+
+	/* Set file creation mask */
+	umask(0);
 
 #ifdef _MEM_CHECK_
 	enable_mem_log_termination();
