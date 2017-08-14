@@ -155,6 +155,9 @@ check_misc_script_security(void)
 
 		script_flags |= (flags = check_script_secure(&script, global_data->script_security, false));
 
+		/* The script path may have been updated if it wan't an absolute path */
+		misc_script->path = script.name;
+
 		/* Mark not to run if needs inhibiting */
 		if (flags & SC_INHIBIT) {
 			log_message(LOG_INFO, "Disabling misc script %s due to insecure", misc_script->path);
@@ -189,7 +192,7 @@ misc_check_thread(thread_t * thread)
 	 * Register a new checker thread & return
 	 * if checker is disabled
 	 */
-	if (!CHECKER_ENABLED(checker)) {
+	if (!checker->enabled) {
 		/* Register next timer checker */
 		thread_add_timer(thread->master, misc_check_thread, checker,
 				 checker->vs->delay_loop);
@@ -238,7 +241,7 @@ misc_check_child_thread(thread_t * thread)
 		misck_checker->forcing_termination = true;
 		kill(-pid, SIGTERM);
 		thread_add_child(thread->master, misc_check_child_timeout_thread,
-				 checker, pid, 2);
+				 checker, pid, 2 * 1000000);
 		return 0;
 	}
 
@@ -303,6 +306,7 @@ static int
 misc_check_child_timeout_thread(thread_t * thread)
 {
 	pid_t pid;
+	checker_t *checker;
 	misc_checker_t *misck_checker;
 
 	if (thread->type != THREAD_CHILD_TIMEOUT)
@@ -319,6 +323,9 @@ misc_check_child_timeout_thread(thread_t * thread)
 	}
 
 	log_message(LOG_WARNING, "Process [%d] didn't respond to SIGTERM", pid);
+
+	checker = THREAD_ARG(thread);
+	misck_checker = CHECKER_ARG(checker);
 
 	misck_checker->forcing_termination = false;
 

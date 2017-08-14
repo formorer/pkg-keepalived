@@ -13,7 +13,8 @@ AM_LDFLAGS		= $(KA_LDFLAGS) $(DEBUG_LDFLAGS)
 noinst_LIBRARIES	= libcore.a
 
 libcore_a_SOURCES	= main.c daemon.c pidfile.c layer4.c smtp.c \
-			  global_data.c global_parser.c process.c
+			  global_data.c global_parser.c process.c \
+			  keepalived_netlink.c
 
 AM_CPPFLAGS		+= -I$(srcdir)/../include -I$(srcdir)/../../lib
 
@@ -28,6 +29,11 @@ endif
 if WITH_NAMESPACES
   libcore_a_LIBADD	+= namespaces.o
   EXTRA_libcore_a_SOURCES += namespaces.c
+endif
+
+if LIBNL_DYNAMIC
+  libcore_a_LIBADD	+= libnl_link.o
+  EXTRA_libcore_a_SOURCES += libnl_link.c
 endif
 
 MAINTAINERCLEANFILES	= @MAINTAINERCLEANFILES@

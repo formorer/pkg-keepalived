@@ -30,7 +30,9 @@
 #include "vrrp_ndisc.h"
 #include "vrrp_scheduler.h"
 #include "vrrp_notify.h"
+#ifdef _WITH_LVS_
 #include "ipvswrapper.h"
+#endif
 #include "vrrp.h"
 #include "vrrp_data.h"
 #include "vrrp_sync.h"
@@ -53,7 +55,7 @@
 #include "utils.h"
 #include "notify.h"
 #include "bitops.h"
-#include "vrrp_netlink.h"
+#include "keepalived_netlink.h"
 #if !HAVE_DECL_SOCK_CLOEXEC
 #include "old_socket.h"
 #endif
@@ -68,6 +70,7 @@
 
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
+#include <stdint.h>
 
 /* add/remove Virtual IP addresses */
 static bool
@@ -151,6 +154,9 @@ check_track_script_secure(tracked_sc_t *script)
 	ns.gid = script->scr->gid;
 
 	flags = check_script_secure(&ns, global_data->script_security, false);
+
+	/* The script path may have been updated if it wan't an absolute path */
+	script->scr->script = ns.name;
 
 	/* Mark not to run if needs inhibiting */
 	if (flags & SC_INHIBIT) {
@@ -1589,7 +1595,9 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, ssize_t buflen)
 	vrrphdr_t *hd;
 	ssize_t ret;
 	unsigned proto = 0;
+#ifdef _WITH_VRRP_AUTH_
 	ipsec_ah_t *ah;
+#endif
 	unsigned master_adver_int;
 	int addr_cmp;
 
@@ -1614,15 +1622,20 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, ssize_t buflen)
 		return 0;
 	}
 
-	if (hd->priority == 0) {
-		vrrp_send_adv(vrrp, vrrp->effective_priority);
-		return 0;
-	}
-
 	addr_cmp = vrrp_saddr_cmp(&vrrp->pkt_saddr, vrrp);
 
+	if (hd->priority == 0 ||
+	    (vrrp->higher_prio_send_advert &&
+	    (hd->priority > vrrp->effective_priority ||
+	     (hd->priority == vrrp->effective_priority && addr_cmp > 0)))) {
+		vrrp_send_adv(vrrp, vrrp->effective_priority);
+
+		if (hd->priority == 0)
+			return 0;
+	}
+
 	if (hd->priority == vrrp->effective_priority && addr_cmp == 0)
-			log_message(LOG_INFO, "(%s): WARNING - equal priority advert received from remote host with our IP address.", vrrp->iname);
+		log_message(LOG_INFO, "(%s): WARNING - equal priority advert received from remote host with our IP address.", vrrp->iname);
 
 	if (hd->priority < vrrp->effective_priority ||
 		   (hd->priority == vrrp->effective_priority &&
@@ -1630,6 +1643,7 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, ssize_t buflen)
 		/* We receive a lower prio adv we just refresh remote ARP cache */
 		log_message(LOG_INFO, "VRRP_Instance(%s) Received advert with lower priority %d, ours %d"
 				      ", forcing new election", vrrp->iname, hd->priority, vrrp->effective_priority);
+#ifdef _WITH_VRRP_AUTH_
 		if (proto == IPPROTO_IPSEC_AH) {
 			ah = (ipsec_ah_t *) (buf + sizeof(struct iphdr));
 			log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : Syncing seq_num"
@@ -1638,6 +1652,7 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, ssize_t buflen)
 			vrrp->ipsecah_counter->seq_number = ntohl(ah->seq_number) + 1;
 			vrrp->ipsecah_counter->cycle = 0;
 		}
+#endif
 		if (!vrrp->lower_prio_no_advert)
 			vrrp_send_adv(vrrp, vrrp->effective_priority);
 		if (vrrp->garp_lower_prio_rep) {
@@ -1666,6 +1681,7 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, ssize_t buflen)
 
 		log_message(LOG_INFO, "VRRP_Instance(%s) Received advert with higher priority %d, ours %d"
 				    , vrrp->iname, hd->priority, vrrp->effective_priority);
+#ifdef _WITH_VRRP_AUTH_
 		if (proto == IPPROTO_IPSEC_AH) {
 			ah = (ipsec_ah_t *) (buf + sizeof(struct iphdr));
 			log_message(LOG_INFO, "VRRP_Instance(%s) IPSEC-AH : Syncing seq_num"
@@ -1674,6 +1690,7 @@ vrrp_state_master_rx(vrrp_t * vrrp, char *buf, ssize_t buflen)
 			vrrp->ipsecah_counter->seq_number = ntohl(ah->seq_number) - 1;
 			vrrp->ipsecah_counter->cycle = 0;
 		}
+#endif
 
 		if (vrrp->version == VRRP_VERSION_3) {
 			master_adver_int = (ntohs(hd->v3.adver_int) & 0x0FFF) * TIMER_CENTI_HZ;
@@ -2073,7 +2090,13 @@ vrrp_complete_instance(vrrp_t * vrrp)
 
 		vrrp->effective_priority = vrrp->base_priority;
 	}
-	else if (vrrp->strict_mode && (vrrp->init_state == VRRP_STATE_MAST) && (vrrp->base_priority != VRRP_PRIO_OWNER)) {
+
+	if (vrrp->base_priority == VRRP_PRIO_OWNER && vrrp->nopreempt) {
+		log_message(LOG_INFO, "(%s): nopreempt is incompatible with priority %d - resetting nopreempt", vrrp->iname, VRRP_PRIO_OWNER);
+		vrrp->nopreempt = false;
+	}
+
+	if (vrrp->strict_mode && (vrrp->init_state == VRRP_STATE_MAST) && (vrrp->base_priority != VRRP_PRIO_OWNER)) {
 		log_message(LOG_INFO,"(%s): Cannot start in MASTER state if not address owner", vrrp->iname);
 		vrrp->init_state = VRRP_STATE_BACK;
 		vrrp->wantstate = VRRP_STATE_BACK;
@@ -2118,6 +2141,19 @@ vrrp_complete_instance(vrrp_t * vrrp)
 		vrrp->garp_lower_prio_delay = vrrp->strict_mode ? 0 : global_data->vrrp_garp_lower_prio_delay;
 	if (vrrp->lower_prio_no_advert == PARAMETER_UNSET)
 		vrrp->lower_prio_no_advert = vrrp->strict_mode ? true : global_data->vrrp_lower_prio_no_advert;
+	if (vrrp->higher_prio_send_advert == PARAMETER_UNSET)
+		vrrp->higher_prio_send_advert = vrrp->strict_mode ? false : global_data->vrrp_higher_prio_send_advert;
+
+	if (vrrp->strict_mode) {
+		if (!vrrp->lower_prio_no_advert) {
+			log_message(LOG_INFO, "(%s): strict mode requires lower_prio_no_advert to be set - setting", vrrp->iname);
+			vrrp->lower_prio_no_advert = true;
+		}
+		if (vrrp->higher_prio_send_advert) {
+			log_message(LOG_INFO, "(%s): strict mode requires higherer_prio_send_advert to be clear - resetting", vrrp->iname);
+			vrrp->higher_prio_send_advert = false;
+		}
+	}
 
 	/* Check that the advertisement interval is valid */
 	if (!vrrp->adver_int)
@@ -2133,6 +2169,8 @@ vrrp_complete_instance(vrrp_t * vrrp)
 					vrrp->iname, (float)vrrp->adver_int / TIMER_HZ);
 			vrrp->adver_int = vrrp->adver_int + (TIMER_HZ / 2);
 			vrrp->adver_int -= vrrp->adver_int % TIMER_HZ;
+			if (vrrp->adver_int == 0)
+				vrrp->adver_int = TIMER_HZ;
 		}
 	}
 	else
@@ -2147,6 +2185,9 @@ vrrp_complete_instance(vrrp_t * vrrp)
 					vrrp->iname, (float)vrrp->adver_int / TIMER_HZ);
 			vrrp->adver_int = vrrp->adver_int + (TIMER_CENTI_HZ / 2);
 			vrrp->adver_int -= vrrp->adver_int % TIMER_CENTI_HZ;
+
+			if (vrrp->adver_int == 0)
+				vrrp->adver_int = TIMER_CENTI_HZ;
 		}
 	}
 	vrrp->master_adver_int = vrrp->adver_int;
@@ -2342,13 +2383,6 @@ vrrp_complete_instance(vrrp_t * vrrp)
 			if (!vip->ifa.ifa_index) {
 				vip->ifa.ifa_index = vrrp->ifp->ifindex;
 				vip->ifp = vrrp->ifp;
-			}
-
-			if (vrrp->base_priority != VRRP_PRIO_OWNER && !vrrp->accept) {
-				if (vip->ifa.ifa_family == AF_INET)
-					global_data->block_ipv4 = true;
-				else
-					global_data->block_ipv6 = true;
 			}
 		}
 	}
@@ -2584,16 +2618,10 @@ vrrp_complete_init(void)
 
 	alloc_vrrp_buffer(max_mtu_len);
 
+	set_child_finder(vrrp_child_finder);
+
 	return true;
 }
-
-#ifdef _WITH_LVS_
-bool
-vrrp_ipvs_needed(void)
-{
-	return !!(global_data->lvs_syncd.ifname);
-}
-#endif
 
 /* Try to find a VRRP instance */
 static vrrp_t *
@@ -2703,7 +2731,9 @@ restore_vrrp_state(vrrp_t *old_vrrp, vrrp_t *vrrp)
 	/* Save old stats */
 	memcpy(vrrp->stats, old_vrrp->stats, sizeof(vrrp_stats));
 
+#ifdef _WITH_VRRP_AUTH_
 	memcpy(vrrp->ipsecah_counter, old_vrrp->ipsecah_counter, sizeof(seq_counter_t));
+#endif
 
 	/* Remember if we had vips up and add new ones if needed */
 	vrrp->vipset = old_vrrp->vipset;
