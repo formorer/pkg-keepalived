@@ -38,7 +38,6 @@
 #include <linux/types.h>        /* For __beXX types in userland */
 #include <linux/netfilter.h>    /* For nf_inet_addr */
 #include <stdint.h>
-#include <dlfcn.h>
 
 #include "logger.h"
 #include "global_data.h"
@@ -46,6 +45,9 @@
 #include "vrrp_ipset.h"
 #include "vrrp_ipaddress.h"
 #include "main.h"
+
+#ifdef _LIBIPSET_DYNAMIC_
+#include <dlfcn.h>
 
 /* The addresses of the functions we want */
 struct ipset_session* (*ipset_session_init_addr)(ipset_outfn outfn);
@@ -71,6 +73,9 @@ void (*ipset_load_types_addr)(void);
 #define ipset_load_types (*ipset_load_types_addr)
 
 static void* libipset_handle;
+#else
+#define ipset_cmd1 ipset_cmd
+#endif
 
 static bool
 do_ipset_cmd(struct ipset_session* session, enum ipset_cmd cmd, const char *setname,
@@ -181,8 +186,10 @@ static int create_sets(const char* addr4, const char* addr6, const char* addr_if
 
 bool ipset_init(void)
 {
+#ifdef _LIBIPSET_DYNAMIC_
 	if (libipset_handle)
 		return true;
+#endif
 
 #if HAVE_DECL_CLONE_NEWNET
 	/* Don't attempt to use ipsets if running in a namespace and the default
@@ -198,33 +205,34 @@ bool ipset_init(void)
 	}
 #endif
 
+#ifdef _LIBIPSET_DYNAMIC_
 	/* Attempt to open the ipset library */
 	if (!(libipset_handle = dlopen("libipset.so", RTLD_NOW)) &&
-	    !(libipset_handle = dlopen("libipset.so.3", RTLD_NOW)) &&
-	    !(libipset_handle = dlopen("libipset.so.2", RTLD_NOW))) {
-		/* Generate the most useful error message */
-		dlopen("libipset.so.3", RTLD_NOW);
-
+	    !(libipset_handle = dlopen(IPSET_LIB_NAME, RTLD_NOW))) {
 		log_message(LOG_INFO, "Unable to load ipset library - %s", dlerror());
 		return false;
 	}
 
-	ipset_session_init_addr = dlsym(libipset_handle, "ipset_session_init");
-	ipset_session_fini_addr = dlsym(libipset_handle, "ipset_session_fini");
-	ipset_session_data_addr = dlsym(libipset_handle,"ipset_session_data");
-	ipset_session_error_addr = dlsym(libipset_handle,"ipset_session_error");
-	ipset_envopt_parse_addr = dlsym(libipset_handle,"ipset_envopt_parse");
-	ipset_type_get_addr = dlsym(libipset_handle,"ipset_type_get");
-	ipset_data_set_addr = dlsym(libipset_handle,"ipset_data_set");
-	ipset_cmd_addr = dlsym(libipset_handle,"ipset_cmd");
-	ipset_load_types_addr = dlsym(libipset_handle,"ipset_load_types");
+	int err = false;
+	if (!(ipset_session_init_addr = dlsym(libipset_handle, "ipset_session_init"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_session_init"); err = true;}
+	if (!(ipset_session_fini_addr = dlsym(libipset_handle, "ipset_session_fini"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_session_fini"); err = true;}
+	if (!(ipset_session_data_addr = dlsym(libipset_handle,"ipset_session_data"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_session_data"); err = true;}
+	if (!(ipset_session_error_addr = dlsym(libipset_handle,"ipset_session_error"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_session_error"); err = true;}
+	if (!(ipset_envopt_parse_addr = dlsym(libipset_handle,"ipset_envopt_parse"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_envopt_parse"); err = true;}
+	if (!(ipset_type_get_addr = dlsym(libipset_handle,"ipset_type_get"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_type_get"); err = true;}
+	if (!(ipset_data_set_addr = dlsym(libipset_handle,"ipset_data_set"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_data_set"); err = true;}
+	if (!(ipset_cmd_addr = dlsym(libipset_handle,"ipset_cmd"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_cmd"); err = true;}
+	if (!(ipset_load_types_addr = dlsym(libipset_handle,"ipset_load_types"))) {log_message(LOG_INFO, "Failed to dynamic link ipset_load_types"); err = true;}
+	if (err) {
+		log_message(LOG_INFO, "Failed to dynamic link an ipset function");
+		return false;
+	}
+#endif
 
 	ipset_load_types();
 
-	if (!load_mod_xt_set()) {
-		log_message(LOG_INFO, "Unable to load xt_set module");
+	if (!load_xtables_module("xt_set", "ipsets"))
 		return false;
-	}
 
 	return true;
 }
