@@ -62,6 +62,15 @@ dump_tcp_check(void *data)
 	}
 }
 
+static bool
+tcp_check_compare(void *a, void *b)
+{
+	if (!compare_conn_opts(CHECKER_CO(a), CHECKER_CO(b)))
+		return false;
+
+	return true;
+}
+
 static void
 tcp_check_handler(__attribute__((unused)) vector_t *strvec)
 {
@@ -72,8 +81,8 @@ tcp_check_handler(__attribute__((unused)) vector_t *strvec)
 	tcp_check->delay_before_retry = 1 * TIMER_HZ;
 
 	/* queue new checker */
-	queue_checker(free_tcp_check, dump_tcp_check, tcp_connect_thread
-		      ,tcp_check, CHECKER_NEW_CO());
+	queue_checker(free_tcp_check, dump_tcp_check, tcp_connect_thread,
+		      tcp_check_compare, tcp_check, CHECKER_NEW_CO());
 }
 
 static void
@@ -120,7 +129,7 @@ tcp_epilog(thread_t * thread, int is_success)
 		if (is_success && !svr_checker_up(checker->id, checker->rs)) {
 			log_message(LOG_INFO, "TCP connection to %s success."
 					, FMT_TCP_RS(checker));
-			smtp_alert(checker->rs, NULL, NULL,
+			smtp_alert(checker, NULL, NULL,
 				   "UP",
 				   "=> TCP CHECK succeed on service <=");
 			update_svr_checker_state(UP, checker->id
@@ -133,7 +142,7 @@ tcp_epilog(thread_t * thread, int is_success)
 				    , "Check on service %s failed after %d retry."
 				    , FMT_TCP_RS(checker)
 				    , tcp_check->n_retry);
-			smtp_alert(checker->rs, NULL, NULL,
+			smtp_alert(checker, NULL, NULL,
 				   "DOWN",
 				   "=> TCP CHECK failed on service <=");
 			update_svr_checker_state(DOWN, checker->id

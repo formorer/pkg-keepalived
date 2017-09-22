@@ -80,9 +80,15 @@ AC_DEFUN([get_lib_name],
     LIBS="$SAV_LIBS"
   ])
 
+# AS_VAR_COPY was introduced in autoconf 2.63b.
+# Remove the following definition once require autoconf >= 2.64.
+m4_ifndef([AS_VAR_COPY],
+[m4_define([AS_VAR_COPY],
+[AS_LITERAL_IF([$1[]$2], [$1=$$2], [eval $1=\$$2])])])
+
 dnl ----[ Process this file with autoconf to produce a configure script ]----
-AC_PREREQ([2.65])
-AC_INIT([Keepalived], [1.3.5], [keepalived-devel@lists.sourceforge.net], [], [http://www.keepalived.org/])
+AC_PREREQ([2.63])
+AC_INIT([Keepalived], [1.3.6], [keepalived-devel@lists.sourceforge.net], [], [http://www.keepalived.org/])
 AM_INIT_AUTOMAKE([-Wall -Werror -Woverride foreign])
 
 AC_CONFIG_SRCDIR([keepalived/core/main.c])
@@ -154,6 +160,8 @@ AC_ARG_ENABLE(vrrp-auth,
   [AS_HELP_STRING([--disable-vrrp-auth], [compile without VRRP authentication])])
 AC_ARG_ENABLE(routes,
   [AS_HELP_STRING([--disable-routes], [compile without ip rules/routes])])
+AC_ARG_ENABLE(gnu-std-paths,
+  [AS_HELP_STRING([--enable-gnu-std-paths], [use GNU standard paths for pid files etc])])
 AC_ARG_ENABLE(dynamic-linking,
   [AS_HELP_STRING([--enable-dynamic-linking], [compile with/without dynamically linked libiptc/libipset])])
 AC_ARG_ENABLE(libiptc-dynamic,
@@ -173,7 +181,7 @@ AC_ARG_ENABLE(libnl,
 AC_ARG_ENABLE(mem-check,
   [AS_HELP_STRING([--enable-mem-check], [compile with memory alloc checking])])
 AC_ARG_ENABLE(mem-check-log,
-  [AS_HELP_STRING([--enable-mem-check-log], [compile with memory alloc checking wriging to syslog])])
+  [AS_HELP_STRING([--enable-mem-check-log], [compile with memory alloc checking writing to syslog])])
 AC_ARG_ENABLE(debug,
   [AS_HELP_STRING([--enable-debug], [compile with debugging flags])])
 AC_ARG_ENABLE(stacktrace,
@@ -286,6 +294,23 @@ fi
 if test "$enable_Werror" = yes; then
   KA_CFLAGS="$KA_CFLAGS -Werror"
 fi
+
+AC_MSG_CHECKING([for -Wimplicit-fallthrough])
+SAV_CFLAGS="$CFLAGS"
+CFLAGS="-Wimplicit-fallthrough=3"
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+  int main(int argc, char**argv)
+  {
+  }
+  ]])],
+  [
+    AC_MSG_RESULT([yes])
+    KA_CFLAGS="$KA_CFLAGS -Wimplicit-fallthrough=3"
+  ],
+  [
+    AC_MSG_RESULT([no])
+  ])
+CFLAGS="$SAV_CFLAGS"
 
 AC_SUBST(KA_CPPFLAGS)
 AC_SUBST(KA_CFLAGS)
@@ -490,8 +515,8 @@ if test .${enable_libnl} != .no; then
           dnl -- Resolved in libnl3-3.2.26 (release 30/3/2015)
           AC_MSG_CHECKING([for net/if.h and libnl3/netlink/route/link.h namespace collision])
           AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
-              #include <net/if.h>
               #include <netlink/route/link.h>
+              #include <net/if.h>
             ]])], [
               AC_MSG_RESULT([no])
             ], [
@@ -602,6 +627,9 @@ for flag in RTA_ENCAP RTA_EXPIRES RTA_NEWDST RTA_PREF RTA_VIA FRA_OIFNAME FRA_SU
     add_build_opt[${flag}]
   fi
 done
+
+dnl - Introduced in Linux 3.14
+AC_CHECK_DECLS([IFA_FLAGS], [], [], [[#include <linux/if_addr.h>]])
 
 dnl -- RedHat backported ENCAP_IP and ENCAP_IP6 without MPLS and ILA
 AC_CHECK_DECLS([LWTUNNEL_ENCAP_MPLS, LWTUNNEL_ENCAP_ILA], [], [],
@@ -763,12 +791,16 @@ if test .${enable_libiptc} != .no -a .$enable_vrrp != .no; then
               ]])],
               [AC_DEFINE([HAVE_IPSET_ATTR_IFACE], [ 1 ], [Define to 1 if ipset supports iface type])])
 
-            dnl - The include guard for <linux/netfilter/ipset/ip_set.h> changed for the UAPI disintegration.
-	    dnl - Unfortunately libipset provides a copy of the kernel headers, <libipset/linux_ip_set.h>,
-	    dnl - and if one header is from before the disambiguation and one from after, the include guards
-	    dnl - don't match. Unfortunately we need to include some libipset header files, which include the
+	    dnl - The include guard for <linux/netfilter/ipset/ip_set.h> has the leading _UAPI remove when
+	    dnl - the source code is processed to produce the actual header files.
+	    dnl - Unfortunately libipset provides a copy of the kernel headers, as <libipset/linux_ip_set*.h>,
+	    dnl - but it doesn't remove the _UAPI from the header files when installing them.
+	    dnl - Unfortunately we need to include some libipset header files, which include the
 	    dnl - libipset version, and also <linux/netfilter/xt_set.h> which includes the kernel version.
-	    dnl - We will take the libipset version if there is an inclusion collision.
+	    dnl - To get around this problem, after include one of these we need to define the header guard
+	    dnl - for the other, to stop it being included as well.
+	    dnl - This is reported as a bug against ipset at https://bugzilla.netfilter.org/show_bug.cgi?id=1139
+	    dnl - We will take the kernel version if there is an inclusion collision.
             AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
               #include <linux/netfilter/ipset/ip_set.h>
               #include <libipset/linux_ip_set.h>
@@ -781,8 +813,8 @@ if test .${enable_libiptc} != .no -a .$enable_vrrp != .no; then
 		 #endif
                  int main(void) {}
                  ]])],
-		 [AC_DEFINE([XT_SET_H_ADD_IP_SET_H_GUARD], [1], [Define to add guard _IP_SET_H before including <linux/netfilter/xt_set.h>])],
-	         [AC_DEFINE([XT_SET_H_ADD_UAPI_IP_SET_H_GUARD], [1], [Define to add guard _UAPI_IP_SET_H before including <linux/netfilter/xt_set.h>])])
+	         [AC_DEFINE([LIBIPSET_H_ADD_UAPI_IP_SET_H_GUARD], [1], [Define to add guard _UAPI_IP_SET_H before including <libipset/linux_ip_set.h>])],
+		 [AC_DEFINE([LIBIPSET_H_ADD_IP_SET_H_GUARD], [1], [Define to add guard _IP_SET_H before including <libipset/linux_ip_set.h>])])
 	      ])
           fi
         ])
@@ -802,6 +834,25 @@ AM_CONDITIONAL([LIBIPSET], [test $USE_LIBIPSET = Yes])
 unset LIBS
 
 dnl ----[Check if have linux/if.h and net/if.h namespace collision]----
+# Including <linux/if.h> and <net/if.h> can cause a namespace collision.
+# Later versions of the headers are OK if linux/if.h is included second
+AC_MSG_CHECKING([for linux/if.h and net/if.h namespace collision])
+SAV_CPPFLAGS="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS $kernelinc"
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+    #include <net/if.h>
+    #include <linux/if.h>
+  ]])],
+  [
+    AC_MSG_RESULT([no])
+  ],
+  [
+    AC_MSG_RESULT([yes])
+    AC_DEFINE([_HAVE_NET_LINUX_IF_H_COLLISION_], [ 1 ], [Define to 1 if have linux/if.h followed by net/if.h namespace collision])
+    add_build_opt([NET_LINUX_IF_H_COLLISION])
+  ])
+CPPFLAGS="$SAV_CPPFLAGS"
+
 # Linux 4.5 to 4.5.4 has <libiptc/libiptc.h> indirectly including <net/if.h>
 # and <linux/if.h> which causes a namespace collision.
 AC_MSG_CHECKING([for libiptc/libiptc.h linux/if.h and net/if.h namespace collision])
@@ -815,8 +866,8 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
   ],
   [
     AC_MSG_RESULT([yes])
-    AC_DEFINE([_HAVE_LINUX_NET_IF_H_COLLISION_], [ 1 ], [Define to 1 if have libiptc/libiptc.h linux/if.h and net/if.h namespace collision])
-    add_build_opt([LINUX_NET_IF_H_COLLISION])
+    AC_DEFINE([_HAVE_LIBIPTC_LINUX_NET_IF_H_COLLISION_], [ 1 ], [Define to 1 if have libiptc/libiptc.h linux/if.h and net/if.h namespace collision])
+    add_build_opt([LIBIPTC_LINUX_NET_IF_H_COLLISION])
   ])
 CPPFLAGS="$SAV_CPPFLAGS"
 
@@ -1201,6 +1252,16 @@ dnl -- From glibc 2.14. Otherwise use setns syscall, since Linux 2.4.x
 AC_CHECK_FUNCS([setns])
 CFLAGS="$SAV_CFLAGS"
 AM_CONDITIONAL([WITH_NAMESPACES], [test $ac_cv_have_decl_CLONE_NEWNET = yes])
+
+dnl -- Do we want GNU standard paths (moves .pid files)
+GNU_STD_PATHS=No
+if test "${enable_gnu_std_paths}" = "yes"; then
+  AC_DEFINE([GNU_STD_PATHS], [ 1 ], [set to enforce GNU standard paths, for .pid files etc])
+  PID_DIR=$localstatedir
+else
+  PID_DIR=/var
+fi
+AC_SUBST([PID_DIR])
 
 dnl ---[ check for sphinx-build executable ]----
 if test -z "$SPHINXBUILD"; then

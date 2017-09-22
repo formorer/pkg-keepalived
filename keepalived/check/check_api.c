@@ -42,7 +42,7 @@
 #include "check_dns.h"
 
 /* Global vars */
-static checker_id_t ncheckers = 0;
+static checker_id_t ncheckers;
 list checkers_queue;
 
 /* free checker data */
@@ -80,6 +80,7 @@ dump_conn_opts(void *data)
 void
 queue_checker(void (*free_func) (void *), void (*dump_func) (void *)
 	      , int (*launch) (thread_t *)
+	      , bool (*compare) (void *, void *)
 	      , void *data
 	      , conn_opts_t *co)
 {
@@ -96,6 +97,7 @@ queue_checker(void (*free_func) (void *), void (*dump_func) (void *)
 	checker->free_func = free_func;
 	checker->dump_func = dump_func;
 	checker->launch = launch;
+	checker->compare = compare;
 	checker->vs = vs;
 	checker->rs = rs;
 	checker->data = data;
@@ -115,6 +117,28 @@ queue_checker(void (*free_func) (void *), void (*dump_func) (void *)
 		*id = checker->id;
 		list_add (fc, id);
 	}
+}
+
+bool
+compare_conn_opts(conn_opts_t *a, conn_opts_t *b)
+{
+	if (a == b)
+		return true;
+
+	if (!a || !b)
+		return false;
+	if (!sockstorage_equal(&a->dst, &b->dst))
+		return false;
+	if (!sockstorage_equal(&a->bindto, &b->bindto))
+		return false;
+	if (a->connection_to != b->connection_to)
+		return false;
+#ifdef _WITH_SO_MARK_
+	if (a->fwmark != b->fwmark)
+		return false;
+#endif
+
+	return true;
 }
 
 static void
@@ -218,12 +242,38 @@ void
 init_checkers_queue(void)
 {
 	checkers_queue = alloc_list(free_checker, dump_checker);
+	ncheckers = 0;
+}
+
+/* release the checkers for a virtual server */
+void
+free_vs_checkers(virtual_server_t *vs)
+{
+	element e;
+	element next;
+	checker_t *checker;
+
+	if (LIST_ISEMPTY(checkers_queue))
+		return;
+
+	for (e = LIST_HEAD(checkers_queue); e; e = next) {
+		next = e->next;
+
+		checker = ELEMENT_DATA(e);
+		if (checker->vs != vs)
+			continue;
+
+		free_list_element(checkers_queue, e);
+	}
 }
 
 /* release the checkers_queue */
 void
 free_checkers_queue(void)
 {
+	if (!checkers_queue)
+		return;
+
 	free_list(&checkers_queue);
 	ncheckers = 0;
 }
@@ -238,8 +288,8 @@ register_checkers_thread(void)
 
 	for (e = LIST_HEAD(checkers_queue); e; ELEMENT_NEXT(e)) {
 		checker = ELEMENT_DATA(e);
-		log_message(LOG_INFO, "%sctivating healthchecker for service %s"
-				    , checker->enabled ? "A" : "Dea", FMT_VS(checker->vs));
+		log_message(LOG_INFO, "%sctivating healthchecker for service %s for VS %s"
+				    , checker->enabled ? "A" : "Dea", FMT_RS(checker->rs, checker->vs), FMT_VS(checker->vs));
 		if (checker->launch)
 		{
 			/* wait for a random timeout to begin checker thread.

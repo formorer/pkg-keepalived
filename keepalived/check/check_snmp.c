@@ -148,8 +148,10 @@ enum check_snmp_realserver_magic {
 	CHECK_SNMP_RSRATEINBPSLOW,
 	CHECK_SNMP_RSRATEINBPSHIGH,
 	CHECK_SNMP_RSRATEOUTBPSLOW,
-	CHECK_SNMP_RSRATEOUTBPSHIGH
+	CHECK_SNMP_RSRATEOUTBPSHIGH,
 #endif
+	CHECK_SNMP_RSLOADBALANCINGKIND,
+	CHECK_SNMP_RSVIRTUALHOST
 };
 
 #define STATE_VSGM_FWMARK 1
@@ -446,12 +448,16 @@ check_snmp_virtualserver(struct variable *vp, oid *name, size_t *length,
 			long_ret.u = 9;
 		else if (!strcmp(v->sched, "nq"))
 			long_ret.u = 10;
+		else if (!strcmp(v->sched, "fo"))
+			long_ret.u = 11;
+		else if (!strcmp(v->sched, "ovf"))
+			long_ret.u = 12;
 		else
 			long_ret.u = 99;
 		return (u_char*)&long_ret;
 	case CHECK_SNMP_VSLOADBALANCINGKIND:
 		long_ret.u = 0;
-		switch (v->loadbalancing_kind) {
+		switch (v->forwarding_method) {
 		case IP_VS_CONN_F_MASQ:
 			long_ret.u = 1;
 			break;
@@ -840,6 +846,21 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 	case CHECK_SNMP_RSPORT:
 		long_ret.u = htons(inet_sockaddrport(&be->addr));
 		return (u_char *)&long_ret;
+	case CHECK_SNMP_RSLOADBALANCINGKIND:
+		long_ret.u = 0;
+		switch (be->forwarding_method) {
+		case IP_VS_CONN_F_MASQ:
+			long_ret.u = 1;
+			break;
+		case IP_VS_CONN_F_DROUTE:
+			long_ret.u = 2;
+			break;
+		case IP_VS_CONN_F_TUNNEL:
+			long_ret.u = 3;
+			break;
+		}
+		if (!long_ret.u) break;
+		return (u_char*)&long_ret;
 	case CHECK_SNMP_RSSTATUS:
 		if (btype == STATE_RS_SORRY) break;
 		long_ret.u = be->alive?1:2;
@@ -873,6 +894,10 @@ check_snmp_realserver(struct variable *vp, oid *name, size_t *length,
 		if (!be->notify_down) break;
 		*var_len = strlen(be->notify_down->name);
 		return (u_char*)be->notify_down->name;
+	case CHECK_SNMP_RSVIRTUALHOST:
+		if (!be->virtualhost) break;
+		*var_len = strlen(be->virtualhost);
+		return (u_char*)be->virtualhost;
 	case CHECK_SNMP_RSFAILEDCHECKS:
 		if (btype == STATE_RS_SORRY) break;
 		if (LIST_ISEMPTY(be->failed_checkers))
@@ -1311,6 +1336,10 @@ static struct variable8 check_vars[] = {
 	{CHECK_SNMP_RSRATEOUTBPSHIGH, ASN_UNSIGNED, RONLY,
 	 check_snmp_realserver, 3, {4, 1, 39}},
 #endif
+	{CHECK_SNMP_RSLOADBALANCINGKIND, ASN_UNSIGNED, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 40}},
+	{CHECK_SNMP_RSVIRTUALHOST, ASN_OCTET_STR, RONLY,
+	 check_snmp_realserver, 3, {4, 1, 41}},
 #ifdef _WITH_VRRP_
 	/* LVS sync daemon configuration */
 	{CHECK_SNMP_LVSSYNCDAEMONENABLED, ASN_INTEGER, RONLY,

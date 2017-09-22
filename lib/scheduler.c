@@ -50,7 +50,9 @@
 
 /* global vars */
 thread_master_t *master = NULL;
+#ifndef _DEBUG_
 prog_type_t prog_type;		/* Parent/VRRP/Checker process */
+#endif
 
 #ifdef _WITH_LVS_
 #include "../keepalived/include/check_daemon.h"
@@ -100,7 +102,11 @@ report_child_status(int status, pid_t pid, char const *prog_name)
 			return true;
 		}
 
-		if (exit_status != EXIT_SUCCESS)
+		if (exit_status != EXIT_SUCCESS
+#if defined _WITH_LVS_ && !defined _DEBUG_
+					        && prog_type != PROG_TYPE_CHECKER
+#endif
+										 )
 			log_message(LOG_INFO, "%s exited with status %d", prog_id, exit_status);
 		return false;
 	}
@@ -496,6 +502,9 @@ thread_cancel(thread_t * thread)
 		break;
 	case THREAD_READY:
 	case THREAD_READY_FD:
+	case THREAD_READ_TIMEOUT:
+	case THREAD_WRITE_TIMEOUT:
+	case THREAD_CHILD_TIMEOUT:
 		thread_list_delete(&thread->master->ready, thread);
 		break;
 	default:
@@ -861,10 +870,15 @@ launch_scheduler(void)
 	while (thread_fetch(master, &thread)) {
 		/* Run until error, used for debuging only */
 #ifdef _DEBUG_
-		if (__test_bit(MEM_ERR_DETECT_BIT, &debug) &&
-		    __test_bit(DONT_RELEASE_VRRP_BIT, &debug)) {
+		if (__test_bit(MEM_ERR_DETECT_BIT, &debug)
+#ifdef _WITH_VRRP_
+		    && __test_bit(DONT_RELEASE_VRRP_BIT, &debug)
+#endif
+							        ) {
 			__clear_bit(MEM_ERR_DETECT_BIT, &debug);
+#ifdef _WITH_VRRP_
 			__clear_bit(DONT_RELEASE_VRRP_BIT, &debug);
+#endif
 			thread_add_terminate_event(master);
 		}
 #endif

@@ -151,7 +151,7 @@ and
  # If no names are specified, ipsets will not be used, otherwise any omitted
  # names will be constructed by adding "_if" and/or "6" to previously specified
  # names.
- vrrp_ipset [keepalived [keepalived6 [keepalived_if6]]]
+ vrrp_ipsets [keepalived [keepalived6 [keepalived_if6]]]
 
  # The following enables checking that when in unicast mode, the source
  # address of a VRRP packet is one of our unicast peers.
@@ -198,6 +198,32 @@ and
  script_user username [groupname] # If groupname is not specified, it defaults to the user's group
  enable_script_security       # Don't run scripts configured to be run as root if any part of the path
                               #   is writable by a non-root user.
+
+ # Rather than using notify scripts, specifying a fifo allows more efficient processing of notify events, and guarantees that they will be delivered in the correct sequence.
+ # NOTE: the FIFO names must all be different
+ notify_fifo FIFO_NAME        # FIFO to write notify events to
+                              # See vrrp_notify_fifo and lvs_notify_fifo for format of output
+                              # For further details, see the description under vrrp_sync_group see 
+                              # doc/samples/sample_notify_fifo.sh for sample usage.
+ notify_fifo_script STRING [username [groupname]]
+                              # script to be run by keepalived to process notify events
+                              # The FIFO name will be passed to the script as the last parameter
+ vrrp_notify_fifo FIFO_NAME   # FIFO to write vrrp notify events to
+                              # The string written will be a line of the form: INSTANCE "VI_1" MASTER 100
+                              # and will be terminated with a new line character.
+                              # For further details of the output, see the description under vrrp_sync_group
+                              # and doc/samples/sample_notify_fifo.sh for sample usage.
+ vrrp_notify_fifo_script STRING [username [groupname]]
+                              # script to be run by keepalived to process vrrp notify events
+                              # The FIFO name will be passed to the script as the last parameter
+ lvs_notify_fifo FIFO_NAME    # FIFO to write notify healthchecker events to
+                              # The string written will be a line of the form:
+                              #   VS [192.168.201.15]:tcp:80 {UP|DOWN}
+                              #   RS [1.2.3.4]:tcp:80 [192.168.201.15]:tcp:80 {UP|DOWN}
+                              # and will be terminated with a new line character.
+ lvs_notify_fifo_script STRING [username [groupname]]
+                              # script to be run by keepalived to process healthchecher notify events
+                              # The FIFO name will be passed to the script as the last parameter
  }
 
  # For running keepalived in a separate network namespace
@@ -233,6 +259,7 @@ is specified, it defaults to default_interface (default eth0).
 .PP
  static_ipaddress
  {
+ <IPADDR>[/<MASK>] [brd <IPADDR>] [dev <STRING>] [scope <SCOPE>] [label <LABEL>] [home] [-nodad] [mngtmpaddr] [noprefixroute] [autojoin]
  192.168.1.1/24 dev eth0 scope global
  ...
  }
@@ -314,8 +341,8 @@ and
     # arguments
     # $1 = "GROUP"|"INSTANCE"
     # $2 = name of the group or instance
-    # $3 = target state of transition
-    #     ("MASTER"|"BACKUP"|"FAULT")
+    # $3 = target state of transition (stop only applies to instances)
+    #     ("MASTER"|"BACKUP"|"FAULT"|"STOP")
     # $4 = priority value
     notify /path/notify.sh [username [groupname]]
 
@@ -376,13 +403,20 @@ which will transition together on any state change.
     interface eth0
 
     # Use VRRP Virtual MAC.
+    # \fBNOTE\fR: If sysctl net.ipv4.conf.all.rp_filter is set,
+    # and this vrrp_instance is an IPv4 instance, using
+    # this option will cause the individual interfaces to be
+    # updated to the greater of their current setting, and
+    # all.rp_filter, as will default.rp_filter, and all.rp_filter
+    # will be set to 0.
+    # The original settings are restored on termination.
     use_vmac [<VMAC_INTERFACE>]
 
     # Send/Recv VRRP messages from base interface instead of
     # VMAC interface
     vmac_xmit_base
 
-    native_ipv6         # force instance to use IPv6 (when mixed IPv4 and IPv6 config).
+    native_ipv6         # force instance to use IPv6 (this option is deprecated since the virtual ip addresses determine whether IPv4 or IPv6 is used).
 
     # Ignore VRRP interface faults (default unset)
     dont_track_primary
@@ -468,7 +502,7 @@ which will transition together on any state change.
     #With the same entries on other machines,
     #the opposite transition will be occurring.
     virtual_ipaddress {
-        <IPADDR>/<MASK> brd <IPADDR> dev <STRING> scope <SCOPE> label <LABEL>
+	<IPADDR>[/<MASK>] [brd <IPADDR>] [dev <STRING>] [scope <SCOPE>] [label <LABEL>] [home] [-nodad] [mngtmpaddr] [noprefixroute] [autojoin]
         192.168.200.17/24 dev eth1
         192.168.200.18/24 dev eth2 label eth2:1
     }
@@ -485,8 +519,8 @@ which will transition together on any state change.
     # addresses in virtual_ipaddress must be of the
     # same family.
     virtual_ipaddress_excluded {
-     <IPADDR>/<MASK> brd <IPADDR> dev <STRING> scope <SCOPE>
-     <IPADDR>/<MASK> brd <IPADDR> dev <STRING> scope <SCOPE>
+	<IPADDR>[/<MASK>] [brd <IPADDR>] [dev <STRING>] [scope <SCOPE>] [label <LABEL>] [home] [-nodad] [mngtmpaddr] [noprefixroute] [autojoin]
+        <IPADDR>[/<MASK>] ...
         ...
     }
 
@@ -625,7 +659,7 @@ A virtual_server can be a declaration of one of
     delay_loop <INT>
 
     # LVS scheduler
-    lb_algo rr|wrr|lc|wlc|lblc|sh|dh
+    lb_algo rr|wrr|lc|wlc|lblc|sh|dh|fo|ovf|lblcr|sed|nq
     
     # Enable hashed entry
     hashed
@@ -641,7 +675,7 @@ A virtual_server can be a declaration of one of
     sh-fallback
     # Enable One-Packet-Scheduling for UDP (-O in ipvsadm)
     ops
-    # LVS forwarding method
+    # Default LVS forwarding method
     lb_kind NAT|DR|TUN
     # LVS persistence engine name
     persistence_engine <STRING>
@@ -658,8 +692,9 @@ A virtual_server can be a declaration of one of
     lvs_sched   # synonym for lb_algo
     lvs_method  # synonym for lb_kind
 
-    # VirtualHost string for HTTP_GET or SSL_GET
+    # Default VirtualHost string for HTTP_GET or SSL_GET
     # eg virtualhost www.firewall.loc
+    # Overridden by virtualhost config of real server or checker
     virtualhost <STRING>
 
     # On daemon startup assume that all RSs are down
@@ -700,24 +735,33 @@ A virtual_server can be a declaration of one of
     # applies inhibit_on_failure behaviour to the
     # preceding sorry_server directive
     sorry_server_inhibit
+    # Sorry server LVS forwarding method
+    sorry_server_lvs_method NAT|DR|TUN
 
     # one entry for each realserver
     real_server <IPADDR> <PORT>
        {
            # relative weight to use, default: 1
            weight <INT>
+           # LVS forwarding method
+           lvs_method NAT|DR|TUN
            # Set weight to 0 when healthchecker detects failure
            inhibit_on_failure
 
            # Script to execute when healthchecker
            # considers service as up.
-           notify_up <STRING>|<QUOTED-STRING>
+           notify_up <STRING>|<QUOTED-STRING> [username [groupname]]
            # Script to execute when healthchecker
            # considers service as down.
-           notify_down <STRING>|<QUOTED-STRING>
+           notify_down <STRING>|<QUOTED-STRING> [username [groupname]]
 
            uthreshold <INTEGER> # maximum number of connections to server
            lthreshold <INTEGER> # minimum number of connections to server
+
+           # Default VirtualHost string for HTTP_GET or SSL_GET
+           # eg virtualhost www.firewall.loc
+           # Overridden by virtualhost config of a checker
+           virtualhost <STRING>
 
            # pick one healthchecker
            # HTTP_GET|SSL_GET|TCP_CHECK|SMTP_CHECK|DNS_CHECK|MISC_CHECK
@@ -738,11 +782,18 @@ A virtual_server can be a declaration of one of
                  # status code returned in the HTTP header
                  # eg status_code 200. Default is any 2xx value
                  status_code <INT>
+                 # VirtualHost string. eg virtualhost www.firewall.loc
+                 # If not set, uses virtualhost from checker or real
+                 # or virtual server
+                 virtualhost <STRING>
                }
                # number of get retries
                nb_get_retry <INT>
                # delay before retry
                delay_before_retry <INT>
+               # VirtualHost string. eg virtualhost www.firewall.loc
+               # If not set, uses virtualhost from real or virtual server
+               virtualhost <STRING>
 
                # ======== generic connection options
                # Optional IP address to connect to.

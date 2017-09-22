@@ -90,8 +90,9 @@ vscript_print(FILE *file, void *data)
 	fprintf(file, "   Interval = %lu sec\n", vscript->interval / TIMER_HZ);
 	fprintf(file, "   Weight = %d\n", vscript->weight);
 	fprintf(file, "   Rise = %d\n", vscript->rise);
-	fprintf(file, "   Full = %d\n", vscript->fall);
+	fprintf(file, "   Fall = %d\n", vscript->fall);
 	fprintf(file, "   Insecure = %s\n", vscript->insecure ? "yes" : "no");
+	fprintf(file, "   uid:gid = %d:%d\n", vscript->uid, vscript->gid);
 
 	switch (vscript->result) {
 	case VRRP_SCRIPT_STATUS_INIT:
@@ -217,7 +218,7 @@ if_print(FILE *file, void * data)
 	if (IF_MII_SUPPORTED(ifp))
 		fprintf(file, " NIC support MII regs\n");
 	else if (IF_ETHTOOL_SUPPORTED(ifp))
-		fprintf(file, " NIC support EHTTOOL GLINK interface\n");
+		fprintf(file, " NIC support ETHTOOL GLINK interface\n");
 	else
 		fprintf(file, " Enabling NIC ioctl refresh polling\n");
 }
