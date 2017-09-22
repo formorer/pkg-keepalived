@@ -12,7 +12,6 @@ KillMode=process
 EnvironmentFile=-/etc/default/keepalived
 ExecStart=/usr/sbin/keepalived $DAEMON_ARGS
 ExecReload=/bin/kill -HUP $MAINPID
-PIDFile=/var/run/keepalived.pid"
 
 [Install]
 WantedBy=multi-user.target
