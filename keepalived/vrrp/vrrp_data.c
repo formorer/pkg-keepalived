@@ -160,8 +160,7 @@ dump_vscript(void *data)
 		str = (vscript->result >= vscript->rise) ? "GOOD" : "BAD";
 	}
 	log_message(LOG_INFO, "   Status = %s", str);
-	if (vscript->uid || vscript->gid)
-		log_message(LOG_INFO, "   Script uid:gid = %d:%d", vscript->uid, vscript->gid);
+	log_message(LOG_INFO, "   Script uid:gid = %d:%d", vscript->uid, vscript->gid);
 
 }
 
@@ -425,6 +424,7 @@ alloc_vrrp(char *iname)
 	new->garp_lower_prio_delay = PARAMETER_UNSET;
 	new->garp_lower_prio_rep = PARAMETER_UNSET;
 	new->lower_prio_no_advert = PARAMETER_UNSET;
+	new->higher_prio_send_advert = PARAMETER_UNSET;
 
 	new->skip_check_adv_addr = global_data->vrrp_skip_check_adv_addr;
 	new->strict_mode = PARAMETER_UNSET;
@@ -483,7 +483,7 @@ alloc_vrrp_track_script(vector_t *strvec)
 
 	if (!LIST_EXISTS(vrrp->track_script))
 		vrrp->track_script = alloc_list(NULL, dump_track_script);
-	alloc_track_script(vrrp->track_script, strvec);
+	alloc_track_script(vrrp->track_script, strvec, vrrp->iname);
 }
 
 void

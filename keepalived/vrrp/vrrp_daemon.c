@@ -85,6 +85,14 @@ vrrp_ipvs_needed(void)
 }
 #endif
 
+static int
+vrrp_notify_fifo_script_exit(__attribute__((unused)) thread_t *thread)
+{
+	log_message(LOG_INFO, "vrrp notify fifo script terminated");
+
+	return 0;
+}
+
 /* Daemon stop sequence */
 static void
 stop_vrrp(int status)
@@ -148,6 +156,9 @@ stop_vrrp(int status)
 		dbus_stop();
 #endif
 
+	if (global_data->vrrp_notify_fifo.fd != -1)
+		notify_fifo_close(&global_data->notify_fifo, &global_data->vrrp_notify_fifo);
+
 	free_global_data(global_data);
 	free_vrrp_data(vrrp_data);
 	free_vrrp_buffer();
@@ -201,8 +212,6 @@ start_vrrp(void)
 
 	if (global_data->vrrp_no_swap)
 		set_process_dont_swap(4096);	/* guess a stack size to reserve */
-
-	iptables_init();
 
 #ifdef _WITH_SNMP_
 	if (!reload && (global_data->enable_snmp_keepalived || global_data->enable_snmp_rfcv2 || global_data->enable_snmp_rfcv3)) {
@@ -266,9 +275,24 @@ start_vrrp(void)
 		return;
 	}
 
+	/* We need to delay the init of iptables to after vrrp_complete_init()
+	 * has been called so we know whether we want IPv4 and/or IPv6 */
+	iptables_init();
+
+	/* Create a notify FIFO if needed, and open it */
+	if (global_data->vrrp_notify_fifo.name)
+		notify_fifo_open(&global_data->notify_fifo, &global_data->vrrp_notify_fifo, vrrp_notify_fifo_script_exit, "vrrp_");
+
+	/* Make sure we don't have any old iptables/ipsets settings left around */
 #ifdef _HAVE_LIBIPTC_
+	if (!reload)
+		iptables_cleanup();
+
 	iptables_startup(reload);
 #endif
+
+	if (!reload)
+		vrrp_restore_interfaces_startup();
 
 	/* clear_diff_vrrp must be called after vrrp_complete_init, since the latter
 	 * sets ifa_index on the addresses, which is used for the address comparison */
@@ -377,6 +401,9 @@ reload_vrrp_thread(__attribute__((unused)) thread_t * thread)
 										 IPVS_BACKUP,
 		       true, false);
 #endif
+
+	/* Remove the notify fifo - we don't know if it will be the same after a reload */
+	notify_fifo_close(&global_data->notify_fifo, &global_data->vrrp_notify_fifo);
 
 	free_global_data(global_data);
 	free_vrrp_buffer();

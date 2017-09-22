@@ -46,6 +46,14 @@ typedef struct _notify_script {
 	bool	executable;	/* script is executable for uid:gid */
 } notify_script_t;
 
+/* notify_fifo details */
+typedef struct _notify_fifo {
+	char	*name;
+	int 	fd;
+	bool	created_fifo;	/* We created the FIFO */
+	notify_script_t *script; /* Script to run to process FIFO */
+} notify_fifo_t;
+
 static inline void
 free_notify_script(notify_script_t **script)
 {
@@ -56,15 +64,19 @@ free_notify_script(notify_script_t **script)
 }
 
 /* Global variables */
-extern size_t getpwnam_buf_len;		/* Buffer length needed for getpwnam_r/getgrnam_r */
+extern uid_t default_script_uid;        /* Default user/group for script execution */
+extern gid_t default_script_gid;
 
 /* prototypes */
-extern int system_call_script(thread_master_t *, int (*) (thread_t *), void *, unsigned long, const char*, uid_t, gid_t);
+extern void notify_fifo_open(notify_fifo_t*, notify_fifo_t*, int (*)(thread_t *), const char *);
+extern void notify_fifo_close(notify_fifo_t*, notify_fifo_t*);
+extern int system_call_script(thread_master_t *, int (*)(thread_t *), void *, unsigned long, const char*, uid_t, gid_t);
+extern pid_t notify_fifo_exec(thread_master_t *, int (*func) (thread_t *), void *, const notify_script_t *, const char *);
 extern int notify_exec(const notify_script_t *);
 extern void script_killall(thread_master_t *, int);
 extern int check_script_secure(notify_script_t *, bool, bool);
 extern int check_notify_script_secure(notify_script_t **, bool, bool);
-extern void set_default_script_user(uid_t *, gid_t *);
-extern notify_script_t* notify_script_init(vector_t *, uid_t, gid_t);
+extern bool set_default_script_user(const char *, const char *, bool);
+extern notify_script_t* notify_script_init(vector_t *, const char *, bool);
 
 #endif

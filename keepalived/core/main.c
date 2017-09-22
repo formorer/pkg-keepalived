@@ -80,9 +80,8 @@ const char *snmp_socket;				/* Socket to use for SNMP agent */
 #endif
 static char *syslog_ident;				/* syslog ident if not default */
 char *instance_name;					/* keepalived instance name */
-bool use_pid_dir;					/* Put pid files in /var/run/keepalived */
-uid_t default_script_uid;				/* Default user/group for script execution */
-gid_t default_script_gid;
+bool use_pid_dir;					/* Put pid files in /var/run/keepalived or @localstatedir@/run/keepalived */
+
 unsigned os_major;					/* Kernel version */
 unsigned os_minor;
 unsigned os_release;
@@ -119,6 +118,9 @@ free_parent_mallocs_startup(bool am_child)
 #else
 		free(syslog_ident);
 #endif
+
+		if (orig_core_dump_pattern)
+			FREE_PTR(orig_core_dump_pattern);
 	}
 
 	if (free_main_pidfile) {
@@ -558,7 +560,7 @@ usage(const char *prog)
 #ifdef _MEM_CHECK_LOG_
 	fprintf(stderr, "  -L, --mem-check-log          Log malloc/frees to syslog\n");
 #endif
-	fprintf(stderr, "  -i, --config_id id           Skip any configuration lines beginning '@' that don't match id\n");
+	fprintf(stderr, "  -i, --config-id id           Skip any configuration lines beginning '@' that don't match id\n");
 	fprintf(stderr, "  -v, --version                Display the version number\n");
 	fprintf(stderr, "  -h, --help                   Display this help message\n");
 }
@@ -725,6 +727,7 @@ parse_cmdline(int argc, char **argv)
 			set_core_dump_pattern = true;
 			if (optarg && optarg[0])
 				core_dump_pattern = optarg;
+			/* ... falls through ... */
 		case 'm':
 			create_core_dump = true;
 			break;
@@ -765,13 +768,14 @@ keepalived_main(int argc, char **argv)
 	bool report_stopped = true;
 	struct utsname uname_buf;
 	char *end;
-	long buf_len;
 
 	/* Init debugging level */
 	debug = 0;
 
 	/* We are the parent process */
+#ifndef _DEBUG_
 	prog_type = PROG_TYPE_PARENT;
+#endif
 
 	/* Initialise pointer to child finding function */
 	set_child_finder(find_keepalived_child);
@@ -813,17 +817,6 @@ keepalived_main(int argc, char **argv)
 	core_dump_init();
 
 	netlink_set_recv_buf_size();
-
-	set_default_script_user(&default_script_uid, &default_script_gid);
-
-	/* Get buffer length needed for getpwnam_r/getgrnam_r */
-	if ((buf_len = sysconf(_SC_GETPW_R_SIZE_MAX)) == -1)
-		getpwnam_buf_len = 1024;	/* A safe default if no value is returned */
-	else
-		getpwnam_buf_len = (size_t)buf_len;
-	if ((buf_len = sysconf(_SC_GETGR_R_SIZE_MAX)) != -1 &&
-	    (size_t)buf_len > getpwnam_buf_len)
-		getpwnam_buf_len = (size_t)buf_len;
 
 	/* Some functionality depends on kernel version, so get the version here */
 	if (uname(&uname_buf))

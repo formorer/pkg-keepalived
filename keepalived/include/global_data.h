@@ -36,7 +36,7 @@
 #endif
 
 #ifdef _HAVE_LIBIPSET_
-#include <libipset/linux_ip_set.h>
+#include <linux/netfilter/ipset/ip_set.h>
 #endif
 
 /* local includes */
@@ -48,6 +48,7 @@
 #ifdef _WITH_LVS_
 #include "ipvswrapper.h"
 #endif
+#include "notify.h"
 
 #ifndef _HAVE_LIBIPTC_
 #define	XT_EXTENSION_MAXNAMELEN		29
@@ -99,8 +100,6 @@ typedef struct _data {
 	int				vrrp_version;	/* VRRP version (2 or 3) */
 	char				vrrp_iptables_inchain[XT_EXTENSION_MAXNAMELEN];
 	char				vrrp_iptables_outchain[XT_EXTENSION_MAXNAMELEN];
-	bool				block_ipv4;
-	bool				block_ipv6;
 #ifdef _HAVE_LIBIPSET_
 	bool				using_ipsets;
 	char				vrrp_ipset_address[IPSET_MAXNAMELEN];
@@ -116,6 +115,13 @@ typedef struct _data {
 #ifdef _WITH_LVS_
 	char				checker_process_priority;
 	bool				checker_no_swap;
+#endif
+	notify_fifo_t			notify_fifo;
+#ifdef _WITH_VRRP_
+	notify_fifo_t			vrrp_notify_fifo;
+#endif
+#ifdef _WITH_LVS_
+	notify_fifo_t			lvs_notify_fifo;
 #endif
 #ifdef _WITH_SNMP_
 	bool				enable_traps;

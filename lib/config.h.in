@@ -14,6 +14,9 @@
 /* Defined here if not found in <net/ethernet.h>. */
 #undef ETHERTYPE_IPV6
 
+/* set to enforce GNU standard paths, for .pid files etc */
+#undef GNU_STD_PATHS
+
 /* Define to 1 if you have the <arpa/inet.h> header file. */
 #undef HAVE_ARPA_INET_H
 
@@ -47,6 +50,10 @@
 /* Define to 1 if you have the declaration of `FRA_UID_RANGE', and to 0 if you
    don't. */
 #undef HAVE_DECL_FRA_UID_RANGE
+
+/* Define to 1 if you have the declaration of `IFA_FLAGS', and to 0 if you
+   don't. */
+#undef HAVE_DECL_IFA_FLAGS
 
 /* Define to 1 if you have the declaration of `IFLA_INET6_ADDR_GEN_MODE', and
    to 0 if you don't. */
@@ -445,6 +452,13 @@
 /* Define the ipset library name */
 #undef IPSET_LIB_NAME
 
+/* Define to add guard _IP_SET_H before including <libipset/linux_ip_set.h> */
+#undef LIBIPSET_H_ADD_IP_SET_H_GUARD
+
+/* Define to add guard _UAPI_IP_SET_H before including
+   <libipset/linux_ip_set.h> */
+#undef LIBIPSET_H_ADD_UAPI_IP_SET_H_GUARD
+
 /* Define to 1 if libipvs can use netlink */
 #undef LIBIPVS_USE_NL
 
@@ -496,14 +510,6 @@
 /* Define if <linux/netfilter/x_tables.h> doesnt define it */
 #undef XT_EXTENSION_MAXNAMELEN
 
-/* Define to add guard _IP_SET_H before including <linux/netfilter/xt_set.h>
-   */
-#undef XT_SET_H_ADD_IP_SET_H_GUARD
-
-/* Define to add guard _UAPI_IP_SET_H before including
-   <linux/netfilter/xt_set.h> */
-#undef XT_SET_H_ADD_UAPI_IP_SET_H_GUARD
-
 /* Define to 1 if <linux/netfilter/xt_set.h> needs <libipset/linux_ip_set.h>
    */
 #undef XT_SET_H_NEEDS_LINUX_IP_SET_H
@@ -529,15 +535,18 @@
 /* Define to 1 if have iptables libraries */
 #undef _HAVE_LIBIPTC_
 
+/* Define to 1 if have libiptc/libiptc.h linux/if.h and net/if.h namespace
+   collision */
+#undef _HAVE_LIBIPTC_LINUX_NET_IF_H_COLLISION_
+
 /* Define to 1 if using libnl-1 */
 #undef _HAVE_LIBNL1_
 
 /* Define to 1 if using libnl-3 */
 #undef _HAVE_LIBNL3_
 
-/* Define to 1 if have libiptc/libiptc.h linux/if.h and net/if.h namespace
-   collision */
-#undef _HAVE_LINUX_NET_IF_H_COLLISION_
+/* Define to 1 if have linux/if.h followed by net/if.h namespace collision */
+#undef _HAVE_NET_LINUX_IF_H_COLLISION_
 
 /* Define to 1 if have pe selection support */
 #undef _HAVE_PE_NAME_

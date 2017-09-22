@@ -55,6 +55,15 @@ bool using_ha_suspend;
 /* local variables */
 static char *check_syslog_ident;
 
+static int
+lvs_notify_fifo_script_exit(__attribute__((unused)) thread_t *thread)
+{
+        log_message(LOG_INFO, "lvs notify fifo script terminated");
+ 
+        return 0;
+}
+
+
 /* Daemon stop sequence */
 static void
 stop_check(int status)
@@ -65,6 +74,9 @@ stop_check(int status)
 	/* Terminate all script process */
 	script_killall(master, SIGTERM);
 
+        /* Remove the notify fifo */
+        notify_fifo_close(&global_data->notify_fifo, &global_data->lvs_notify_fifo);
+
 	/* Destroy master thread */
 	signal_handler_destroy();
 	thread_destroy_master(master);
@@ -74,7 +86,7 @@ stop_check(int status)
 		clear_services();
 	ipvs_stop();
 #ifdef _WITH_SNMP_CHECKER_
-	if (global_data->enable_snmp_checker)
+	if (global_data && global_data->enable_snmp_checker)
 		check_snmp_agent_close();
 #endif
 
@@ -82,8 +94,10 @@ stop_check(int status)
 	pidfile_rm(checkers_pidfile);
 
 	/* Clean data */
-	free_global_data(global_data);
-	free_check_data(check_data);
+	if (global_data)
+		free_global_data(global_data);
+	if (check_data)
+		free_check_data(check_data);
 	free_parent_mallocs_exit();
 
 	/*
@@ -106,14 +120,8 @@ stop_check(int status)
 
 /* Daemon init sequence */
 static void
-start_check(void)
+start_check(list old_checkers_queue)
 {
-	/* Initialize sub-system */
-	if (ipvs_start() != IPVS_SUCCESS) {
-		stop_check(KEEPALIVED_EXIT_FATAL);
-		return;
-	}
-
 	init_checkers_queue();
 
 	/* Parse configuration file */
@@ -143,6 +151,17 @@ start_check(void)
 	log_message(LOG_INFO, "Configuration is using : %zu Bytes", mem_allocated);
 #endif
 
+	/* Initialize sub-system if any virtual servers are configured */
+	if ((!LIST_ISEMPTY(check_data->vs) || (reload && !LIST_ISEMPTY(old_check_data->vs))) &&
+	    ipvs_start() != IPVS_SUCCESS) {
+		stop_check(KEEPALIVED_EXIT_FATAL);
+		return;
+	}
+
+        /* Create a notify FIFO if needed, and open it */
+        if (global_data->lvs_notify_fifo.name)
+                notify_fifo_open(&global_data->notify_fifo, &global_data->lvs_notify_fifo, lvs_notify_fifo_script_exit, "lvs_");
+
 	/* Get current active addresses, and start update process */
 	if (using_ha_suspend || __test_bit(LOG_ADDRESS_CHANGES, &debug))
 		kernel_netlink_init();
@@ -169,7 +188,7 @@ start_check(void)
 
 	/* Processing differential configuration parsing */
 	if (reload)
-		clear_diff_services();
+		clear_diff_services(old_checkers_queue);
 
 	/* Initialize IPVS topology */
 	if (!init_services())
@@ -217,6 +236,8 @@ check_signal_init(void)
 static int
 reload_check_thread(__attribute__((unused)) thread_t * thread)
 {
+	list old_checkers_queue;
+
 	/* set the reloading flag */
 	SET_RELOAD;
 
@@ -225,13 +246,19 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)
 	/* Terminate all script process */
 	script_killall(master, SIGTERM);
 
+        /* Remove the notify fifo - we don't know if it will be the same after a reload */
+        notify_fifo_close(&global_data->notify_fifo, &global_data->lvs_notify_fifo);
+
 	/* Destroy master thread */
 	if (using_ha_suspend)
 		kernel_netlink_close();
 	thread_cleanup_master(master);
 	free_global_data(global_data);
 
-	free_checkers_queue();
+	/* Save previous checker data */
+	old_checkers_queue = checkers_queue;
+	checkers_queue = NULL;
+
 	free_ssl();
 	ipvs_stop();
 
@@ -240,10 +267,11 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)
 	check_data = NULL;
 
 	/* Reload the conf */
-	start_check();
+	start_check(old_checkers_queue);
 
 	/* free backup data */
 	free_check_data(old_check_data);
+	free_list(&old_checkers_queue);
 	UNSET_RELOAD;
 
 	return 0;
@@ -348,7 +376,7 @@ start_check_child(void)
 	check_signal_init();
 
 	/* Start Healthcheck daemon */
-	start_check();
+	start_check(NULL);
 
 	/* Launch the scheduling I/O multiplexer */
 	launch_scheduler();

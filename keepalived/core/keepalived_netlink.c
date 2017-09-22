@@ -39,6 +39,9 @@
 #include <stdint.h>
 
 /* local include */
+#ifdef _LIBNL_DYNAMIC_
+#include "libnl_link.h"
+#endif
 #ifdef _WITH_LVS_
 #include "check_api.h"
 #endif
@@ -53,9 +56,6 @@
 #include "bitops.h"
 #if !HAVE_DECL_SOCK_NONBLOCK
 #include "old_socket.h"
-#endif
-#ifdef _LIBNL_DYNAMIC_
-#include "libnl_link.h"
 #endif
 
 /* Default values */
@@ -157,7 +157,7 @@ netlink_socket(nl_handle_t *nl, int flags, int group, ...)
 	}
 #endif
 #if !defined _HAVE_LIBNL3_ || defined _LIBNL_DYNAMIC_
-#if defined _HAVE_LIBNL3 && defined _LIBNL_DYNAMIC_
+#if defined _HAVE_LIBNL3_ && defined _LIBNL_DYNAMIC_
 	else
 #endif
 	{
@@ -251,9 +251,12 @@ netlink_socket(nl_handle_t *nl, int flags, int group, ...)
 }
 
 /* Close a netlink socket */
-static int
+static void
 netlink_close(nl_handle_t *nl)
 {
+	if (!nl)
+		return;
+
 	/* First of all release pending thread */
 	thread_cancel(nl->thread);
 
@@ -264,13 +267,11 @@ netlink_close(nl_handle_t *nl)
 		nl_socket_free(nl->sk);
 #endif
 #if !defined _HAVE_LIBNL3_ || defined _LIBNL_DYNAMIC_
-#if defined _HAVE_LIBNL3 && defined _LIBNL_DYNAMIC_
+#if defined _HAVE_LIBNL3_ && defined _LIBNL_DYNAMIC_
 	else
 #endif
 		close(nl->fd);
 #endif
-
-	return 0;
 }
 
 #ifdef _WITH_VRRP_
@@ -315,7 +316,7 @@ netlink_set_nonblock(nl_handle_t *nl,
 	}
 #endif
 #if !defined _HAVE_LIBNL3_ || defined _LIBNL_DYNAMIC_
-#if defined _HAVE_LIBNL3 && defined _LIBNL_DYNAMIC_
+#if defined _HAVE_LIBNL3_ && defined _LIBNL_DYNAMIC_
 	else
 #endif
 	{
@@ -562,7 +563,10 @@ netlink_if_address_filter(__attribute__((unused)) struct sockaddr_nl *snl, struc
 		return -1;
 
 #ifdef _WITH_VRRP_
-	if (prog_type == PROG_TYPE_VRRP) {
+#ifndef _DEBUG_
+	if (prog_type == PROG_TYPE_VRRP)
+#endif
+	{
 		/* Fetch interface_t */
 		ifp = if_get_by_ifindex(ifa->ifa_index);
 		if (!ifp)
@@ -580,7 +584,9 @@ netlink_if_address_filter(__attribute__((unused)) struct sockaddr_nl *snl, struc
 #endif
 
 #ifdef _WITH_LVS_
+#ifndef _DEBUG_
 	if (prog_type == PROG_TYPE_CHECKER)
+#endif
 	{
 		/* Refresh checkers state */
 		update_checker_activity(ifa->ifa_family, addr,
@@ -700,7 +706,11 @@ netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
 
 #ifdef _WITH_VRRP_
 			/* Skip unsolicited messages from cmd channel */
-			if (prog_type == PROG_TYPE_VRRP && nl != &nl_cmd && h->nlmsg_pid == nl_cmd.nl_pid)
+			if (
+#ifndef _DEBUG_
+			    prog_type == PROG_TYPE_VRRP &&
+#endif
+			    nl != &nl_cmd && h->nlmsg_pid == nl_cmd.nl_pid)
 				continue;
 #endif
 
@@ -896,6 +906,8 @@ netlink_if_link_populate(interface_t *ifp, struct rtattr *tb[], struct ifinfomsg
 		if ((ifp_base = if_get_by_ifindex(ifp->base_ifindex)))
 			ifp->flags = ifp_base->flags;
 	}
+
+	ifp->rp_filter = -1;	/* We have not read it yet */
 #else
 	ifp->flags = ifi->ifi_flags;
 #endif
@@ -929,10 +941,6 @@ netlink_if_link_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct n
 	if (tb[IFLA_IFNAME] == NULL)
 		return -1;
 	name = (char *) RTA_DATA(tb[IFLA_IFNAME]);
-
-	/* Return if loopback */
-	if (ifi->ifi_type == ARPHRD_LOOPBACK)
-		return 0;
 
 	/* Skip it if already exist */
 	ifp = if_get_by_ifname(name);
@@ -1039,10 +1047,6 @@ netlink_reflect_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct n
 	if (tb[IFLA_IFNAME] == NULL)
 		return -1;
 
-	/* ignore loopback device */
-	if (ifi->ifi_type == ARPHRD_LOOPBACK)
-		return 0;
-
 	/* find the interface_t. If the interface doesn't exist in the interface
 	 * list and this is a new interface add it to the interface list.
 	 * If an interface with the same name exists overwrite the older
@@ -1144,6 +1148,13 @@ kernel_netlink_init(void)
 	 * subscribtion. We subscribe to LINK and ADDR
 	 * netlink broadcast messages.
 	 */
+#ifdef _DEBUG_
+#ifdef _WITH_VRRP_
+	netlink_socket(&nl_kernel, SOCK_NONBLOCK, RTNLGRP_LINK, RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR, 0);
+#else
+	netlink_socket(&nl_kernel, SOCK_NONBLOCK, RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR, 0);
+#endif
+#else
 #ifdef _WITH_VRRP_
 	if (prog_type == PROG_TYPE_VRRP)
 		netlink_socket(&nl_kernel, SOCK_NONBLOCK, RTNLGRP_LINK, RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR, 0);
@@ -1151,6 +1162,7 @@ kernel_netlink_init(void)
 #ifdef _WITH_LVS_
 	if (prog_type == PROG_TYPE_CHECKER)
 		netlink_socket(&nl_kernel, SOCK_NONBLOCK, RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR, 0);
+#endif
 #endif
 
 	if (nl_kernel.fd > 0) {
@@ -1161,7 +1173,10 @@ kernel_netlink_init(void)
 		log_message(LOG_INFO, "Error while registering Kernel netlink reflector channel");
 
 #ifdef _WITH_VRRP_
-	if (prog_type == PROG_TYPE_VRRP) {
+#ifndef _DEBUG_
+	if (prog_type == PROG_TYPE_VRRP)
+#endif
+	{
 		/* Prepare netlink command channel. */
 		netlink_socket(&nl_cmd, SOCK_NONBLOCK, 0);
 		if (nl_cmd.fd > 0)
@@ -1177,7 +1192,9 @@ kernel_netlink_close(void)
 {
 	netlink_close(&nl_kernel);
 #ifdef _WITH_VRRP_
+#ifndef _DEBUG_
 	if (prog_type == PROG_TYPE_VRRP)
+#endif
 		netlink_close(&nl_cmd);
 #endif
 }

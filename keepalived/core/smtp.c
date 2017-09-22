@@ -36,6 +36,9 @@
 #if !HAVE_DECL_SOCK_CLOEXEC
 #include "old_socket.h"
 #endif
+#ifdef _WITH_LVS_
+#include "check_api.h"
+#endif
 
 /* SMTP FSM definition */
 static int connection_error(thread_t *);
@@ -605,17 +608,15 @@ smtp_connect(smtp_t * smtp)
 void
 smtp_alert(
 #ifndef _WITH_LVS_
-	   __attribute__((unused))
+	   __attribute__((unused)) void *dummy1,
+#else
+	   checker_t* checker,
 #endif
-	   real_server_t * rs,
 #ifndef _WITH_VRRP_
-	   __attribute__((unused))
+	   __attribute__((unused)) void *dummy2, __attribute__((unused)) void *dummy3,
+#else
+	   vrrp_t * vrrp, vrrp_sgroup_t * vgroup,
 #endif
-	   vrrp_t * vrrp,
-#ifndef _WITH_VRRP_
-	   __attribute__((unused))
-#endif
-	   vrrp_sgroup_t * vgroup,
 	   const char *subject, const char *body)
 {
 	smtp_t *smtp;
@@ -631,11 +632,11 @@ smtp_alert(
 
 		/* format subject if rserver is specified */
 #ifdef _WITH_LVS_
-		if (rs) {
-			snprintf(smtp->subject, MAX_HEADERS_LENGTH, "[%s] Realserver %s - %s"
-					      , global_data->router_id
-					      , FMT_RS(rs)
-					      , subject);
+		if (checker) {
+			snprintf(smtp->subject, MAX_HEADERS_LENGTH, "[%s] Realserver %s - %s",
+						global_data->router_id,
+						FMT_RS(checker->rs, checker->vs),
+						subject);
 		}
 		else
 #endif
