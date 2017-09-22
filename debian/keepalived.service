@@ -1,6 +1,6 @@
 [Unit]
 Description=Keepalive Daemon (LVS and VRRP)
-After=network-online.target
+After=syslog.target network-online.target
 Wants=network-online.target
 # Only start if there is a configuration file
 ConditionFileNotEmpty=/etc/keepalived/keepalived.conf
@@ -12,6 +12,7 @@ KillMode=process
 EnvironmentFile=-/etc/default/keepalived
 ExecStart=/usr/sbin/keepalived $DAEMON_ARGS
 ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/var/run/keepalived.pid"
 
 [Install]
 WantedBy=multi-user.target
