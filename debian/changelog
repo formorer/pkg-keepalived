@@ -1,3 +1,16 @@
+keepalived (1:1.3.6-1) unstable; urgency=medium
+
+  * [0547153] New upstream version 1.3.5
+  * [4cf471c] Bump standards version
+  * [2dfa271] New upstream version 1.3.6 (Closes: #872331)
+    - Fix strange pid handling on restart
+      (Closes: #860527)
+  * [d1ddcaf] Enable dbus interface (Closes: #873803)
+  * [9a969d1] Adapt some changes from the upstream service file
+    (Closes: #857618)
+
+ -- Alexander Wirt <formorer@debian.org>  Fri, 22 Sep 2017 08:57:03 +0200
+
 keepalived (1:1.3.2-1) unstable; urgency=medium
 
   * [488ee92] New upstream version 1.3.2
