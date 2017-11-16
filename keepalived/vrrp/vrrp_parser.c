@@ -246,6 +246,22 @@ vrrp_unicast_peer_handler(__attribute__((unused)) vector_t *strvec)
 {
 	alloc_value_block(alloc_vrrp_unicast_peer);
 }
+#ifdef _WITH_UNICAST_CHKSUM_COMPAT_
+static void
+vrrp_unicast_chksum_handler(vector_t *strvec)
+{
+	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+
+	if (vector_size(strvec) >= 2) {
+		if (!strcmp(strvec_slot(strvec, 1), "never"))
+			vrrp->unicast_chksum_compat = CHKSUM_COMPATIBILITY_NEVER;
+		else
+			log_message(LOG_INFO, "(%s): Unknown old_unicast_chksum mode %s - ignoring", vrrp->iname, FMT_STR_VSLOT(strvec, 1));
+	}
+	else
+		vrrp->unicast_chksum_compat = CHKSUM_COMPATIBILITY_CONFIG;
+}
+#endif
 static void
 vrrp_native_ipv6_handler(__attribute__((unused)) vector_t *strvec)
 {
@@ -347,7 +363,6 @@ vrrp_vrid_handler(vector_t *strvec)
 	}
 
 	vrrp->vrid = (uint8_t)vrid;
-	alloc_vrrp_bucket(vrrp);
 }
 static void
 vrrp_prio_handler(vector_t *strvec)
@@ -650,43 +665,7 @@ vrrp_auth_pass_handler(vector_t *strvec)
 static void
 vrrp_vip_handler(__attribute__((unused)) vector_t *strvec)
 {
-	vrrp_t *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
-	char *buf;
-	char *str = NULL;
-	vector_t *vec = NULL;
-	sa_family_t address_family;
-
-	buf = (char *) MALLOC(MAXBUF);
-	while (read_line(buf, MAXBUF)) {
-		address_family = AF_UNSPEC;
-		vec = alloc_strvec(buf);
-		if (vec) {
-			str = strvec_slot(vec, 0);
-			if (!strcmp(str, EOB)) {
-				free_strvec(vec);
-				break;
-			}
-
-			if (vector_size(vec)) {
-				alloc_vrrp_vip(vec);
-				if (!LIST_ISEMPTY(vrrp->vip))
-					address_family = IP_FAMILY((ip_address_t*)LIST_TAIL_DATA(vrrp->vip));
-			}
-
-			if (address_family != AF_UNSPEC) {
-				if (vrrp->family == AF_UNSPEC)
-					vrrp->family = address_family;
-				else if (address_family != vrrp->family) {
-					log_message(LOG_INFO, "(%s): address family must match VRRP instance [%s] - ignoring", vrrp->iname, str);
-					free_list_element(vrrp->vip, vrrp->vip->tail);
-				}
-			}
-
-			free_strvec(vec);
-		}
-		memset(buf, 0, MAXBUF);
-	}
-	FREE(buf);
+	alloc_value_block(alloc_vrrp_vip);
 }
 static void
 vrrp_evip_handler(__attribute__((unused)) vector_t *strvec)
@@ -973,6 +952,9 @@ init_vrrp_keywords(bool active)
 	install_keyword("vmac_xmit_base", &vrrp_vmac_xmit_base_handler);
 #endif
 	install_keyword("unicast_peer", &vrrp_unicast_peer_handler);
+#ifdef _WITH_UNICAST_CHKSUM_COMPAT_
+	install_keyword("old_unicast_checksum", &vrrp_unicast_chksum_handler);
+#endif
 	install_keyword("native_ipv6", &vrrp_native_ipv6_handler);
 	install_keyword("state", &vrrp_state_handler);
 	install_keyword("interface", &vrrp_int_handler);

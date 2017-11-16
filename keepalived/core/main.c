@@ -24,6 +24,10 @@
 
 #include "git-commit.h"
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <stdlib.h>
 #include <sys/utsname.h>
 #include <sys/resource.h>
@@ -43,6 +47,9 @@
 #endif
 #ifdef _WITH_VRRP_
 #include "vrrp_parser.h"
+#ifdef _WITH_JSON_
+#include "vrrp_json.h"
+#endif
 #endif
 #include "global_parser.h"
 #if HAVE_DECL_CLONE_NEWNET
@@ -85,6 +92,7 @@ bool use_pid_dir;					/* Put pid files in /var/run/keepalived or @localstatedir@
 unsigned os_major;					/* Kernel version */
 unsigned os_minor;
 unsigned os_release;
+char *hostname;						/* Initial part of hostname */
 
 #if HAVE_DECL_CLONE_NEWNET
 char *network_namespace;				/* The network namespace we are running in */
@@ -445,6 +453,9 @@ signal_init(void)
 	signal_set(SIGHUP, propogate_signal, NULL);
 	signal_set(SIGUSR1, propogate_signal, NULL);
 	signal_set(SIGUSR2, propogate_signal, NULL);
+#ifdef _WITH_JSON_
+	signal_set(SIGJSON, propogate_signal, NULL);
+#endif
 	signal_set(SIGINT, sigend, NULL);
 	signal_set(SIGTERM, sigend, NULL);
 	signal_ignore(SIGPIPE);
@@ -516,7 +527,7 @@ core_dump_init(void)
 			log_message(LOG_INFO, "Failed to set core file size");
 	}
 }
-		
+
 /* Usage function */
 static void
 usage(const char *prog)
@@ -560,7 +571,14 @@ usage(const char *prog)
 #ifdef _MEM_CHECK_LOG_
 	fprintf(stderr, "  -L, --mem-check-log          Log malloc/frees to syslog\n");
 #endif
-	fprintf(stderr, "  -i, --config-id id           Skip any configuration lines beginning '@' that don't match id\n");
+	fprintf(stderr, "  -i, --config-id id           Skip any configuration lines beginning '@' that don't match id\n"
+		        "                                or any lines beginning @^ that do match.\n"
+		        "                                The config-id defaults to the node name if option not used\n");
+	fprintf(stderr, "      --signum=SIGFUNC         Return signal number for STOP, RELOAD, DATA, STATS"
+#ifdef _WITH_JSON_
+								", JSON"
+#endif
+								"\n");
 	fprintf(stderr, "  -v, --version                Display the version number\n");
 	fprintf(stderr, "  -h, --help                   Display this help message\n");
 }
@@ -571,50 +589,53 @@ parse_cmdline(int argc, char **argv)
 {
 	int c;
 	bool reopen_log = false;
+	int signum;
 
 	struct option long_options[] = {
-		{"use-file",          required_argument, 0, 'f'},
+		{"use-file",		required_argument,	NULL, 'f'},
 #if defined _WITH_VRRP_ && defined _WITH_LVS_
-		{"vrrp",              no_argument,       0, 'P'},
-		{"check",             no_argument,       0, 'C'},
+		{"vrrp",		no_argument,		NULL, 'P'},
+		{"check",		no_argument,		NULL, 'C'},
 #endif
-		{"log-console",       no_argument,       0, 'l'},
-		{"log-detail",        no_argument,       0, 'D'},
-		{"log-facility",      required_argument, 0, 'S'},
+		{"log-console",		no_argument,		NULL, 'l'},
+		{"log-detail",		no_argument,		NULL, 'D'},
+		{"log-facility",	required_argument,	NULL, 'S'},
 #ifdef _WITH_VRRP_
-		{"release-vips",      no_argument,       0, 'X'},
-		{"dont-release-vrrp", no_argument,       0, 'V'},
+		{"release-vips",	no_argument,		NULL, 'X'},
+		{"dont-release-vrrp",	no_argument,		NULL, 'V'},
 #endif
 #ifdef _WITH_LVS_
-		{"dont-release-ipvs", no_argument,       0, 'I'},
+		{"dont-release-ipvs",	no_argument,		NULL, 'I'},
 #endif
-		{"dont-respawn",      no_argument,       0, 'R'},
-		{"dont-fork",         no_argument,       0, 'n'},
-		{"dump-conf",         no_argument,       0, 'd'},
-		{"pid",               required_argument, 0, 'p'},
+		{"dont-respawn",	no_argument,		NULL, 'R'},
+		{"dont-fork",		no_argument,		NULL, 'n'},
+		{"dump-conf",		no_argument,		NULL, 'd'},
+		{"pid",			required_argument,	NULL, 'p'},
 #ifdef _WITH_VRRP_
-		{"vrrp_pid",          required_argument, 0, 'r'},
+		{"vrrp_pid",		required_argument,	NULL, 'r'},
 #endif
 #ifdef _WITH_LVS_
-		{"checkers_pid",      required_argument, 0, 'c'},
-		{"address-monitoring",no_argument,       0, 'a'},
+		{"checkers_pid",	required_argument,	NULL, 'c'},
+		{"address-monitoring",	no_argument,		NULL, 'a'},
 #endif
 #ifdef _WITH_SNMP_
-		{"snmp",              no_argument,       0, 'x'},
-		{"snmp-agent-socket", required_argument, 0, 'A'},
+		{"snmp",		no_argument,		NULL, 'x'},
+		{"snmp-agent-socket",	required_argument,	NULL, 'A'},
 #endif
-		{"core-dump",         no_argument,       0, 'm'},
-		{"core-dump-pattern", optional_argument, 0, 'M'},
+		{"core-dump",		no_argument,		NULL, 'm'},
+		{"core-dump-pattern",	optional_argument,	NULL, 'M'},
 #ifdef _MEM_CHECK_LOG_
-		{"mem-check-log",     no_argument,       0, 'L'},
+		{"mem-check-log",	no_argument,		NULL, 'L'},
 #endif
 #if HAVE_DECL_CLONE_NEWNET
-		{"namespace",         required_argument, 0, 's'},
+		{"namespace",		required_argument,	NULL, 's'},
 #endif	
-		{"config-id",         required_argument, 0, 'i'},
-		{"version",           no_argument,       0, 'v'},
-		{"help",              no_argument,       0, 'h'},
-		{0, 0, 0, 0}
+		{"config-id",		required_argument,	NULL, 'i'},
+		{"signum",		required_argument,	NULL,  1 },
+		{"version",		no_argument,		NULL, 'v'},
+		{"help",		no_argument,		NULL, 'h'},
+
+		{NULL,			0,			NULL,  0 }
 	};
 
 	while ((c = getopt_long(argc, argv, "vhlndDRS:f:p:i:mM"
@@ -743,7 +764,19 @@ parse_cmdline(int argc, char **argv)
 			break;
 #endif
 		case 'i':
-			config_id = optarg;
+			FREE_PTR(config_id);
+			config_id = MALLOC(strlen(optarg) + 1);
+			strcpy(config_id, optarg);
+			break;
+		case 1:
+			signum = get_signum(optarg);
+			if (signum == -1) {
+				fprintf(stderr, "Unknown sigfunc %s\n", optarg);
+				exit(1);
+			}
+
+			printf("%d\n", signum);
+			exit(0);
 			break;
 		default:
 			exit(0);
@@ -795,6 +828,35 @@ keepalived_main(int argc, char **argv)
 	mem_log_init(PACKAGE_NAME, "Parent process");
 #endif
 
+	/* Some functionality depends on kernel version, so get the version here */
+	if (uname(&uname_buf))
+		log_message(LOG_INFO, "Unable to get uname() information - error %d", errno);
+	else {
+		os_major = (unsigned)strtoul(uname_buf.release, &end, 10);
+		if (*end != '.')
+			os_major = 0;
+		else {
+			os_minor = (unsigned)strtoul(end + 1, &end, 10);
+			if (*end != '.')
+				os_major = 0;
+			else {
+				os_release = (unsigned)strtoul(end + 1, &end, 10);
+				if (*end && *end != '-')
+					os_major = 0;
+			}
+		}
+		if (!os_major)
+			log_message(LOG_INFO, "Unable to parse kernel version %s", uname_buf.release);
+
+		/* config_id defaults to hostname */
+		if (!config_id) {
+			end = strchrnul(uname_buf.nodename, '.');
+			config_id = MALLOC(end - uname_buf.nodename + 1);
+			strncpy(config_id, uname_buf.nodename, end - uname_buf.nodename);
+			config_id[end - uname_buf.nodename] = '\0';
+		}
+	}
+
 	/*
 	 * Parse command line and set debug level.
 	 * bits 0..7 reserved by main.c
@@ -817,27 +879,6 @@ keepalived_main(int argc, char **argv)
 	core_dump_init();
 
 	netlink_set_recv_buf_size();
-
-	/* Some functionality depends on kernel version, so get the version here */
-	if (uname(&uname_buf))
-		log_message(LOG_INFO, "Unable to get uname() information - error %d", errno);
-	else {
-		os_major = (unsigned)strtoul(uname_buf.release, &end, 10);
-		if (*end != '.')
-			os_major = 0;
-		else {
-			os_minor = (unsigned)strtoul(end + 1, &end, 10);
-			if (*end != '.')
-				os_major = 0;
-			else {
-				os_release = (unsigned)strtoul(end + 1, &end, 10);
-				if (*end && *end != '-')
-					os_major = 0;
-			}
-		}
-		if (!os_major)
-			log_message(LOG_INFO, "Unable to parse kernel version %s", uname_buf.release);
-	}
 
 	/* Check we can read the configuration file(s).
 	   NOTE: the working directory will be / if we
@@ -1001,6 +1042,8 @@ end:
 	free_parent_mallocs_exit();
 
 	closelog();
+
+	FREE(config_id);
 
 #ifndef _MEM_CHECK_LOG_
 	FREE_PTR(syslog_ident);
