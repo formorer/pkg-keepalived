@@ -108,6 +108,8 @@ stop_check(int status)
 
 	closelog();
 
+	FREE(config_id);
+
 #ifndef _MEM_CHECK_LOG_
 	FREE_PTR(check_syslog_ident);
 #else
@@ -176,7 +178,7 @@ start_check(list old_checkers_queue)
 #endif
 
 	/* SSL load static data & initialize common ctx context */
-	if (!init_ssl_ctx())
+	if (check_data->ssl_required && !init_ssl_ctx())
 		stop_check(KEEPALIVED_EXIT_FATAL);
 
 	/* Set the process priority and non swappable if configured */
@@ -202,34 +204,6 @@ start_check(list old_checkers_queue)
 
 	/* Register checkers thread */
 	register_checkers_thread();
-}
-
-/* Reload handler */
-static int reload_check_thread(thread_t *);
-
-static void
-sighup_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
-{
-	thread_add_event(master, reload_check_thread, NULL, 0);
-}
-
-/* Terminate handler */
-static void
-sigend_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
-{
-	if (master)
-		thread_add_terminate_event(master);
-}
-
-/* CHECK Child signal handling */
-static void
-check_signal_init(void)
-{
-	signal_handler_child_clear();
-	signal_set(SIGHUP, sighup_check, NULL);
-	signal_set(SIGINT, sigend_check, NULL);
-	signal_set(SIGTERM, sigend_check, NULL);
-	signal_ignore(SIGPIPE);
 }
 
 /* Reload thread */
@@ -275,6 +249,31 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)
 	UNSET_RELOAD;
 
 	return 0;
+}
+
+static void
+sighup_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+{
+	thread_add_event(master, reload_check_thread, NULL, 0);
+}
+
+/* Terminate handler */
+static void
+sigend_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+{
+	if (master)
+		thread_add_terminate_event(master);
+}
+
+/* CHECK Child signal handling */
+static void
+check_signal_init(void)
+{
+	signal_handler_child_clear();
+	signal_set(SIGHUP, sighup_check, NULL);
+	signal_set(SIGINT, sigend_check, NULL);
+	signal_set(SIGTERM, sigend_check, NULL);
+	signal_ignore(SIGPIPE);
 }
 
 /* CHECK Child respawning thread */

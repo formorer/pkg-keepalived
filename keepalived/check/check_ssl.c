@@ -40,9 +40,10 @@
 void
 clear_ssl(ssl_data_t *ssl)
 {
-	if (ssl)
-		if (ssl->ctx)
-			SSL_CTX_free(ssl->ctx);
+	if (ssl && ssl->ctx) {
+		SSL_CTX_free(ssl->ctx);
+		ssl->ctx = NULL;
+	}
 }
 
 /* PEM password callback function */
@@ -194,8 +195,7 @@ ssl_connect(thread_t * thread, int new_req)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_t *http = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http);
+	request_t *req = http_get_check->req;
 	int ret = 0;
 	int val = 0;
 
@@ -247,9 +247,8 @@ ssl_read_thread(thread_t * thread)
 {
 	checker_t *checker = THREAD_ARG(thread);
 	http_checker_t *http_get_check = CHECKER_ARG(checker);
-	http_t *http = HTTP_ARG(http_get_check);
-	request_t *req = HTTP_REQ(http);
-	url_t *url = list_element(http_get_check->url, http->url_it);
+	request_t *req = http_get_check->req;
+	url_t *url = list_element(http_get_check->url, http_get_check->url_it);
 	unsigned timeout = checker->co->connection_to;
 	unsigned char digest[16];
 	int r = 0;
@@ -299,7 +298,7 @@ ssl_read_thread(thread_t * thread)
 		}
 
 		/* Handle response stream */
-		http_handle_response(thread, digest, (!req->extracted) ? 1 : 0);
+		http_handle_response(thread, digest, !req->extracted);
 
 	}
 
